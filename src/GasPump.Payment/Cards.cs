@@ -1,0 +1,69 @@
+namespace GasPump.Payment;
+
+public enum CardKind { Credit, Debit }
+
+/// <summary>
+/// What the reader hands over. In a real pump this is ciphertext under a DUKPT
+/// key and the terminal never sees digits. Here it is plain, because the
+/// numbers are made up and the point is the flow, not the crypto.
+/// </summary>
+public sealed record CardData(string Pan, int ExpiryMonth, int ExpiryYear, CardKind Kind, string? Pin = null)
+{
+    public string Last4 => Pan.Length >= 4 ? Pan[^4..] : Pan;
+}
+
+public enum CardCheck { Ok, BadLuhn, Expired, BadFormat }
+
+/// <summary>Luhn and expiry. The two checks a terminal can do before it spends a network call.</summary>
+public static class CardValidator
+{
+    public static CardCheck Check(CardData card, DateTimeOffset now)
+    {
+        if (card.Pan.Length is < 12 or > 19 || !card.Pan.All(char.IsDigit)) return CardCheck.BadFormat;
+        if (!Luhn(card.Pan)) return CardCheck.BadLuhn;
+        if (card.ExpiryMonth is < 1 or > 12) return CardCheck.BadFormat;
+        // A card is good through the last day of its expiry month.
+        var lastValid = new DateTimeOffset(card.ExpiryYear, card.ExpiryMonth, 1, 0, 0, 0, TimeSpan.Zero).AddMonths(1);
+        if (now >= lastValid) return CardCheck.Expired;
+        return CardCheck.Ok;
+    }
+
+    public static bool Luhn(string digits)
+    {
+        int sum = 0;
+        bool doubleIt = false;
+        for (int i = digits.Length - 1; i >= 0; i--)
+        {
+            int d = digits[i] - '0';
+            if (doubleIt) { d *= 2; if (d > 9) d -= 9; }
+            sum += d;
+            doubleIt = !doubleIt;
+        }
+        return sum % 10 == 0;
+    }
+}
+
+/// <summary>
+/// The named test cards. The name says what the card will do, so a scenario
+/// reads like a sentence: "present the InsufficientFunds card".
+/// All PANs pass Luhn. None are real ranges you could use anywhere.
+/// </summary>
+public static class TestCards
+{
+    public static readonly IReadOnlyDictionary<string, CardData> ByName = new Dictionary<string, CardData>(StringComparer.OrdinalIgnoreCase)
+    {
+        ["Good"]              = new("4111111111111111", 12, 2030, CardKind.Credit),
+        ["LowBalance"]        = new("4012888888881881", 12, 2030, CardKind.Credit),      // approves $18.50 of a $75 hold (partial)
+        ["InsufficientFunds"] = new("4222222222222",    12, 2030, CardKind.Credit),      // $0 available
+        ["Expired"]           = new("5555555555554444", 1,  2020, CardKind.Credit),
+        ["Stolen"]            = new("5105105105105100", 12, 2030, CardKind.Credit),
+        ["Frozen"]            = new("378282246310005",  12, 2030, CardKind.Credit),
+        ["Velocity"]          = new("371449635398431",  12, 2030, CardKind.Credit),      // third use in the window declines
+        ["DebitGoodPin"]      = new("6011111111111117", 12, 2030, CardKind.Debit, Pin: "1234"),
+        ["DebitBadPin"]       = new("6011000990139424", 12, 2030, CardKind.Debit, Pin: "0000"),
+        ["BadLuhn"]           = new("4111111111111112", 12, 2030, CardKind.Credit),
+    };
+
+    public static CardData Get(string name) =>
+        ByName.TryGetValue(name, out var c) ? c : throw new KeyNotFoundException($"no test card named '{name}'");
+}

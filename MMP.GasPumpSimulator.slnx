@@ -1,0 +1,13 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/GasPump.Core/GasPump.Core.csproj" />
+    <Project Path="src/GasPump.Payment/GasPump.Payment.csproj" />
+    <Project Path="src/GasPump.Security/GasPump.Security.csproj" />
+    <Project Path="src/GasPump.Pump/GasPump.Pump.csproj" />
+    <Project Path="src/GasPump.Dispatch/GasPump.Dispatch.csproj" />
+    <Project Path="src/GasPump.Host/GasPump.Host.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/GasPump.Tests/GasPump.Tests.csproj" />
+  </Folder>
+</Solution>

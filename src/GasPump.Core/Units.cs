@@ -1,0 +1,84 @@
+namespace GasPump.Core;
+
+/// <summary>Whole cents. Never a double. Rule 4 from the research note.</summary>
+public readonly record struct Money(long Cents) : IComparable<Money>
+{
+    public static readonly Money Zero = new(0);
+    public static Money FromDollars(decimal dollars) => new((long)Math.Round(dollars * 100m, MidpointRounding.AwayFromZero));
+    public static Money operator +(Money a, Money b) => new(a.Cents + b.Cents);
+    public static Money operator -(Money a, Money b) => new(a.Cents - b.Cents);
+    public static bool operator <(Money a, Money b) => a.Cents < b.Cents;
+    public static bool operator >(Money a, Money b) => a.Cents > b.Cents;
+    public static bool operator <=(Money a, Money b) => a.Cents <= b.Cents;
+    public static bool operator >=(Money a, Money b) => a.Cents >= b.Cents;
+    public static Money Min(Money a, Money b) => a <= b ? a : b;
+    public int CompareTo(Money other) => Cents.CompareTo(other.Cents);
+    public override string ToString() => $"${Cents / 100}.{Cents % 100:00}";
+}
+
+/// <summary>Thousandths of a gallon. A pulser click is one of these.</summary>
+public readonly record struct Volume(long MilliGallons) : IComparable<Volume>
+{
+    public static readonly Volume Zero = new(0);
+    public static Volume FromGallons(decimal gallons) => new((long)Math.Round(gallons * 1000m, MidpointRounding.AwayFromZero));
+    public decimal Gallons => MilliGallons / 1000m;
+    public static Volume operator +(Volume a, Volume b) => new(a.MilliGallons + b.MilliGallons);
+    public static Volume operator -(Volume a, Volume b) => new(a.MilliGallons - b.MilliGallons);
+    public static bool operator <(Volume a, Volume b) => a.MilliGallons < b.MilliGallons;
+    public static bool operator >(Volume a, Volume b) => a.MilliGallons > b.MilliGallons;
+    public static bool operator <=(Volume a, Volume b) => a.MilliGallons <= b.MilliGallons;
+    public static bool operator >=(Volume a, Volume b) => a.MilliGallons >= b.MilliGallons;
+    public static Volume Min(Volume a, Volume b) => a <= b ? a : b;
+    public int CompareTo(Volume other) => MilliGallons.CompareTo(other.MilliGallons);
+    public override string ToString() => $"{Gallons:0.000} gal";
+}
+
+/// <summary>Milli-gallons per second. 10 gal/min is about 167 of these.</summary>
+public readonly record struct FlowRate(long MilliGallonsPerSecond)
+{
+    public static readonly FlowRate Zero = new(0);
+    public static FlowRate GallonsPerMinute(decimal gpm) => new((long)Math.Round(gpm * 1000m / 60m, MidpointRounding.AwayFromZero));
+    public decimal GallonsPerMinuteValue => MilliGallonsPerSecond * 60m / 1000m;
+    public Volume Over(TimeSpan dt) => new((long)Math.Round(MilliGallonsPerSecond * dt.TotalSeconds));
+    public FlowRate Scale(double fraction) => new((long)Math.Round(MilliGallonsPerSecond * fraction));
+}
+
+public enum Grade { Regular = 87, Plus = 89, Premium = 93 }
+
+/// <summary>
+/// Price in tenths of a cent per gallon, so $3.499 is 3499. Converts volume to
+/// money with integer math and rounds half up, the same way everywhere, so the
+/// ceiling check and the display agree.
+/// </summary>
+public sealed record Pricing(IReadOnlyDictionary<Grade, long> TenthCentsPerGallon)
+{
+    public static Pricing Default => new(new Dictionary<Grade, long>
+    {
+        [Grade.Regular] = 3499,
+        [Grade.Plus] = 3799,
+        [Grade.Premium] = 4099,
+    });
+
+    public long PriceOf(Grade grade) => TenthCentsPerGallon[grade];
+
+    public Money CentsFor(Grade grade, Volume volume)
+    {
+        // cents = mGal * tenthCents / gal / 10 / 1000, rounded half up.
+        long numerator = volume.MilliGallons * PriceOf(grade);
+        return new Money((numerator + 5_000) / 10_000);
+    }
+
+    /// <summary>The largest volume whose price does not exceed the money. Used for the last tick.</summary>
+    public Volume MaxVolumeFor(Grade grade, Money money)
+    {
+        long price = PriceOf(grade);
+        // Largest v with (v*price + 5000) / 10000 <= cents, so v*price + 5000 < (cents+1)*10000.
+        long v = ((money.Cents + 1) * 10_000 - 5_000 - 1) / price;
+        if (v < 0) v = 0;
+        // Guard rounding at the edge.
+        while (v > 0 && CentsFor(grade, new Volume(v)) > money) v--;
+        return new Volume(v);
+    }
+
+    public string Display(Grade grade) => $"${PriceOf(grade) / 1000}.{PriceOf(grade) % 1000:000}";
+}

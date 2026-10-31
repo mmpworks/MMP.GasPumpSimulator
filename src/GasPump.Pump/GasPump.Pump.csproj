@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>GasPump.Pump</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\GasPump.Core\GasPump.Core.csproj" />
+    <ProjectReference Include="..\GasPump.Security\GasPump.Security.csproj" />
+  </ItemGroup>
+</Project>

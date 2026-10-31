@@ -1,0 +1,13 @@
+bin/
+obj/
+*.user
+*.suo
+.vs/
+.idea/
+TestResults/
+artifacts/
+node_modules/
+app/dist/
+app/dist-electron/
+app/release/
+*.ledger.jsonl
