@@ -20,7 +20,7 @@ The research note answered "how does a gas pump take a card". This repo answers 
 
 Kill condition: all true on one date, written here.
 
-1. `dotnet test` green. Count on sign-off date: ___ of ___.
+1. `dotnet test` green. Count on 2026-10-31: 80 of 80, 0 failures in 15 consecutive full runs. Sign-off date: ___.
 2. The same end-to-end sale passes under both dispatch strategies, from one test with a theory over strategies.
 3. A $30 sale at $3.499 per gallon ends at 3000 cents, never 3001, under both strategies, with the taper visible in the flow-rate trace (full, then falling, then stop).
 4. Every attack in `docs/threat-model.md` has a test that fails without its control and passes with it.
@@ -81,7 +81,7 @@ docs/                  prd.md, threat-model.md, architecture.md
 
 Build order:
 
-1. Slice 1: Core, Payment, Security, Pump, Dispatch with both strategies, tests. Host with WebSocket. Electron app with the pump face, card panel, fault toggles, attack buttons, ledger view.
+1. Slice 1 (done 2026-10-31): Core, Payment, Security, Pump, Dispatch with both strategies, 80 tests. Host with WebSocket. Electron app with the pump face, card panel, fault toggles, attack buttons, ledger view, event log. Verified live: Electron spawned the host, the socket connected, a partial-approval sale fueled, a pulse spoof faulted the pump.
 2. Slice 2: AsyncProxy strategy once MMP.AsyncProxy is referenced. Scenario scripting. Receipt and completion timing rules.
 
 ## Open items
