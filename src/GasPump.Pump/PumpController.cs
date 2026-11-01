@@ -85,10 +85,10 @@ public sealed class PumpController(
     {
         if (Phase is PumpPhase.Dispensing or PumpPhase.Paused)
             return (false, "AlreadyDispensing", null);
-        if (hydraulics.BreakawaySeparated)
+        if (Conditions().FirstOrDefault() is { } blocking)
         {
-            ledger.Append("arm.refused", DiagnosticCodes.PumpHoseBreakaway.Format($"{saleId} breakaway coupling still separated; attendant reset required"));
-            return (false, "BreakawayOpen", null);
+            ledger.Append("arm.refused", blocking.Format($"{saleId} pump out of service: {blocking.Part}; {blocking.ClearedBy} required"));
+            return (false, blocking.Code, null);
         }
 
         var (armed, refusal) = authority.TryArm(saleId, tokenWire);
@@ -203,6 +203,34 @@ public sealed class PumpController(
         _nozzleLifted = false;
         _nozzleSeated = false;
         ledger.Append("hose.breakaway.reset", DiagnosticCodes.PumpHoseBreakaway.Format("coupling reconnected by the attendant"));
+    }
+
+    /// <summary>The conditions holding this pump out of service, read from the part sensors now. Nothing is stored, so a fixed part can never still read as broken.</summary>
+    public ServiceStatus Service => ServiceStatus.Of(Conditions());
+
+    /// <summary>One sensor per row. The order is fixed, so the first entry is the one an arm refusal names.</summary>
+    private IEnumerable<DiagnosticCode> Conditions()
+    {
+        if (hydraulics.BreakawaySeparated) yield return DiagnosticCodes.PumpHoseBreakaway;
+        if (!hydraulics.SupplyAvailable) yield return DiagnosticCodes.PumpSupplyNoFlow;
+        if (meter.PulserDead) yield return DiagnosticCodes.PumpMeterNoPulse;
+    }
+
+    /// <summary>
+    /// A pump faulted for a part that needs service goes back to Disarmed once
+    /// no condition holds it. A per-sale fault (spoofed pulses, stray pulses)
+    /// stays Faulted until the next arm, as before. Returns true when it moved.
+    /// </summary>
+    public bool ReturnToService()
+    {
+        if (Phase != PumpPhase.Faulted) return false;
+        if (LastFaultCode is not { } code || DiagnosticCodes.Find(code) is not { OutOfService: true } fault) return false;
+        if (Conditions().Any()) return false;
+        Phase = PumpPhase.Disarmed;
+        LastFault = null;
+        LastFaultCode = null;
+        ledger.Append("pump.in-service", fault.Format($"{fault.Part} {fault.ClearedBy}; pump disarmed and ready"));
+        return true;
     }
 
     public void CloseValve(string reason) => Stop(reason);

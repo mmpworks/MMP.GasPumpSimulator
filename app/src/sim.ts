@@ -39,6 +39,8 @@ export interface Pump {
   phase: string; armed: Armed | null; fault: string | null; faultCode: string | null; totalizerGallons: number
   nozzleLifted: boolean; nozzleSeated: boolean; triggerHeld: boolean; selectedGrade: string | null; poured: boolean
   supplyAvailable: boolean; breakawayOpen: boolean; pulserDead: boolean; ledgerIntact: boolean; runId: string; pid: number
+  /** Empty codes means in service. Each code names the part that holds the pump out of service until its repair. */
+  inService: boolean; serviceCodes: string[]; serviceParts: string[]
 }
 export interface State {
   strategy: string; pumpId: string; sale: Sale

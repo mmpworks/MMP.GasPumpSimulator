@@ -302,6 +302,20 @@ The tank gauge's Fuel Out alarm reaches the pump as the first row; the gauge ent
 
 The E-stop is the odd one out: it is not a message the pump handles, it is the power leaving. The order of operations is the whole design. The site controller, outside the classified area and still powered, writes `station.estop` to the ledger and the custody file, saves one last snapshot with `StopReason = "ESTOP"`, and only then drops the pump. The cashier's reset builds a new Simulation on that snapshot, and because the snapshot was taken after the last tick, the recovery reports nothing unrecorded. A bare power loss cannot do any of that, which is why the recovery note for it says "likely under-recorded" and the note for an E-stop does not.
 
+### Service conditions
+
+A fault that needs a repair is a service condition. The condition holds the pump out of service until the repair, and both sides of the seam react to the repair through one event.
+
+| Step | Where | What happens |
+|---|---|---|
+| 1 | Dispenser | `PumpController.Service` reads the conditions from the sensors: breakaway separated, supply off, pulser dead. Nothing is stored, so a fixed part cannot still read as broken. |
+| 2 | Dispenser | `Arm` is refused while any condition holds. After every non-tick message, a pump `Faulted` for an out-of-service code goes back to `Disarmed` when no condition holds it. |
+| 3 | Seam | `DispenserView.Service` carries the codes. The offline view carries `LINK.DISPENSER.LOST`, so link loss and link return travel the same path as a broken or fixed part. |
+| 4 | Station | `Simulation` compares each view's status with the last one, and on a change posts `SaleEvent.PumpService` and appends `service.status` to the ledger. That is the only emitter. `BeginSale` refuses every payment while the status is not in service, and each new sale starts from the last status. |
+| 5 | Sale machine | Before the first pour, an out-of-service report faults the sale, closes the valve, and reverses the hold. A sale faulted for an out-of-service code clears to `Idle` when the code goes away and the hold is settled. The settled-hold check is the same one the notice timeout uses. |
+
+The sale machine never reads a pump object and the pump never reads a sale. Which codes need a repair, and which repair, is one column on the diagnostic table: `DiagnosticCode.ClearedBy`. `docs/diagnostics.md` states the rule.
+
 ## Two files: debug log and custody file
 
 | | Herald.OSS NDJSON | TesseraSeal custody file |

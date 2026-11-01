@@ -72,6 +72,8 @@ body { background: var(--bg); overflow: hidden; }
 
 .ledger-root { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
 .notice .v-alert-title { font-size: 17px; line-height: 1.2; }
+.service-strip { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 6px 10px; border: 1px solid rgba(248,81,73,.6); border-radius: 8px; background: rgba(248,81,73,.08); font-size: 12px; letter-spacing: .08em; }
+.service-strip b { color: var(--bad); }
 .muted { color: var(--muted); font-size: 12px; }
 .row-wrap { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .step { font-size: 12px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin: 10px 0 6px; display: flex; gap: 8px; align-items: center; }

@@ -167,7 +167,7 @@ public sealed class Simulation : IDisposable
             _link = new LocalDispenserLink(_local, dispatch, _options.TickPeriod, () => CurrentSaleId, Custody, RunId, CustodyPath);
         }
         _link.Event += e => _saleBox.Post(e);
-        _link.ViewChanged += v => DispenserViewChanged?.Invoke(v);
+        _link.ViewChanged += v => { OnServiceView(v.Service); DispenserViewChanged?.Invoke(v); };
 
         // Restore from the journal before any worker runs, then decide what to do about the sale that was open.
         var snapshot = _options.Journal is { } jo ? StateJournal.Load(jo.StatePath) : null;
@@ -178,6 +178,8 @@ public sealed class Simulation : IDisposable
             lock (_gate) _sale = NewSale();
         }
         LastRecovery = RecoveryPlan.Build(snapshot, clock.GetUtcNow(), _options.Journal?.Period ?? TimeSpan.FromSeconds(1));
+        // A dispenser not yet answering, or one that started with a part already broken, is out of service from the first sale.
+        OnServiceView(_link.View.Service);
 
         _owned.Add(dispatch.StartWorker("sale", _saleBox, HandleSaleEvent));
         _owned.Add(dispatch.StartWorker("payment", _paymentBox, HandlePaymentMessage));
@@ -256,6 +258,29 @@ public sealed class Simulation : IDisposable
         if (s.State is SaleState.Authorizing or SaleState.ReadyToPump or SaleState.Fueling)
             _saleBox.Post(new SaleEvent.Fault(s.SaleId, "dispenser link lost", code.Code));
     }
+
+    /// <summary>
+    /// The pump's service status, as the dispenser's view carries it. The
+    /// station tells the sale once per change. That one path covers a part
+    /// that broke or was fixed on the dispenser, the link dropping (the
+    /// offline view names the link), and the link coming back.
+    /// </summary>
+    private void OnServiceView(ServiceStatus service)
+    {
+        string saleId;
+        lock (_gate)
+        {
+            if (service == _service) return;
+            _service = service;
+            saleId = _sale.SaleId;
+        }
+        Ledger.Append("service.status", $"pump {service}");
+        Log.Write("station", "pump {Service}", ("Service", service.ToString()), ("Codes", string.Join(",", service.Codes)));
+        _saleBox.Post(new SaleEvent.PumpService(saleId, service));
+    }
+
+    /// <summary>Under _gate. What the station last heard about the pump; every new sale starts from it.</summary>
+    private ServiceStatus _service = ServiceStatus.Normal;
 
     public string RunId { get; }
     public string? CustodyPath { get; }
@@ -457,39 +482,60 @@ public sealed class Simulation : IDisposable
     public (bool Ok, string Reason) AdminSetHold(string pin, Tender tender, Money amount) => Site.TrySet(pin, tender, amount);
 
     /// <summary>
-    /// Start a sale record for a new payment. Three cases for the sale already on
-    /// the screen: finished (replace it), approved but untouched (the last driver
-    /// drove off before lifting the nozzle: cancel it, reverse its hold, replace
-    /// it, all at once), or in someone's hands (refuse the new payment).
+    /// Start a sale record for a new payment. A pump out of service refuses
+    /// every payment, at the pump and at the counter, before any money moves.
+    /// Then three cases for the sale already on the screen: finished (replace
+    /// it), approved but untouched (the last driver drove off before lifting
+    /// the nozzle: cancel it, reverse its hold, replace it, all at once), or in
+    /// someone's hands (refuse the new payment).
     /// </summary>
     private (bool Ok, string SaleId, string Reason) BeginSale(string why)
     {
-        IReadOnlyList<SaleCommand>? commands = null;
-        SaleSnapshot? closed = null;
-        SaleState wasIn = SaleState.Idle;
+        lock (_gate)
+        {
+            var oldId = _sale.SaleId;
+            if (!_service.InService)
+                return (false, oldId, $"pump {_service}");
+            if (_sale.State is SaleState.Fueling or SaleState.Completing || (_sale.State == SaleState.ReadyToPump && _sale.NozzleOut))
+                return (false, oldId, $"pump in use by {oldId} ({_sale.State}, nozzle {(_sale.NozzleOut ? "out" : "on harness")})");
+            if (!_sale.IsOpenAndUntouched)
+            {
+                if (_sale.State is not SaleState.Idle) ReplaceSale();
+                return (true, _sale.SaleId, "");
+            }
+        }
+        CancelOpenSaleAndReplace($"superseded: {why}");
+        return (true, CurrentSaleId, "");
+    }
+
+    /// <summary>
+    /// End a sale that holds money and has moved no fuel (Authorizing or
+    /// ReadyToPump), the way the sale worker would: cancel it, which reverses
+    /// the hold through the payment worker, record the close in the ledger,
+    /// and put a fresh sale on the screen. Returns false when the sale on the
+    /// screen was not in such a state, and changes nothing then.
+    /// </summary>
+    private bool CancelOpenSaleAndReplace(string why)
+    {
+        IReadOnlyList<SaleCommand> commands;
+        SaleSnapshot closed;
+        SaleState wasIn;
         string oldId;
         lock (_gate)
         {
+            if (_sale.State is not (SaleState.Authorizing or SaleState.ReadyToPump)) return false;
             oldId = _sale.SaleId;
-            if (_sale.State is SaleState.Fueling or SaleState.Completing || (_sale.State == SaleState.ReadyToPump && _sale.NozzleOut))
-                return (false, oldId, $"pump in use by {oldId} ({_sale.State}, nozzle {(_sale.NozzleOut ? "out" : "on harness")})");
-            if (_sale.IsOpenAndUntouched)
-            {
-                wasIn = _sale.State;
-                commands = _sale.Apply(new SaleEvent.Cancel(oldId, $"superseded: {why}"));
-                closed = _sale.Snapshot();
-                ReplaceSale();
-            }
-            else if (_sale.State is not SaleState.Idle) ReplaceSale();
-            var id = _sale.SaleId;
-            if (closed is null) return (true, id, "");
+            wasIn = _sale.State;
+            commands = _sale.Apply(new SaleEvent.Cancel(oldId, why));
+            closed = _sale.Snapshot();
+            ReplaceSale();
         }
         // Outside the lock, as the sale worker does: the reversal goes to the payment worker, the close goes to the ledger.
-        Ledger.Append("sale.superseded", $"{oldId} {wasIn} hold {closed.Hold} cancelled by {why}");
-        Log.Warn("sale", "{Old} superseded: {Why}; hold {Hold} being reversed", ("Old", oldId), ("Why", why), ("Hold", closed.Hold));
-        foreach (var c in commands!) Execute(c);
+        Ledger.Append("sale.superseded", $"{oldId} {wasIn} hold {closed.Hold} cancelled: {why}");
+        Log.Warn("sale", "{Old} ended by the station: {Why}; hold {Hold} being reversed", ("Old", oldId), ("Why", why), ("Hold", closed.Hold));
+        foreach (var c in commands) Execute(c);
         RecordSaleBoundary(new SaleEvent.Cancel(oldId, why), wasIn, closed.State, closed);
-        return (true, CurrentSaleId, "");
+        return true;
     }
 
     /// <summary>Every driver action at the pump goes down the link as a message, addressed to the current sale.</summary>
@@ -517,7 +563,19 @@ public sealed class Simulation : IDisposable
     /// <summary>Start a fresh sale record. The old one stays in the log and the ledger.</summary>
     public void ResetSale()
     {
-        lock (_gate) ReplaceSale();
+        // The operator's "new sale" never loses money in either direction. Fuel flowing: close the valve, and the
+        // pump's next tick reports the stop, which settles the sale for the metered fuel. Money held with no fuel:
+        // cancel and reverse. Otherwise the record is finished and a fresh one replaces it.
+        var s = Snapshot();
+        if (s.State is SaleState.Fueling)
+        {
+            Log.Warn("sale", "{SaleId} reset while fueling: valve closed, settling for the fuel delivered", ("SaleId", s.SaleId));
+            _link.Post(new PumpMessage.Close(s.SaleId, "reset by the station"), s.SaleId);
+            return;
+        }
+        if (s.State is SaleState.Completing) return;   // the bank is being told; nothing to reset yet
+        if (!CancelOpenSaleAndReplace("reset by the station"))
+            lock (_gate) ReplaceSale();
         ToPump(new PumpMessage.Stop("reset"));
         Publish();
     }
@@ -824,7 +882,7 @@ public sealed class Simulation : IDisposable
     private SaleStateMachine NewSale()
     {
         var id = $"S{Interlocked.Increment(ref _saleCounter):0000}";
-        return new SaleStateMachine(id, _options.Timeouts);
+        return new SaleStateMachine(id, _options.Timeouts, _service);
     }
 
     private void Publish()

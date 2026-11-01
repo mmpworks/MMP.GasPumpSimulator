@@ -29,6 +29,8 @@ public sealed record SaleTimeouts(
 /// Illegal transitions log and stay put. Each state arms one timeout when it
 /// is entered and cancels it when it is left. Terminal states arm the notice
 /// timeout, and when it fires the screen clears to Idle for the next driver.
+/// A sale faulted for a part that needs service clears sooner: when the pump
+/// reports the part fixed and the bank has answered.
 ///
 /// The sale is a saga. Each step toward "fuel for money" has a compensating
 /// step back: a hold is reversed, a completion is queued. The machine tracks
@@ -40,10 +42,12 @@ public sealed class SaleStateMachine
 {
     private readonly SaleTimeouts _timeouts;
 
-    public SaleStateMachine(string saleId, SaleTimeouts? timeouts = null)
+    /// <param name="service">What the station last heard about the pump, so a new sale starts knowing whether the pump can deliver.</param>
+    public SaleStateMachine(string saleId, SaleTimeouts? timeouts = null, ServiceStatus? service = null)
     {
         SaleId = saleId;
         _timeouts = timeouts ?? SaleTimeouts.Default;
+        Service = service ?? ServiceStatus.Normal;
         State = SaleState.Idle;
         Grade = Grade.Regular;
         Phase = "idle";
@@ -69,6 +73,8 @@ public sealed class SaleStateMachine
     public Tender Tender { get; private set; } = Tender.Credit;
     public CardSource Source { get; private set; } = CardSource.PumpInsert;
     public string? FaultCode { get; private set; }
+    /// <summary>The pump's conditions as last reported through <see cref="SaleEvent.PumpService"/>.</summary>
+    public ServiceStatus Service { get; private set; }
 
     /// <summary>True while the driver's money is held or requested and no fuel has moved: the sale a newer card may take over.</summary>
     public bool IsOpenAndUntouched => State is SaleState.Authorizing or SaleState.ReadyToPump && !NozzleOut;
@@ -92,23 +98,18 @@ public sealed class SaleStateMachine
 
         var commands = new List<SaleCommand>(4);
 
-        // Money events are legal in every state. They move Hold, and only Completing cares about them for State.
-        if (ApplyHoldEvent(e, commands)) return commands;
+        // Money events are legal in every state. They move Hold, and only Completing cares about them for State,
+        // except that a settled hold is the last thing a repaired pump waits for before its screen clears.
+        if (ApplyHoldEvent(e, commands)) return ClearIfRepaired(commands);
+
+        // Service reports are legal in every state.
+        if (e is SaleEvent.PumpService ps) return ApplyService(ps, commands);
 
         // Cancel and Fault are legal from anywhere that is not already terminal.
         switch (e)
         {
             case SaleEvent.Fault f when !IsTerminal(State):
-                End = EndReason.PumpFault;
-                EndDetail = f.Reason;
-                FaultCode = f.Code;
-                if (Volume > Volume.Zero)
-                {
-                    // Fuel moved before the fault. The driver owes for it, so settle to the metered amount rather than reverse.
-                    commands.Add(new SaleCommand.SendCompletion(SaleId, Money));
-                    return Transition(SaleState.Faulted, commands, $"FAULT: {f.Reason}, settling {Money} for fuel already dispensed", closeValve: true);
-                }
-                return Transition(SaleState.Faulted, commands, $"FAULT: {f.Reason}", closeValve: true, reverse: Hold is HoldStatus.Held or HoldStatus.Requested);
+                return FaultSale(f.Reason, f.Code, commands);
             case SaleEvent.Cancel c when State is SaleState.CardRead or SaleState.Authorizing or SaleState.ReadyToPump:
                 End = EndReason.DriverCancelled;
                 EndDetail = c.Reason;
@@ -352,6 +353,74 @@ public sealed class SaleStateMachine
         return false;
     }
 
+    /// <summary>
+    /// The pump stopped. Fuel that moved is settled to the metered amount; a
+    /// sale with no fuel gives the hold back. The code names the part, so the
+    /// notice can name the driver's next step.
+    /// </summary>
+    private IReadOnlyList<SaleCommand> FaultSale(string reason, string? code, List<SaleCommand> commands)
+    {
+        End = EndReason.PumpFault;
+        EndDetail = reason;
+        FaultCode = code;
+        if (Volume > Volume.Zero)
+        {
+            commands.Add(new SaleCommand.SendCompletion(SaleId, Money));
+            return Transition(SaleState.Faulted, commands, $"FAULT: {reason}, settling {Money} for fuel already dispensed", closeValve: true);
+        }
+        return Transition(SaleState.Faulted, commands, $"FAULT: {reason}", closeValve: true, reverse: Hold is HoldStatus.Held or HoldStatus.Requested);
+    }
+
+    /// <summary>
+    /// The pump's service status changed. Two reactions. Before the first
+    /// pour, an out-of-service pump ends the sale and gives the hold back,
+    /// because the driver must never be told to squeeze a trigger that cannot
+    /// deliver. After a fault, the repair of the part that caused it clears the
+    /// screen, once the bank has answered.
+    /// </summary>
+    private IReadOnlyList<SaleCommand> ApplyService(SaleEvent.PumpService ps, List<SaleCommand> commands)
+    {
+        Service = ps.Service;
+        commands.Add(new SaleCommand.Log(SaleId, $"pump {Service}"));
+        if (!Service.InService && State is SaleState.Authorizing or SaleState.ReadyToPump)
+        {
+            var code = Service.Codes[0];
+            return FaultSale($"pump out of service: {DiagnosticCodes.Find(code)?.Part ?? code}", code, commands);
+        }
+        if (RepairedAfterFault && HoldUnsettled)
+            commands.Add(new SaleCommand.Log(SaleId, $"pump back in service; screen held until the bank answers, hold is {Hold}"));
+        return ClearIfRepaired(commands);
+    }
+
+    /// <summary>This sale faulted for a part that needs service, and the pump no longer reports that part.</summary>
+    private bool RepairedAfterFault =>
+        State == SaleState.Faulted
+        && FaultCode is { } code
+        && DiagnosticCodes.Find(code) is { OutOfService: true }
+        && !Service.Holds(code);
+
+    /// <summary>The same rule as the notice timeout: the screen clears only once the bank has said where the money went.</summary>
+    private IReadOnlyList<SaleCommand> ClearIfRepaired(List<SaleCommand> commands) =>
+        RepairedAfterFault && !HoldUnsettled
+            ? Transition(SaleState.Idle, commands, "pump back in service")
+            : commands;
+
+    /// <summary>What the next driver reads while the pump cannot deliver: which part, and who fixes it.</summary>
+    private DriverNotice OutOfServiceNotice()
+    {
+        var code = DiagnosticCodes.Find(Service.Codes[0]);
+        var repair = code?.ClearedBy switch
+        {
+            ServiceAction.AttendantReset => "The attendant must reset it before the next sale.",
+            ServiceAction.SupplyRestored => "The fuel supply must be restored before the next sale.",
+            ServiceAction.PulserRepaired => "The meter must be repaired before the next sale.",
+            ServiceAction.LinkRestored => "The station is waiting for this pump to reconnect.",
+            ServiceAction.CashierReset => "The cashier must reset the station.",
+            _ => "",
+        };
+        return new($"Out of service: {code?.Part ?? Service.Codes[0]}", Join(repair, "Please use another pump."), DriverAction.UseAnotherPump);
+    }
+
     /// <summary>A cash sale settles at the till: whatever was prepaid and not pumped comes back as change.</summary>
     private void SettleCash(Money final)
     {
@@ -413,6 +482,11 @@ public sealed class SaleStateMachine
 
         switch (State)
         {
+            case SaleState.Idle when !Service.InService:
+                return OutOfServiceNotice();
+            case SaleState.Idle when End == EndReason.PumpFault:
+                // The last sale faulted and the pump has no condition left. Say so, and where that driver's money went.
+                return new("Pump back in service", Join(holdLine, "Insert or tap your card, or pay the cashier, for the next sale."), DriverAction.None);
             case SaleState.Idle when Hold == HoldStatus.Settled:
                 // The last sale's receipt stays on the screen until the next driver starts or the screen is reset.
                 return new($"Thank you: {Volume} for {Money}", Join(holdLine, "Insert or tap your card, or pay the cashier, for the next sale."), DriverAction.Leave);

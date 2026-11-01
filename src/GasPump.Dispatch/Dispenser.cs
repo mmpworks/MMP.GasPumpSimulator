@@ -39,11 +39,16 @@ public sealed record DispenserView(
     bool PulserDead,
     ArmedAuthorization? Armed,
     bool LedgerIntact,
-    string? CustodyPath)
+    string? CustodyPath,
+    /// <summary>The conditions holding the pump out of service. The station tells the sale whenever this changes.</summary>
+    ServiceStatus Service)
 {
+    /// <summary>The pump is out of service from the station's side: no dispenser has answered, or the link dropped.</summary>
+    private static readonly ServiceStatus LinkLost = new([DiagnosticCodes.LinkDispenserLost.Code]);
+
     /// <summary>What the station shows while no dispenser has answered yet.</summary>
     public static DispenserView Offline(string pumpId) =>
-        new(pumpId, "-", 0, "Offline", null, null, 0, false, false, false, null, false, true, false, false, null, true, null);
+        new(pumpId, "-", 0, "Offline", null, null, 0, false, false, false, null, false, true, false, false, null, true, null, LinkLost);
 }
 
 /// <summary>
@@ -133,7 +138,10 @@ public sealed class Dispenser
                 break;
 
             case PumpMessage.Close close:
+                // A close that interrupts a pour ends the delivery, and the sale must hear it to settle for the fuel.
+                var pouring = Pump.Phase is PumpPhase.Dispensing or PumpPhase.Paused;
                 Pump.CloseValve(close.Reason);
+                if (pouring) events.Add(new SaleEvent.NozzleHung(close.SaleId));
                 break;
 
             case PumpMessage.Stop stop:
@@ -195,13 +203,17 @@ public sealed class Dispenser
                 }
                 break;
         }
+
+        // Only a message can change a part, so only a message can put a faulted pump back in service.
+        if (m is not PumpMessage.Tick && Pump.ReturnToService())
+            Log.Write("pump", "back in service, {Service}", ("Service", Pump.Service.ToString()));
         return events;
     }
 
     public DispenserView View(string runId, int pid, string? custodyPath) => new(
         Options.PumpId, runId, pid, Pump.Phase.ToString(), Pump.LastFault, Pump.LastFaultCode, Totalizer.Total.MilliGallons,
         Pump.NozzleLifted, Pump.NozzleSeated, Pump.TriggerHeld, Pump.SelectedGrade, Pump.Poured,
-        Pump.SupplyAvailable, Pump.BreakawayOpen, Meter.PulserDead, Pump.Armed, Ledger.Verify() == 0, custodyPath);
+        Pump.SupplyAvailable, Pump.BreakawayOpen, Meter.PulserDead, Pump.Armed, Ledger.Verify() == 0, custodyPath, Pump.Service);
 }
 
 /// <summary>

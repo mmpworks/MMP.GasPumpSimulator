@@ -60,6 +60,13 @@ const holdText: Record<string, string> = {
                @click:close="showRecovery = false">
         <div class="text-body-2">{{ recovery.note }}</div>
       </v-alert>
+      <!-- The service strip: which parts hold the pump out of service, and what clears each. Lit only while something does. -->
+      <div v-if="state && !state.pump.inService" class="service-strip mb-2">
+        <v-icon size="18" color="error">mdi-alert-octagon-outline</v-icon>
+        <b>OUT OF SERVICE</b>
+        <v-chip v-for="(c, i) in state.pump.serviceCodes" :key="c" size="small" color="error" variant="flat" :title="state.pump.serviceParts[i]">{{ c }}</v-chip>
+        <span class="muted">{{ state.pump.serviceParts.join(' · ') }}</span>
+      </div>
       <v-alert v-if="sale" :type="noticeType" :title="sale.notice.headline" class="mb-3 notice">
         <div class="text-body-2">{{ sale.notice.detail }}</div>
         <div class="d-flex align-center ga-3 mt-2">

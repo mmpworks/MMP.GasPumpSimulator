@@ -339,12 +339,92 @@ public class PumpTests
 
         var (ok, reason, _) = rig.Pump.Arm("S2", rig.Token("S2", Money.FromDollars(30)));
         Assert.False(ok);
-        Assert.Equal("BreakawayOpen", reason);
+        Assert.Equal(DiagnosticCodes.PumpHoseBreakaway.Code, reason);
         Assert.Contains(rig.Ledger.Snapshot(), e => e.Kind == "arm.refused" && e.Detail.Contains("[PUMP.HOSE.BREAKAWAY]"));
 
         rig.Pump.ResetBreakaway();
         var (okAfter, _, _) = rig.Pump.Arm("S3", rig.Token("S3", Money.FromDollars(30)));
         Assert.True(okAfter);
+    }
+
+    [Fact]
+    public void Attendant_reset_returns_a_breakaway_faulted_pump_to_disarmed_and_clears_the_fault()
+    {
+        var rig = new Rig();
+        rig.ArmAndPour(Money.FromDollars(30));
+        rig.Run(5);
+        rig.Hydraulics.BreakawaySeparated = true;
+        rig.Run(1);
+        Assert.Equal(PumpPhase.Faulted, rig.Pump.Phase);
+        Assert.False(rig.Pump.ReturnToService());        // the coupling is still apart
+
+        rig.Pump.ResetBreakaway();
+        Assert.True(rig.Pump.ReturnToService());
+        Assert.Equal(PumpPhase.Disarmed, rig.Pump.Phase);
+        Assert.Null(rig.Pump.LastFault);
+        Assert.Null(rig.Pump.LastFaultCode);
+        Assert.True(rig.Pump.Service.InService);
+        Assert.Contains(rig.Ledger.Snapshot(), e => e.Kind == "pump.in-service" && e.Detail.Contains("[PUMP.HOSE.BREAKAWAY]"));
+    }
+
+    [Fact]
+    public void A_second_condition_keeps_the_pump_faulted_after_the_first_is_cleared()
+    {
+        var rig = new Rig();
+        rig.ArmAndPour(Money.FromDollars(30));
+        rig.Run(5);
+        rig.Hydraulics.BreakawaySeparated = true;
+        rig.Run(1);
+        rig.Hydraulics.SupplyAvailable = false;          // the tank runs dry while the hose is apart
+
+        rig.Pump.ResetBreakaway();
+        Assert.False(rig.Pump.ReturnToService());
+        Assert.Equal(PumpPhase.Faulted, rig.Pump.Phase);
+        Assert.Equal([DiagnosticCodes.PumpSupplyNoFlow.Code], rig.Pump.Service.Codes);
+        var (ok, reason, _) = rig.Pump.Arm("S2", rig.Token("S2", Money.FromDollars(30)));
+        Assert.False(ok);
+        Assert.Equal(DiagnosticCodes.PumpSupplyNoFlow.Code, reason);
+
+        rig.Hydraulics.SupplyAvailable = true;
+        Assert.True(rig.Pump.ReturnToService());
+        Assert.True(rig.Pump.Arm("S3", rig.Token("S3", Money.FromDollars(30))).Ok);
+    }
+
+    [Fact]
+    public void Arming_is_refused_while_the_tank_is_dry_or_the_pulser_is_dead()
+    {
+        var rig = new Rig();
+        rig.Hydraulics.SupplyAvailable = false;
+        Assert.Equal(DiagnosticCodes.PumpSupplyNoFlow.Code, rig.Pump.Arm("S1", rig.Token("S1", Money.FromDollars(30))).Reason);
+        rig.Hydraulics.SupplyAvailable = true;
+        rig.Meter.PulserDead = true;
+        Assert.Equal(DiagnosticCodes.PumpMeterNoPulse.Code, rig.Pump.Arm("S2", rig.Token("S2", Money.FromDollars(30))).Reason);
+        rig.Meter.PulserDead = false;
+        Assert.True(rig.Pump.Arm("S3", rig.Token("S3", Money.FromDollars(30))).Ok);
+    }
+
+    [Fact]
+    public void A_per_sale_fault_stays_faulted_until_the_next_arm()
+    {
+        var rig = new Rig();
+        rig.ArmAndPour(Money.FromDollars(30));
+        rig.Run(5);
+        rig.Meter.InjectPulses(5000);
+        rig.Run(1);
+        Assert.Equal(DiagnosticCodes.PumpMeterOverPulse.Code, rig.Pump.LastFaultCode);
+        Assert.True(rig.Pump.Service.InService);
+        Assert.False(rig.Pump.ReturnToService());        // nothing to repair; the next arm is the reset
+        Assert.Equal(PumpPhase.Faulted, rig.Pump.Phase);
+        Assert.True(rig.Pump.Arm("S2", rig.Token("S2", Money.FromDollars(30))).Ok);
+        Assert.Null(rig.Pump.LastFaultCode);
+    }
+
+    [Fact]
+    public void Only_the_per_sale_codes_clear_on_the_next_arm()
+    {
+        Assert.Equal(
+            ["PUMP.CTL.MAXTIME", "PUMP.CTL.OVERCEILING", "PUMP.MTR.OVERPULSE", "PUMP.MTR.STRAY"],
+            DiagnosticCodes.All.Where(c => !c.OutOfService).Select(c => c.Code).Order());
     }
 
     [Fact]

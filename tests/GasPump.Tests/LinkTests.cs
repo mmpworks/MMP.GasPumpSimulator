@@ -132,6 +132,44 @@ public sealed class LinkTests : IDisposable
         Assert.Contains(station.Ledger.Snapshot(), e => e.Kind == "link.down" && e.Detail.Contains("[LINK.DISPENSER.LOST]"));
     }
 
+    /// <summary>The port the last dispenser held can sit in TIME_WAIT for a moment after it closed. Retry the bind briefly.</summary>
+    private DispenserServer NewDispenserOnSamePort(int port)
+    {
+        var sw = Stopwatch.StartNew();
+        while (true)
+        {
+            try { return NewDispenser(port); }
+            catch (System.Net.Sockets.SocketException) when (sw.Elapsed < TimeSpan.FromSeconds(5)) { Thread.Sleep(100); }
+        }
+    }
+
+    [Fact]
+    public void Dispenser_link_lost_then_restored_clears_the_LINK_fault_and_admits_the_next_card()
+    {
+        var dispenser = NewDispenser();
+        var port = dispenser.Port;
+        using var station = NewStation(port, "STN-1");
+        WaitFor(() => station.Link.Connected && station.View.Phase != "Offline", TimeSpan.FromSeconds(5), () => "station never connected\n" + Tail(station));
+        station.PresentCard("Good");
+        WaitFor(() => station.Snapshot().State == SaleState.ReadyToPump, TimeSpan.FromSeconds(5), () => "never armed\n" + Tail(station));
+        station.StartFueling();
+        WaitFor(() => station.Snapshot().Volume > Volume.Zero, TimeSpan.FromSeconds(5), () => "no fuel recorded\n" + Tail(station));
+
+        dispenser.Dispose();
+        WaitFor(() => station.Snapshot().State == SaleState.Faulted && station.Snapshot().Hold == HoldStatus.Settled, TimeSpan.FromSeconds(5), () => "station did not fault and settle\n" + Tail(station));
+        Assert.Equal("LINK.DISPENSER.LOST", station.Snapshot().FaultCode);
+        var (ok, _, reason) = station.TryPresentCard("Good");
+        Assert.False(ok);
+        Assert.Contains("LINK.DISPENSER.LOST", reason);
+
+        using var back = NewDispenserOnSamePort(port);
+        WaitFor(() => station.Snapshot().State == SaleState.Idle, TimeSpan.FromSeconds(5), () => "LINK fault never cleared\n" + Tail(station));
+        Assert.Equal("Pump back in service", station.Snapshot().Notice.Headline);
+        Assert.True(station.View.Service.InService);
+        Assert.True(station.TryPresentCard("Good").Ok);
+        WaitFor(() => station.Snapshot().State == SaleState.ReadyToPump, TimeSpan.FromSeconds(5), () => "never armed after the link returned\n" + Tail(station));
+    }
+
     [Fact]
     public void Station_restart_sends_Stop_first_so_a_valve_left_open_closes_and_the_journal_closes_the_sale()
     {

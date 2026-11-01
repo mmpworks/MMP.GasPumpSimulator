@@ -26,7 +26,8 @@ A pay-at-the-pump fuel dispenser, simulated. Present a card, get a two-phase aut
 ## Run it
 
 ```
-dotnet test                       # 194 tests, about 60 s: 191 on a fake clock under three dispatch strategies, 3 over a real TCP socket
+dotnet test                       # 233 tests, about 70 s: 230 on a fake clock under three dispatch strategies, 3 over a real TCP socket
+cd app && npm run e2e             # 8 Playwright specs against the two live processes: sales, faults and repairs, the layout; about 2 min
 dotnet run --project src/GasPump.Host -- --strategy threaded                 # station; spawns the dispenser on port 5178
 dotnet run --project src/GasPump.Host -- --dispenser inproc                  # the old single process
 dotnet run --project src/GasPump.Dispenser -- --port 5178                    # a dispenser by hand, in its own terminal; the station adopts it
@@ -126,7 +127,9 @@ The under-recording is real and by design. The journal is one second old at wors
 
 ## Forecourt faults
 
-On the Host link tab, while fuel is flowing:
+A fault is a latched service condition. The part that failed holds the pump out of service until its repair: the attendant resets the breakaway, the tank is refilled, the pulser is repaired, the dispenser reconnects. While a condition holds, the face reads "Out of service" with the part, and the reader and the counter refuse every card and all cash. When the last condition clears, the pump returns to Disarmed and the face reads "Pump back in service" as soon as the bank has settled the faulted sale. Per-sale faults (spoofed or stray pulses) clear on the next arm, as before.
+
+In the left column, while fuel is flowing:
 
 - **Tank runs dry.** Three seconds later the pump faults with `PUMP.STP.NOFLOW`, closes for the gallons it metered, and the screen reads "Fuel supply stopped. You were charged only for the N gal delivered. Please use another pump."
 - **Kill the pulser.** 300 ms later: `PUMP.MTR.NOPULSE`. The fuel that moved uncounted is in the fault entry and is never billed.

@@ -388,6 +388,43 @@ public class SimulationTests
 
     [Theory]
     [MemberData(nameof(SimHarness.Strategies), MemberType = typeof(SimHarness))]
+    public void New_sale_on_an_approved_sale_reverses_its_hold_and_new_sale_while_fueling_settles_for_the_fuel(string strategy)
+    {
+        using var h = new SimHarness(strategy);
+        var card = TestCards.Get("Good");
+        var before = h.Sim.Issuer.AvailableBalance(card.Pan);
+
+        // Approved, nozzle in hand, operator presses New sale: the hold goes back.
+        var first = h.Sim.PresentCard("Good");
+        h.AdvanceUntilState(SaleState.ReadyToPump, TimeSpan.FromSeconds(5));
+        h.Sim.LiftNozzle();
+        h.Advance(TimeSpan.FromMilliseconds(300));
+        h.Sim.ResetSale();
+        h.Advance(TimeSpan.FromSeconds(1));
+        Assert.NotEqual(first, h.State.SaleId);
+        Assert.Equal(SaleState.Idle, h.State.State);
+        Assert.Empty(h.Sim.Issuer.OpenHolds);
+        Assert.Equal(before, h.Sim.Issuer.AvailableBalance(card.Pan));
+        Assert.Contains(h.Sim.Ledger.Snapshot(), e => e.Kind == "sale.superseded" && e.Detail.StartsWith(first) && e.Detail.Contains("reset"));
+
+        // Fueling, operator presses New sale: the valve closes and the driver pays for what moved, no more.
+        var second = h.Sim.PresentCard("Good");
+        h.AdvanceUntilState(SaleState.ReadyToPump, TimeSpan.FromSeconds(5));
+        h.Sim.StartFueling();
+        h.AdvanceUntilState(SaleState.Fueling, TimeSpan.FromSeconds(1));
+        h.Advance(TimeSpan.FromSeconds(2));
+        var delivered = h.State.Money;
+        Assert.True(delivered > Money.Zero);
+        h.Sim.ResetSale();
+        h.AdvanceUntil(() => h.State.State == SaleState.Idle && h.State.Hold == HoldStatus.Settled, TimeSpan.FromSeconds(5));
+        Assert.Equal(second, h.State.SaleId);
+        Assert.Equal(delivered, h.State.Money);
+        Assert.Empty(h.Sim.Issuer.OpenHolds);
+        Assert.Equal(before - delivered, h.Sim.Issuer.AvailableBalance(card.Pan));
+    }
+
+    [Theory]
+    [MemberData(nameof(SimHarness.Strategies), MemberType = typeof(SimHarness))]
     public void Second_card_while_the_nozzle_is_in_hand_is_refused_and_the_first_sale_keeps_going(string strategy)
     {
         using var h = new SimHarness(strategy);
@@ -576,10 +613,10 @@ public class SimulationTests
         h.Advance(TimeSpan.FromSeconds(1));
         Assert.Equal(HoldStatus.Settled, h.State.Hold);
 
-        // The next driver cannot arm a pump with a separated hose.
-        h.Sim.PresentCard("Good");
-        h.AdvanceUntilState(SaleState.Faulted, TimeSpan.FromSeconds(5));
-        Assert.Contains("BreakawayOpen", h.State.LastMessage);
+        // The next driver's card is refused before any money moves.
+        var (ok, _, reason) = h.Sim.TryPresentCard("Good");
+        Assert.False(ok);
+        Assert.Contains("PUMP.HOSE.BREAKAWAY", reason);
 
         h.Sim.ResetBreakaway();
         h.Advance(TimeSpan.FromMilliseconds(300));
@@ -606,6 +643,183 @@ public class SimulationTests
         Assert.Equal(counted, h.State.Volume);
         Assert.True(h.Sim.Meter.UnmeteredVolume > Volume.Zero);
         Assert.Equal(DriverAction.SeeAttendant, h.State.Notice.Action);
+    }
+
+    // ----- Service conditions: a fault that needs a repair holds the pump out of service until the repair, then clears.
+
+    /// <summary>Card, approval, grade, lift, seat, squeeze, and a few seconds of fuel.</summary>
+    private static void FuelForAWhile(SimHarness h, double seconds = 2)
+    {
+        h.Sim.PresentCard("Good");
+        h.AdvanceUntilState(SaleState.ReadyToPump, TimeSpan.FromSeconds(5));
+        h.Sim.StartFueling();
+        h.AdvanceUntilState(SaleState.Fueling, TimeSpan.FromSeconds(1));
+        h.Advance(TimeSpan.FromSeconds(seconds));
+    }
+
+    [Theory]
+    [MemberData(nameof(SimHarness.Strategies), MemberType = typeof(SimHarness))]
+    public void Attendant_reset_after_a_drive_off_clears_the_screen_at_once_when_the_hold_is_settled(string strategy)
+    {
+        using var h = new SimHarness(strategy, ThirtyDollarHold);
+        FuelForAWhile(h);
+        h.Sim.DriveOff();
+        h.AdvanceUntilState(SaleState.Faulted, TimeSpan.FromSeconds(1));
+        h.Advance(TimeSpan.FromSeconds(1));
+        Assert.Equal(HoldStatus.Settled, h.State.Hold);
+        Assert.Equal("Hose breakaway", h.State.Notice.Headline);
+
+        h.Sim.HangNozzle();
+        h.Sim.ResetBreakaway();
+        h.Advance(TimeSpan.FromMilliseconds(300));       // far short of the 30 s notice timeout
+        Assert.Equal(SaleState.Idle, h.State.State);
+        Assert.Equal("Pump back in service", h.State.Notice.Headline);
+        Assert.Equal(PumpPhase.Disarmed, h.Sim.Pump.Phase);
+        Assert.Null(h.Sim.View.FaultCode);
+        Assert.True(h.Sim.View.Service.InService);
+        Assert.Contains(h.Sim.Ledger.Snapshot(), e => e.Kind == "pump.in-service" && e.Detail.Contains("[PUMP.HOSE.BREAKAWAY]"));
+    }
+
+    [Theory]
+    [MemberData(nameof(SimHarness.Strategies), MemberType = typeof(SimHarness))]
+    public void Breakaway_reset_while_the_bank_still_owes_an_answer_keeps_the_screen_until_the_hold_settles(string strategy)
+    {
+        using var h = new SimHarness(strategy, ThirtyDollarHold);
+        FuelForAWhile(h);
+        h.Sim.Network.Mode = NetworkMode.Down;
+        h.Sim.DriveOff();
+        h.AdvanceUntilState(SaleState.Faulted, TimeSpan.FromSeconds(1));
+        h.Advance(TimeSpan.FromSeconds(1));
+        Assert.Equal(HoldStatus.SettlePending, h.State.Hold);
+
+        h.Sim.ResetBreakaway();
+        h.Advance(TimeSpan.FromMilliseconds(300));
+        Assert.Equal(SaleState.Faulted, h.State.State);  // the driver still needs to read where the money is
+        Assert.True(h.Sim.View.Service.InService);
+
+        h.Sim.Network.Mode = NetworkMode.Up;
+        h.Sim.DrainPendingCompletions();
+        h.Advance(TimeSpan.FromMilliseconds(500));
+        Assert.Equal(HoldStatus.Settled, h.State.Hold);
+        Assert.Equal(SaleState.Idle, h.State.State);
+        Assert.Equal("Pump back in service", h.State.Notice.Headline);
+    }
+
+    [Theory]
+    [MemberData(nameof(SimHarness.Strategies), MemberType = typeof(SimHarness))]
+    public void Tank_dry_while_idle_refuses_a_card_and_cash_with_the_code_and_a_refill_admits_the_next_card(string strategy)
+    {
+        using var h = new SimHarness(strategy, ThirtyDollarHold);
+        h.Sim.TankRunsDry();
+        h.Advance(TimeSpan.FromMilliseconds(300));
+        Assert.Equal(SaleState.Idle, h.State.State);
+        Assert.Equal("Out of service: submersible pump and supply line", h.State.Notice.Headline);
+        Assert.Equal(DriverAction.UseAnotherPump, h.State.Notice.Action);
+
+        var (ok, idle, reason) = h.Sim.TryPresentCard("Good");
+        Assert.False(ok);
+        Assert.Contains("PUMP.STP.NOFLOW", reason);
+        Assert.Equal(idle, h.Sim.PayCash(Money.FromDollars(10)));   // the cashier is refused as well; no new sale opened
+        h.Advance(TimeSpan.FromMilliseconds(300));
+        Assert.Equal(SaleState.Idle, h.State.State);
+        Assert.Empty(h.Sim.Issuer.OpenHolds);
+
+        h.Sim.TankRefilled();
+        h.Advance(TimeSpan.FromMilliseconds(300));
+        Assert.DoesNotContain("Out of service", h.State.Notice.Headline);
+        Assert.True(h.Sim.TryPresentCard("Good").Ok);
+        h.AdvanceUntilState(SaleState.ReadyToPump, TimeSpan.FromSeconds(5));
+    }
+
+    [Theory]
+    [MemberData(nameof(SimHarness.Strategies), MemberType = typeof(SimHarness))]
+    public void Dead_pulser_while_idle_refuses_a_card_with_the_code_and_a_repair_admits_the_next_card(string strategy)
+    {
+        using var h = new SimHarness(strategy, ThirtyDollarHold);
+        h.Sim.KillPulser();
+        h.Advance(TimeSpan.FromMilliseconds(300));
+        Assert.Equal("Out of service: meter pulser", h.State.Notice.Headline);
+        var (ok, _, reason) = h.Sim.TryPresentCard("Good");
+        Assert.False(ok);
+        Assert.Contains("PUMP.MTR.NOPULSE", reason);
+
+        h.Sim.FixPulser();
+        h.Advance(TimeSpan.FromMilliseconds(300));
+        Assert.True(h.Sim.TryPresentCard("Good").Ok);
+        h.AdvanceUntilState(SaleState.ReadyToPump, TimeSpan.FromSeconds(5));
+    }
+
+    [Theory]
+    [MemberData(nameof(SimHarness.Strategies), MemberType = typeof(SimHarness))]
+    public void Tank_dry_after_approval_ends_the_sale_before_the_first_pour_and_gives_the_hold_back(string strategy)
+    {
+        using var h = new SimHarness(strategy, ThirtyDollarHold);
+        var card = TestCards.Get("Good");
+        var before = h.Sim.Issuer.AvailableBalance(card.Pan);
+        h.Sim.PresentCard("Good");
+        h.AdvanceUntilState(SaleState.ReadyToPump, TimeSpan.FromSeconds(5));
+        h.Advance(TimeSpan.FromMilliseconds(300));
+
+        h.Sim.TankRunsDry();
+        h.AdvanceUntilState(SaleState.Faulted, TimeSpan.FromSeconds(1));
+        Assert.Equal("PUMP.STP.NOFLOW", h.State.FaultCode);
+        Assert.Equal("Fuel supply stopped", h.State.Notice.Headline);
+        Assert.Contains("No fuel was dispensed", h.State.Notice.Detail);
+        Assert.NotEqual(PumpPhase.Armed, h.Sim.Pump.Phase);
+        h.Advance(TimeSpan.FromSeconds(1));
+        Assert.Equal(HoldStatus.Released, h.State.Hold);
+        Assert.Equal(before, h.Sim.Issuer.AvailableBalance(card.Pan));
+
+        h.Sim.TankRefilled();
+        h.Advance(TimeSpan.FromMilliseconds(300));
+        Assert.Equal(SaleState.Idle, h.State.State);
+        Assert.Equal("Pump back in service", h.State.Notice.Headline);
+    }
+
+    [Theory]
+    [MemberData(nameof(SimHarness.Strategies), MemberType = typeof(SimHarness))]
+    public void A_second_condition_keeps_the_pump_out_of_service_after_the_first_is_cleared(string strategy)
+    {
+        using var h = new SimHarness(strategy, ThirtyDollarHold);
+        FuelForAWhile(h);
+        h.Sim.DriveOff();
+        h.AdvanceUntilState(SaleState.Faulted, TimeSpan.FromSeconds(1));
+        h.Sim.TankRunsDry();
+        h.Advance(TimeSpan.FromSeconds(1));
+
+        h.Sim.ResetBreakaway();
+        h.Advance(TimeSpan.FromMilliseconds(300));
+        Assert.Equal(SaleState.Idle, h.State.State);     // the breakaway that faulted this sale is fixed
+        Assert.Equal("Out of service: submersible pump and supply line", h.State.Notice.Headline);
+        Assert.Equal(PumpPhase.Faulted, h.Sim.Pump.Phase);
+        var (ok, _, reason) = h.Sim.TryPresentCard("Good");
+        Assert.False(ok);
+        Assert.Contains("PUMP.STP.NOFLOW", reason);
+
+        h.Sim.TankRefilled();
+        h.Advance(TimeSpan.FromMilliseconds(300));
+        Assert.Equal(PumpPhase.Disarmed, h.Sim.Pump.Phase);
+        Assert.True(h.Sim.TryPresentCard("Good").Ok);
+        h.AdvanceUntilState(SaleState.ReadyToPump, TimeSpan.FromSeconds(5));
+    }
+
+    [Theory]
+    [MemberData(nameof(SimHarness.Strategies), MemberType = typeof(SimHarness))]
+    public void A_per_sale_fault_from_spoofed_pulses_still_clears_on_the_next_arm(string strategy)
+    {
+        using var h = new SimHarness(strategy, ThirtyDollarHold);
+        FuelForAWhile(h);
+        h.Sim.AttackSpoofPulses(2000);
+        h.AdvanceUntilState(SaleState.Faulted, TimeSpan.FromSeconds(1));
+        Assert.Equal("PUMP.MTR.OVERPULSE", h.State.FaultCode);
+        Assert.True(h.Sim.View.Service.InService);
+
+        // Nothing to repair, so nothing holds the pump: the next card replaces the finished sale and arms.
+        Assert.True(h.Sim.TryPresentCard("Good").Ok);
+        h.AdvanceUntilState(SaleState.ReadyToPump, TimeSpan.FromSeconds(5));
+        h.Advance(TimeSpan.FromMilliseconds(300));
+        Assert.Equal(PumpPhase.Armed, h.Sim.Pump.Phase);
+        Assert.Null(h.Sim.Pump.LastFaultCode);
     }
 
     // ----- Attacks

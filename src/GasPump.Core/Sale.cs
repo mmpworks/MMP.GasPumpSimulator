@@ -116,6 +116,7 @@ public sealed record DriverNotice(string Headline, string Detail, DriverAction A
 [JsonDerivedType(typeof(Timeout), nameof(Timeout))]
 [JsonDerivedType(typeof(Cancel), nameof(Cancel))]
 [JsonDerivedType(typeof(Fault), nameof(Fault))]
+[JsonDerivedType(typeof(PumpService), nameof(PumpService))]
 public abstract record SaleEvent(string SaleId)
 {
     /// <summary>Grade is null when the driver will pick it at the pump after approval, which is the normal path.</summary>
@@ -151,6 +152,8 @@ public abstract record SaleEvent(string SaleId)
     public sealed record Cancel(string SaleId, string Reason) : SaleEvent(SaleId);
     /// <summary>Code is the diagnostic code of the part that failed, so the notice and the records can name it.</summary>
     public sealed record Fault(string SaleId, string Reason, string? Code = null) : SaleEvent(SaleId);
+    /// <summary>The pump's service status changed: a part broke, a part was fixed, the link dropped or came back. The station posts it once per change.</summary>
+    public sealed record PumpService(string SaleId, ServiceStatus Service) : SaleEvent(SaleId);
 }
 
 /// <summary>What the state machine asks the outside world to do. It never does any of it itself.</summary>
