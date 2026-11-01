@@ -47,6 +47,9 @@ public static class Contracts
                 changeDue = sim.Drawer.ChangeDue.Select(kv => new { saleId = kv.Key, cents = kv.Value.Cents }),
             },
             now = sim.Clock.GetUtcNow(),
+            runId = sim.RunId,
+            recovery = Recovery(sim.LastRecovery),
+            custody = new { path = sim.CustodyPath, journalPath = sim.JournalPath },
             limits = new
             {
                 maxCents = sim.Options.HardLimits.MaxMoneyPerSale.Cents,
@@ -82,6 +85,21 @@ public static class Contracts
         cashPrepaidCents = s.CashPrepaid.Cents,
         changeDueCents = s.ChangeDue.Cents,
         s.DeadlineAt,
+    };
+
+    public static object Recovery(RecoveryOutcome r) => new
+    {
+        kind = r.Kind.ToString(),
+        previousRunId = r.PreviousRunId,
+        r.SaleId,
+        tender = r.Tender.ToString(),
+        grade = r.Grade.ToString(),
+        gallons = r.Volume.Gallons,
+        cents = r.Money.Cents,
+        unrecordedUpToGallons = r.UnrecordedUpTo.Gallons,
+        snapshotAgeSeconds = r.SnapshotAge.TotalSeconds,
+        r.UnderRecorded,
+        r.Note,
     };
 
     public static object Log(LogLine l) => new

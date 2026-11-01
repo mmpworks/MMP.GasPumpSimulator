@@ -79,4 +79,15 @@ public sealed class Totalizer
         if (delivered.MilliGallons < 0) throw new ArgumentOutOfRangeException(nameof(delivered), "a totalizer never goes down");
         Interlocked.Add(ref _milliGallons, delivered.MilliGallons);
     }
+
+    /// <summary>
+    /// Seed the counter from the journal at start. Allowed once, and only
+    /// upward from zero: a totalizer that could be set lower is no totalizer.
+    /// </summary>
+    public void Restore(Volume journaled)
+    {
+        if (journaled.MilliGallons < 0) throw new ArgumentOutOfRangeException(nameof(journaled));
+        if (Interlocked.CompareExchange(ref _milliGallons, journaled.MilliGallons, 0) != 0)
+            throw new InvalidOperationException("a totalizer is restored once, before the first sale");
+    }
 }

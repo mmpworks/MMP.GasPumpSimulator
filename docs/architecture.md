@@ -216,6 +216,50 @@ Cash settles at the till (`CashDrawer`): the driver prepays, the pump stops on t
 
 The plain `EventLog` in `GasPump.Core` stays as a dependency-free fallback that renders the same templates itself; `Simulation` takes any `IEventLog`.
 
+## Power loss: the journal and the close-out
+
+A pump that loses power mid-sale has one job when it comes back: close the sale for what it knows, say how much it does not know, and be ready for the next driver. It never resumes. A resumed sale would need the nozzle still seated, the token still valid, and the meter trusted across the gap, and none of those hold after a reboot.
+
+```mermaid
+flowchart LR
+    T[every 1 s, and on every sale change] --> S[CaptureSnapshot]
+    S --> W[state.json.tmp] --> R[rename over state.json]
+    X[process dies] -.-> B[new process]
+    B --> L[StateJournal.Load]
+    L --> P[RecoveryPlan.Build<br/>pure function]
+    P --> A{kind}
+    A -->|ClosedOut| C[Complete for recorded money<br/>ledger: recovery.closeout UNDER-RECORDED]
+    A -->|Reversed| V[Reverse hold or refund cash<br/>ledger: recovery.reversed]
+    A -->|CompletionResent| M[Complete again, idempotent]
+    A -->|CleanStart| N[nothing open]
+    C & V & M & N --> I[fresh Idle sale, pump disarmed]
+```
+
+What the snapshot holds: the sale (id, state, tender, grade, ceiling, volume, money, flow, hold, cash prepaid), the pump phase, the store-and-forward queue and the tender per sale, the till, the site limits with the PIN failure count and lockout, the sealed totalizer, every burned nonce, the sale counter, and the in-process bank's accounts and holds. The bank is journaled because this simulator's bank lives in the pump's process; a real bank keeps its own books.
+
+What the restart does with it, in order: restore every store, build the plan, start the workers, write `recovery.restart` to the ledger, then carry the plan out through the payment worker as an ordinary `Complete` or `Reverse`. The pump itself needs nothing: a new process has no armed authorization, so the valve is shut by construction.
+
+Why the grade is in the journal: the close-out prices the recorded volume at the grade's price per gallon. It is never used to re-arm.
+
+The number it reports. The last snapshot is at most one period old, and fuel may have flowed until the process died, so the close-out records the metered volume and states an upper bound for what it missed: one period at the last flow rate. `recovery.closeout` carries the phrase `DELIVERY LIKELY UNDER-RECORDED`, the log line is at Error level, and the custody file has both. Nothing invents a number the meter did not count.
+
+The token key survives the reboot. With a journal configured, the pump's token key is derived from the custody key under its own label, so a token issued before the reboot fails after it on its nonce (`Replayed`), not on its signature. A random key per process would make a replay look like a forgery and hide the replay. The test `Replayed_token_is_still_refused_after_a_restart` pins this.
+
+## Two files: debug log and custody file
+
+| | Herald.OSS NDJSON | TesseraSeal custody file |
+|---|---|---|
+| Writer | Herald file sink | `ImmutableAuditFileSink` from Herald.Compliance, compiled in by source link |
+| Gets | every event from every worker | categories `ledger`, `sale`, `payment`, `admin`, `recovery`, `attack` |
+| Shape | one JSON object per line | header line, then one JCS-canonical event per line with an `audit_chain` block: `seq`, `prev_hash`, `payload_hash` (HMAC-SHA-256 under an HKDF session key), `key_version`, `key_fingerprint`, `format_version` |
+| Lifetime | one file per host session | one chain per run; a restart opens a new chain with a zero genesis, as the spec requires |
+| Check | read it | TesseraSeal's verifier: header, format, genesis, tenant, then per entry the binding, the sequence, the previous hash, the key fingerprint, and the MAC, in that order, with the spec's reason strings |
+| Reads live | yes | from a copy taken under shared access, because the sink holds the file open for append |
+
+Both sinks hang off the same Herald pipeline. The simulator writes one structured event; Herald fans it to the UI bridge, the debug file, and the custody bridge, so the three can never disagree about what happened.
+
+Out of scope here and stated as such: the daily Merkle seal and the HSM signature (primitives 2 and 3 of the spec). A one-pump simulator has primitive 1, the per-event HMAC chain, and the software key file stands in for the custodian.
+
 ## Timers, and what each one protects
 
 | Timer | Default | Fires when | Then |

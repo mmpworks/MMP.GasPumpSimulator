@@ -79,6 +79,20 @@ public sealed class PaymentGateway
 
     public Tender TenderOf(string saleId) { lock (_gate) return _tenders.GetValueOrDefault(saleId, Tender.Credit); }
 
+    /// <summary>For the journal: which tender each sale used, so a completion after a restart goes to the till or the bank correctly.</summary>
+    public IReadOnlyDictionary<string, Tender> Tenders { get { lock (_gate) return new Dictionary<string, Tender>(_tenders); } }
+
+    /// <summary>Bring back the store-and-forward queue and the tender map after a restart. The queue is the saga's compensation log; losing it is losing money.</summary>
+    public void Restore(IEnumerable<PendingAdvice> pending, IReadOnlyDictionary<string, Tender> tenders)
+    {
+        lock (_gate)
+        {
+            _pending.Clear();
+            _pending.AddRange(pending);
+            foreach (var kv in tenders) _tenders[kv.Key] = kv.Value;
+        }
+    }
+
     /// <summary>
     /// Card path. The request to the bank is the site's ceiling for the
     /// tender. The pump's ceiling is the lesser of that and the approved

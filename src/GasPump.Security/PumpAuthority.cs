@@ -26,6 +26,14 @@ public sealed class NonceStore
     {
         lock (_gate) return _seen.Add(nonce);
     }
+
+    /// <summary>For the journal. A restart must remember every nonce it burned, or a token replays across the reboot.</summary>
+    public IReadOnlyList<string> Export() { lock (_gate) return _seen.ToArray(); }
+
+    public void Import(IEnumerable<string> nonces)
+    {
+        lock (_gate) foreach (var n in nonces) _seen.Add(n);
+    }
 }
 
 /// <summary>Checks the HMAC, the pump id, the time window, and the nonce. In that order, so a forged token never touches the nonce store.</summary>

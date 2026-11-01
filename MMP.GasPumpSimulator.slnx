@@ -4,6 +4,7 @@
     <Project Path="src/GasPump.Payment/GasPump.Payment.csproj" />
     <Project Path="src/GasPump.Security/GasPump.Security.csproj" />
     <Project Path="src/GasPump.Pump/GasPump.Pump.csproj" />
+    <Project Path="src/GasPump.Custody/GasPump.Custody.csproj" />
     <Project Path="src/GasPump.Dispatch/GasPump.Dispatch.csproj" />
     <Project Path="src/GasPump.Host/GasPump.Host.csproj" />
   </Folder>

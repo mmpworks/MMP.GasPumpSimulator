@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { ref } from 'vue'
-import { api, ledger } from '../sim'
+import { ref, onMounted, watch } from 'vue'
+import { api, ledger, state } from '../sim'
 
 const verdict = ref<{ ok: boolean; text: string } | null>(null)
 async function verify() {
@@ -9,16 +9,33 @@ async function verify() {
     ? { ok: true, text: `chain intact, totalizer ${r.totalizer.toFixed(3)} gal` }
     : { ok: false, text: `BROKEN at entry ${r.verify}` }
 }
-const kindClass = (k: string) => k.includes('refused') || k.includes('fault') || k.includes('locked') ? 'kind-bad' : k.includes('ok') || k.includes('open') || k.includes('limits') ? 'kind-ok' : ''
+
+// The on-disk custody file, sealed by TesseraSeal. The in-memory ledger above is this run's view; the file is the evidence.
+const custody = ref<{ runId: string; path: string | null; files: string[] } | null>(null)
+const custodyVerdict = ref<{ ok: boolean; text: string } | null>(null)
+async function loadCustody() { try { custody.value = await api.custodyInfo() } catch { /* host not up yet */ } }
+async function verifyCustody() {
+  const r = await api.verifyCustody()
+  custodyVerdict.value = { ok: r.ok, text: r.ok ? `Status: PASS · ${r.lines} lines` : `Status: FAIL · ${r.reason}` }
+}
+onMounted(loadCustody)
+watch(() => state.value?.runId, loadCustody)
+
+const kindClass = (k: string) => k.includes('refused') || k.includes('fault') || k.includes('locked') || k.startsWith('recovery') ? 'kind-bad' : k.includes('ok') || k.includes('open') || k.includes('limits') ? 'kind-ok' : ''
+const basename = (p: string | null) => p ? p.split(/[\\/]/).pop() : ''
 </script>
 
 <template>
-  <!-- A plain class, never Vuetify's d-flex: its !important display would defeat the parent's v-show. -->
   <div class="ledger-root">
     <div class="row-wrap mb-2">
       <v-btn prepend-icon="mdi-link-lock" @click="verify">Verify chain</v-btn>
       <v-chip v-if="verdict" :color="verdict.ok ? 'success' : 'error'">{{ verdict.text }}</v-chip>
       <span v-else class="muted">every entry carries the hash of the one before it</span>
+    </div>
+    <div class="row-wrap mb-2">
+      <v-btn prepend-icon="mdi-certificate-outline" @click="verifyCustody">Verify custody file</v-btn>
+      <v-chip v-if="custodyVerdict" :color="custodyVerdict.ok ? 'success' : 'error'">{{ custodyVerdict.text }}</v-chip>
+      <span v-else-if="custody" class="muted" :title="custody.path ?? ''">TesseraSeal HMAC chain · {{ basename(custody.path) }} · {{ custody.files.length }} run file{{ custody.files.length === 1 ? '' : 's' }} on disk</span>
     </div>
     <div class="mono-list">
       <div v-for="e in [...ledger].reverse()" :key="e.seq" class="line ledger">

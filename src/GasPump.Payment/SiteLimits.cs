@@ -94,6 +94,18 @@ public sealed class SiteLimits
         return (ok, detail);
     }
 
+    /// <summary>For the journal. A reboot must not reset a lockout, or three wrong PINs and a power cycle would be the attack.</summary>
+    public void Restore(Money creditHold, Money debitHold, int failedPins, DateTimeOffset? lockedUntil)
+    {
+        lock (_gate)
+        {
+            _creditHold = creditHold;
+            _debitHold = debitHold;
+            _failedPins = failedPins;
+            _lockedUntil = lockedUntil;
+        }
+    }
+
     private bool IsLocked()
     {
         if (_lockedUntil is { } until && _clock.GetUtcNow() < until) return true;

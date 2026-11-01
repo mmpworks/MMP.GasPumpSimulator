@@ -52,4 +52,15 @@ public sealed class CashDrawer
     {
         lock (_gate) _changeDue.Remove(saleId);
     }
+
+    /// <summary>For the journal. Cash the till took and change it owes survive a restart.</summary>
+    public void Import(IReadOnlyDictionary<string, Money> open, IReadOnlyDictionary<string, Money> changeDue)
+    {
+        lock (_gate)
+        {
+            _open.Clear(); _changeDue.Clear();
+            foreach (var kv in open) _open[kv.Key] = kv.Value;
+            foreach (var kv in changeDue) _changeDue[kv.Key] = kv.Value;
+        }
+    }
 }

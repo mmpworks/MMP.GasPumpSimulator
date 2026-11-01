@@ -1,8 +1,12 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { state, flowTrace, dollars, nowMs, secondsLeft, mmss } from '../sim'
 
 const sale = computed(() => state.value?.sale)
+const recovery = computed(() => state.value?.recovery && state.value.recovery.kind !== 'CleanStart' ? state.value.recovery : null)
+const showRecovery = ref(true)
+// A new run means a new recovery record; show it again.
+watch(() => state.value?.runId, () => { showRecovery.value = true })
 const pct = computed(() => sale.value && sale.value.ceilingCents > 0 ? Math.min(100, (sale.value.cents / sale.value.ceilingCents) * 100) : 0)
 const maxTrace = computed(() => Math.max(1, ...flowTrace))
 const left = computed(() => secondsLeft(sale.value, nowMs.value))
@@ -50,6 +54,18 @@ const holdText: Record<string, string> = {
   <v-card class="pane-card">
     <v-card-title>Dispenser</v-card-title>
     <v-card-text>
+      <!-- What the restart did about the sale it found open. Stays until the operator closes it. -->
+      <v-alert v-if="recovery && showRecovery" :type="recovery.underRecorded ? 'error' : 'warning'" class="mb-3" closable
+               :title="recovery.kind === 'ClosedOut' ? 'Pump restarted mid-sale: closed out from the journal' : recovery.kind === 'Reversed' ? 'Pump restarted: open sale reversed' : 'Pump restarted: completion sent again'"
+               @click:close="showRecovery = false">
+        <div class="text-body-2">{{ recovery.note }}</div>
+        <div class="row-wrap mt-2">
+          <v-chip size="small">{{ recovery.saleId }} · {{ recovery.tender }} · {{ recovery.grade }}</v-chip>
+          <v-chip size="small">{{ recovery.gallons.toFixed(3) }} gal for {{ dollars(recovery.cents) }}</v-chip>
+          <v-chip v-if="recovery.underRecorded" size="small" color="error" variant="flat">up to {{ recovery.unrecordedUpToGallons.toFixed(3) }} gal unrecorded</v-chip>
+          <v-chip size="small" variant="text">journal was {{ recovery.snapshotAgeSeconds.toFixed(1) }} s old</v-chip>
+        </div>
+      </v-alert>
       <v-alert v-if="sale" :type="noticeType" :title="sale.notice.headline" class="mb-3 notice">
         <div class="text-body-2">{{ sale.notice.detail }}</div>
         <div class="d-flex align-center ga-3 mt-2">

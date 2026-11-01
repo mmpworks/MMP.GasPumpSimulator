@@ -1,27 +1,40 @@
 using System.Net.WebSockets;
-using System.Text;
 using System.Text.Json;
 using System.Threading.Channels;
-using GasPump.Core;
 using GasPump.Dispatch;
-using GasPump.Security;
 
 namespace GasPump.Host;
 
 /// <summary>
 /// Fans simulation events out to every connected socket. Each socket gets its
 /// own bounded queue; a slow client drops its oldest messages rather than
-/// slowing the simulation. The pump never waits on a browser.
+/// slowing the simulation. The pump never waits on a browser. When the host
+/// swaps the simulation (power loss), the hub rebinds and pushes a full state.
 /// </summary>
 public sealed class EventHub
 {
-    private readonly Simulation _sim;
+    private readonly SimulationHost _host;
     private readonly Lock _gate = new();
     private readonly List<Channel<object>> _clients = [];
 
-    public EventHub(Simulation sim)
+    public EventHub(SimulationHost host)
     {
-        _sim = sim;
+        _host = host;
+        Bind(host.Current);
+        host.Swapped += sim =>
+        {
+            Bind(sim);
+            // A new run: tell the UI to start its ledger over, replay what the new simulation wrote while it was
+            // being built (the recovery entries), then the full state.
+            Broadcast(new { type = "run", runId = sim.RunId });
+            foreach (var l in sim.Log.Snapshot()) Broadcast(Contracts.Log(l));
+            foreach (var e in sim.Ledger.Snapshot()) Broadcast(Contracts.Ledger(e));
+            Broadcast(Contracts.State(sim));
+        };
+    }
+
+    private void Bind(Simulation sim)
+    {
         sim.SaleChanged += s => Broadcast(Contracts.Sale(s));
         sim.Log.Written += l => Broadcast(Contracts.Log(l));
         sim.Ledger.Appended += e => Broadcast(Contracts.Ledger(e));
@@ -41,9 +54,10 @@ public sealed class EventHub
         try
         {
             // Full state first, then the stream. The UI never has to merge a gap.
-            channel.Writer.TryWrite(Contracts.State(_sim));
-            foreach (var l in _sim.Log.Snapshot().TakeLast(200)) channel.Writer.TryWrite(Contracts.Log(l));
-            foreach (var e in _sim.Ledger.Snapshot().TakeLast(200)) channel.Writer.TryWrite(Contracts.Ledger(e));
+            var sim = _host.Current;
+            channel.Writer.TryWrite(Contracts.State(sim));
+            foreach (var l in sim.Log.Snapshot().TakeLast(200)) channel.Writer.TryWrite(Contracts.Log(l));
+            foreach (var e in sim.Ledger.Snapshot().TakeLast(200)) channel.Writer.TryWrite(Contracts.Ledger(e));
 
             var pump = Task.Run(async () =>
             {
@@ -58,7 +72,7 @@ public sealed class EventHub
             var heartbeat = Task.Run(async () =>
             {
                 using var timer = new PeriodicTimer(TimeSpan.FromMilliseconds(500));
-                while (await timer.WaitForNextTickAsync(ct)) channel.Writer.TryWrite(Contracts.State(_sim));
+                while (await timer.WaitForNextTickAsync(ct)) channel.Writer.TryWrite(Contracts.State(_host.Current));
             }, ct);
 
             var buffer = new byte[1024];

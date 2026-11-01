@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>GasPump.Custody</RootNamespace>
+    <!-- TesseraSeal's chain-of-custody primitive 1 (per-event HMAC chain) and its file sink and verifier, compiled in
+         from the Herald.Compliance source by link. The simulator adds no cryptography of its own. Override the path
+         with -p:HeraldCompliancePath=... when the Herald checkout lives elsewhere. -->
+    <HeraldCompliancePath Condition="'$(HeraldCompliancePath)' == ''">$(MSBuildThisFileDirectory)..\..\..\Herald\Modules\Herald.Compliance\src\Audit</HeraldCompliancePath>
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="$(HeraldCompliancePath)\Chain\Constants.cs" Link="TesseraSeal\Chain\Constants.cs" />
+    <Compile Include="$(HeraldCompliancePath)\Chain\KeyDerivation.cs" Link="TesseraSeal\Chain\KeyDerivation.cs" />
+    <Compile Include="$(HeraldCompliancePath)\Chain\CanonicalJson.cs" Link="TesseraSeal\Chain\CanonicalJson.cs" />
+    <Compile Include="$(HeraldCompliancePath)\Chain\HmacChainCore.cs" Link="TesseraSeal\Chain\HmacChainCore.cs" />
+    <Compile Include="$(HeraldCompliancePath)\Chain\AuditChainEntry.cs" Link="TesseraSeal\Chain\AuditChainEntry.cs" />
+    <Compile Include="$(HeraldCompliancePath)\Chain\AuditFileHeader.cs" Link="TesseraSeal\Chain\AuditFileHeader.cs" />
+    <Compile Include="$(HeraldCompliancePath)\Chain\WireFormat.cs" Link="TesseraSeal\Chain\WireFormat.cs" />
+    <Compile Include="$(HeraldCompliancePath)\Chain\ChainVerifier.cs" Link="TesseraSeal\Chain\ChainVerifier.cs" />
+    <Compile Include="$(HeraldCompliancePath)\Chain\Errors.cs" Link="TesseraSeal\Chain\Errors.cs" />
+    <Compile Include="$(HeraldCompliancePath)\Chain\HeraldComplianceErrorCodes.cs" Link="TesseraSeal\Chain\HeraldComplianceErrorCodes.cs" />
+    <Compile Include="$(HeraldCompliancePath)\Chain\TenantIdValidator.cs" Link="TesseraSeal\Chain\TenantIdValidator.cs" />
+    <Compile Include="$(HeraldCompliancePath)\Chain\EnvelopeUtils.cs" Link="TesseraSeal\Chain\EnvelopeUtils.cs" />
+    <Compile Include="$(HeraldCompliancePath)\Chain\ChainKind.cs" Link="TesseraSeal\Chain\ChainKind.cs" />
+    <Compile Include="$(HeraldCompliancePath)\CanonicalEventBuilder.cs" Link="TesseraSeal\CanonicalEventBuilder.cs" />
+    <Compile Include="$(HeraldCompliancePath)\ImmutableAuditFileSink.cs" Link="TesseraSeal\ImmutableAuditFileSink.cs" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Herald.OSS" Version="0.14.0" />
+  </ItemGroup>
+</Project>

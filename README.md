@@ -13,23 +13,36 @@ A pay-at-the-pump fuel dispenser, simulated. Present a card, get a two-phase aut
 5. **Failover.** The sale is a saga. When the bank link runs late or dies, every hold is reversed or every completion queued, never lost. A late approval that arrives after the pump gave up is reversed, never armed. The pump's screen says what happened, where your money is, and what to do: try again, use another pump, use another card, see the attendant, or go. The screen clears for the next driver after 30 s, but not while the bank still owes an answer.
 6. **Tender.** Credit, debit, or cash. Credit asks the bank for the site's credit ceiling. Debit asks for the site's debit ceiling and the pump gets the lesser of that and the bank's answer, so a $50 debit ceiling against a $900 balance holds $50 and against $18.50 holds $18.50. Cash goes to the cashier, and the cash amount is the ceiling to the cent: no bank, no hold, change or a refund at the till.
 7. **Administrator.** A back-office panel sets the credit and debit ceilings behind an admin PIN. Three wrong PINs lock it for five minutes. Every attempt is in the ledger. Raise the debit ceiling to $5000 and the bank will approve what the card has, and the pump will still clamp it to its own $500 hard limit, because the site's ceilings are business limits and the pump's are safety limits.
-8. **Logging on Herald.OSS.** Every worker writes structured events through [Herald.OSS](https://github.com/mmpworks/Herald.OSS) 0.14.0. A bridge sink feeds the UI stream and the tests; the host adds a console sink and an NDJSON file per session so a run can be reviewed later with every property intact.
+8. **Power loss.** A state journal is rewritten every second and on every sale change. A restart reads it, closes the sale it finds open for the fuel that was recorded, says in the ledger and the log that delivery is likely under-recorded by up to one second of flow, returns the hold or cash when nothing was pumped, and starts a fresh sale. Site limits, the admin lockout, burned nonces, the store-and-forward queue, the till, and the sealed totalizer all come back. There is no resume: a sale interrupted by a reboot is closed, never continued.
+9. **Two files, two jobs.** The Herald.OSS NDJSON file is for debugging and takes everything. The custody file is for audit: an append-only, HMAC-chained record written by TesseraSeal's `ImmutableAuditFileSink`, one chain per run, carrying the ledger, the sale open and close, the money outcomes, the admin attempts, and the attacks. TesseraSeal's verifier checks it from the Ledger tab, and a single changed byte names the entry that broke.
+10. **Logging on Herald.OSS.** Every worker writes structured events through [Herald.OSS](https://github.com/mmpworks/Herald.OSS) 0.14.0. A bridge sink feeds the UI stream and the tests; the host adds a console sink and an NDJSON file per session so a run can be reviewed later with every property intact.
 9. **Concurrency.** Three workers, sale, pump, and payment, pass messages through bounded mailboxes and share no state. How they run is a Strategy: `ThreadedDispatch` is a thread per worker with blocking queues. `ChannelDispatch` is a Task per worker over bounded channels. `AsyncProxyDispatch` is the 2008 machine without the 2008 threads: each worker is an iterator-driven state machine from [MMP.AsyncProxy](https://github.com/mmpworks/MMP.AsyncProxy), its loop yields a future for the next message, and the loop resumes on a pool thread when one is posted. Every piece of it would compile for .NET 3.5. One end-to-end test runs the same sale under all three.
 
 ## Run it
 
 ```
-dotnet test                       # 149 tests, about 27 s, on a fake clock, every end-to-end theory under three dispatch strategies
+dotnet test                       # 174 tests, about 40 s, on a fake clock, every end-to-end theory under three dispatch strategies
 cd app && npm install && npm run build && npx electron .
 ```
 
 The Electron app starts the host for you on `localhost:5177`. Set `GASPUMP_STRATEGY=channel` or `GASPUMP_STRATEGY=asyncproxy` to run the Task-and-Channel or the AsyncProxy dispatch instead of threads. Set `GASPUMP_HOST=external` if you started the host yourself with `dotnet run --project src/GasPump.Host -- --strategy asyncproxy`.
 
-MMP.AsyncProxy is a sibling checkout, referenced by project from `..\MMP.AsyncProxy` until the package publishes. Point elsewhere with `-p:AsyncProxyProjectPath=<path to MMP.AsyncProxy.csproj>`.
+MMP.AsyncProxy is a sibling checkout, referenced by project from `..\MMP.AsyncProxy` until the package publishes. Point elsewhere with `-p:AsyncProxyProjectPath=<path to MMP.AsyncProxy.csproj>`. TesseraSeal's chain code is compiled in from the sibling `..\Herald\Modules\Herald.Compliance\src\Audit` checkout by source link; point elsewhere with `-p:HeraldCompliancePath=<that folder>`.
+
+### The files on disk
+
+Everything lands in `%LOCALAPPDATA%\MMP.GasPumpSimulator\logs` (set `GASPUMP_LOG_DIR` to move it):
+
+| File | Written by | Job |
+|---|---|---|
+| `gaspump-<date>-<time>.ndjson` | Herald.OSS file sink | Debug log. Every event from every worker, with properties. |
+| `custody-<run>.ndjson` | TesseraSeal `ImmutableAuditFileSink` | Evidence. HMAC-SHA-256 chain, one per run, header line first, every line newline-terminated. Verified by TesseraSeal's verifier. |
+| `state.json` | the simulator, every second | The journal a restart recovers from. Rewritten atomically. |
+| `custody.ikm` | the host, once | The software key that seals the custody files. The spec puts this in a KMS; the simulator keeps it beside the files so the verifier can read it. `GASPUMP_CUSTODY_IKM_HEX` overrides it. |
 
 ### The log file
 
-The host writes one Herald.OSS NDJSON file per session to `%LOCALAPPDATA%\MMP.GasPumpSimulator\logs\gaspump-<date>-<time>.ndjson`. Set `GASPUMP_LOG_DIR` to put it elsewhere. The event log panel shows the path, and its **Save .txt** and **Save .json** buttons download a copy of everything since the host started. `GET /api/logfile` returns the path; `GET /api/log/export?format=text|json` returns the copy.
+The host writes one Herald.OSS NDJSON file per session. The event log panel shows the path, and its **Save .txt** and **Save .json** buttons download a copy of everything since the host started. `GET /api/logfile` returns the path; `GET /api/log/export?format=text|json` returns the copy.
 
 Each NDJSON line carries the time, level, category (the worker: sale, pump, payment, admin, attack, network), the rendered message, and the properties. To read a session back:
 
@@ -84,6 +97,23 @@ t+ 13s  Idle         pump=Stopped     $4.26  1.122 gal   nozzle hung, completion
 
 Pull the link **Down** instead and the reversal itself cannot get through. It goes into the same store-and-forward queue as completions, the screen says "A temporary hold may show on your card. It releases automatically when our bank link returns", and **Drain queued** sends it when the link is back. The tests `Late_approval_is_reversed_not_armed_and_the_card_ends_untouched` and `Bank_unreachable_after_timeout_queues_the_reversal_and_releases_when_the_link_returns` run both under each dispatch strategy.
 
+## Pull the plug
+
+Start a sale, let it pump a few seconds, and press **Pull the plug** on the Host link tab. The host tears the simulation down with no close-out and no final save, then builds a new one on the same journal. The dispenser shows what the restart decided:
+
+```
+Pump restarted mid-sale: closed out from the journal
+S0001 · Credit · Regular · 1.054 gal for $3.69 · up to 0.167 gal unrecorded · journal was 0.4 s old
+```
+
+The ledger carries `recovery.restart` and `recovery.closeout ... DELIVERY LIKELY UNDER-RECORDED by up to 0.167 gal`, the log carries the same at Error level, the hold settles to the recorded money, and the next driver starts clean. Pull the plug while the pump is armed and nothing has poured, and the hold is reversed instead. The tests `Power_loss_mid_fuel_closes_the_sale_for_the_recorded_money_and_flags_under_delivery`, `Power_loss_while_armed_with_no_fuel_reverses_the_hold`, and `Power_loss_during_a_cash_sale_owes_change_for_the_unpumped_part` run under every dispatch strategy.
+
+The under-recording is real and by design. The journal is one second old at worst, so up to one second of flow at the last rate can leave the hose after the last record. The restart says so rather than guessing a number.
+
+## The custody file, attacked
+
+Press **Verify custody file** on the Ledger tab: `Status: PASS · 41 lines`. Change one byte of any entry in the file and press it again: `Status: FAIL · payload_hash MAC mismatch at seq 7`. Cut the final newline, as a crash mid-write would, and the verifier refuses the whole file. The test `Custody_file_verifies_under_TesseraSeal_and_a_tampered_byte_fails_at_the_right_entry` does all three.
+
 ## The admin panel, attacked
 
 Two attacks live on the Administrator panel. **Brute-force the PIN** tries 0000, 0001, 0002 and stops: the third wrong PIN locks the panel for five minutes, the ledger shows `admin.refused`, `admin.refused`, `admin.locked`, and nothing changed. **Debit ceiling $5000 with this PIN** needs the real PIN, and then shows why the panel is business logic and the pump is the safety: the bank approves the card's $900, and the pump arms at $500 with `arm.ok ... clamped` in the ledger. The tests `Brute_forcing_the_admin_pin_locks_the_panel_and_changes_nothing` and `Admin_raises_the_debit_ceiling_to_5000_and_the_pump_still_clamps_at_its_hard_limit` run both under each dispatch strategy.
@@ -103,7 +133,8 @@ src/GasPump.Core       units, pricing, the sale state machine (a table, no I/O)
 src/GasPump.Payment    cards, issuer, network, gateway, signed token, site limits (admin), cash drawer
 src/GasPump.Security   hard limits, verifier, nonce store, pump authority, ledger, totalizer
 src/GasPump.Pump       hydraulics, meter, taper policy, pump controller
-src/GasPump.Dispatch   IDispatchStrategy, ThreadedDispatch, ChannelDispatch, AsyncProxyDispatch, Simulation, HeraldEventLog (Herald.OSS)
+src/GasPump.Custody    TesseraSeal's chain-of-custody sink and verifier, compiled in from Herald.Compliance by source link
+src/GasPump.Dispatch   IDispatchStrategy, ThreadedDispatch, ChannelDispatch, AsyncProxyDispatch, Simulation, HeraldEventLog (Herald.OSS), journal and recovery
 src/GasPump.Host       minimal API + WebSocket hub
 app/                   Electron + Vite + Vue 3 + TypeScript
 tests/GasPump.Tests    xunit on a FakeTimeProvider

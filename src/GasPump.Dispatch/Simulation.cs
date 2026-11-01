@@ -2,6 +2,8 @@ using GasPump.Core;
 using GasPump.Payment;
 using GasPump.Pump;
 using GasPump.Security;
+using MMP.Herald.Compliance.Audit;
+using MMP.Herald.Events;
 
 namespace GasPump.Dispatch;
 
@@ -18,7 +20,11 @@ public sealed record SimulationOptions(
     TaperPolicy Taper,
     Pricing Pricing,
     SaleTimeouts Timeouts,
-    PaymentGatewayOptions Gateway)
+    PaymentGatewayOptions Gateway,
+    /// <summary>Where the state journal and the TesseraSeal custody file go. Null runs with neither, as the tests do by default.</summary>
+    JournalOptions? Journal = null,
+    /// <summary>Extra Herald sinks for the debug log (a file, the console). The UI bridge and the custody bridge are always wired.</summary>
+    Action<MMP.Herald.Quick.QuickLogBuilder>? LogSinks = null)
 {
     public static SimulationOptions Default => new(
         PumpId: "PUMP-07",
@@ -63,19 +69,35 @@ public sealed class Simulation : IDisposable
     private int _saleCounter;
     private int _inflightPayments;
 
-    /// <param name="log">Where the story goes. Default is a Herald.OSS pipeline with only the bridge back to this simulation; the host adds file and console sinks.</param>
+    /// <param name="log">A log to use instead of the default Herald pipeline. Leave null in the host; tests may pass a plain EventLog. Default is a Herald.OSS pipeline with only the bridge back to this simulation; the host adds file and console sinks.</param>
     public Simulation(IDispatchStrategy dispatch, TimeProvider clock, SimulationOptions? options = null, IssuerSimulator? issuer = null, byte[]? hmacKey = null, IEventLog? log = null)
     {
         _dispatch = dispatch;
         _clock = clock;
         _options = options ?? SimulationOptions.Default;
         _ownsLog = log is null;
-        Log = log ?? new HeraldEventLog(clock);
+        // Two files with two jobs. The Herald debug log takes everything. The TesseraSeal custody file takes the
+        // evidence: what the pump did, what the sale did, where the money went, and who touched the admin panel.
+        if (_options.Journal is { } j)
+        {
+            Directory.CreateDirectory(j.Directory);
+            RunId = j.RunId ?? $"RUN-{clock.GetUtcNow():yyyyMMdd-HHmmss}-{Guid.NewGuid().ToString("N")[..6]}";
+            _custody = new ImmutableAuditFileSink(j.CustodyPath(RunId), j.TenantId, RunId, j.Ikm);
+            CustodyPath = j.CustodyPath(RunId);
+        }
+        else RunId = "RUN-unjournaled";
+        Log = log ?? new HeraldEventLog(clock, _options.LogSinks, _custody is null ? null : (_custody, IsEvidence));
         Ledger = new EventLedger(clock);
         Totalizer = new Totalizer();
         Issuer = issuer ?? IssuerSimulator.WithTestCards();
         Network = new NetworkFaultPolicy();
-        var key = hmacKey ?? System.Security.Cryptography.RandomNumberGenerator.GetBytes(32);
+        // The token key is device configuration: it must be the same key after a reboot, or every token issued
+        // before the reboot fails on signature instead of on the nonce it already burned. With a journal, derive
+        // it from the custody IKM under its own label; without one, a fresh random key is fine for a one-off run.
+        var key = hmacKey
+            ?? (_options.Journal is { } jk
+                ? System.Security.Cryptography.HKDF.DeriveKey(System.Security.Cryptography.HashAlgorithmName.SHA256, jk.Ikm, 32, info: System.Text.Encoding.UTF8.GetBytes("gaspump.token-key.v1"))
+                : System.Security.Cryptography.RandomNumberGenerator.GetBytes(32));
         Signer = new HmacAuthorizationSigner(key);
         _networkSim = new NetworkSimulator(Network, clock);
         Site = new SiteLimits(clock, _options.HoldAmount, _options.DebitHold, _options.AdminPin);
@@ -93,6 +115,14 @@ public sealed class Simulation : IDisposable
         Meter = new Meter();
         Pump = new PumpController(Authority, new Hydraulics(_options.NominalFlow), Meter, Totalizer, Ledger, _options.Pricing, _options.Taper, clock);
 
+        // The ledger is mirrored into Herald under its own category, which is how it reaches the custody file.
+        Ledger.Appended += e => Log.Write("ledger", "#{Seq} {Kind} {Detail}", ("Seq", e.Seq), ("Kind", e.Kind), ("Detail", e.Detail), ("Hash", e.Hash), ("Prev", e.PrevHash));
+
+        // Restore from the journal before any worker runs, then decide what to do about the sale that was open.
+        var snapshot = _options.Journal is { } jo ? StateJournal.Load(jo.StatePath) : null;
+        if (snapshot is not null) Restore(snapshot);
+        LastRecovery = RecoveryPlan.Build(snapshot, clock.GetUtcNow(), _options.Journal?.Period ?? TimeSpan.FromSeconds(1));
+
         _sale = NewSale();
 
         _saleBox = dispatch.CreateMailbox<SaleEvent>("sale", 1024);
@@ -104,7 +134,125 @@ public sealed class Simulation : IDisposable
         _owned.Add(dispatch.StartWorker("payment", _paymentBox, HandlePaymentMessage));
         _owned.Add(dispatch.StartTicker("pump-tick", _options.TickPeriod, _pumpBox, () => new PumpMessage.Tick(_options.TickPeriod)));
 
-        Log.Write("sim", "started with {Dispatch} dispatch, pump {PumpId}, hold {Hold}", ("Dispatch", dispatch.Name), ("PumpId", _options.PumpId), ("Hold", _options.HoldAmount));
+        Log.Write("sim", "started with {Dispatch} dispatch, pump {PumpId}, hold {Hold}, run {RunId}", ("Dispatch", dispatch.Name), ("PumpId", _options.PumpId), ("Hold", _options.HoldAmount), ("RunId", RunId));
+
+        ApplyRecovery(LastRecovery, snapshot);
+
+        if (_options.Journal is { } period)
+        {
+            _journalTimer = clock.CreateTimer(_ => SaveJournal(), null, period.Period, period.Period);
+            SaveJournal();
+        }
+    }
+
+    private readonly ImmutableAuditFileSink? _custody;
+    private ITimer? _journalTimer;
+    private readonly Lock _journalGate = new();
+
+    /// <summary>Which categories are evidence for the custody file. The rest is debugging and stays in the Herald file.</summary>
+    private static bool IsEvidence(LogEvent e) => e.Category.Value is "ledger" or "sale" or "payment" or "admin" or "recovery" or "attack";
+
+    public string RunId { get; }
+    public string? CustodyPath { get; }
+    public string? JournalPath => _options.Journal?.StatePath;
+    /// <summary>What this run did about the sale the previous run left open. CleanStart when there was none.</summary>
+    public RecoveryOutcome LastRecovery { get; }
+
+    /// <summary>
+    /// Run TesseraSeal's verifier over this run's custody file. The sink still
+    /// holds the file open for append, so the verifier reads a copy taken under
+    /// shared access, which is also what an auditor does with a live file.
+    /// </summary>
+    public (bool Ok, long? FailureAtSeq, string? Reason, int Lines) VerifyCustody()
+    {
+        if (_options.Journal is not { } j || CustodyPath is null) return (false, null, "no custody file: journal is off", 0);
+        var copy = Path.Combine(Path.GetTempPath(), $"custody-verify-{Guid.NewGuid():N}.ndjson");
+        try
+        {
+            using (var src = new FileStream(CustodyPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+            using (var dst = File.Create(copy)) src.CopyTo(dst);
+            var ok = ImmutableAuditFileSink.VerifyChain(copy, j.Ikm, out var seq, out var reason);
+            var lines = File.ReadLines(copy).Count();
+            return (ok, seq, reason, lines);
+        }
+        finally { try { File.Delete(copy); } catch (IOException) { } }
+    }
+
+    private void Restore(JournalSnapshot s)
+    {
+        Totalizer.Restore(new Volume(s.TotalizerMilliGallons));
+        Nonces.Import(s.Nonces);
+        Issuer.Import(s.Issuer);
+        Site.Restore(new Money(s.CreditHoldCents), new Money(s.DebitHoldCents), s.FailedPins, s.LockedUntil);
+        Drawer.Import(
+            s.CashOpenCents.ToDictionary(kv => kv.Key, kv => new Money(kv.Value)),
+            s.CashChangeDueCents.ToDictionary(kv => kv.Key, kv => new Money(kv.Value)));
+        Gateway.Restore(
+            s.Pending.Select(p => new PendingAdvice(p.SaleId, Enum.Parse<PendingKind>(p.Kind), new Money(p.FinalCents))),
+            s.Tenders.ToDictionary(kv => kv.Key, kv => Enum.Parse<Tender>(kv.Value)));
+        _saleCounter = s.SaleCounter;
+    }
+
+    /// <summary>
+    /// Close out what the last run left open. The pump is already disarmed (a
+    /// new process has no armed authorization), so the only work is money, and
+    /// the only honest thing to say about volume is what was recorded.
+    /// </summary>
+    private void ApplyRecovery(RecoveryOutcome r, JournalSnapshot? snapshot)
+    {
+        if (snapshot is null) return;
+        Ledger.Append("recovery.restart", $"run {RunId} started from journal of {r.PreviousRunId}, saved {r.SnapshotAge.TotalSeconds:0.0} s before, totalizer {Totalizer.Total}");
+        switch (r.Kind)
+        {
+            case RecoveryKind.ClosedOut:
+                Ledger.Append("recovery.closeout", $"{r.SaleId} {r.Tender} {r.Grade} {r.Volume} {r.Money} DELIVERY LIKELY UNDER-RECORDED by up to {r.UnrecordedUpTo}");
+                Log.Error("recovery", "{Note}", ("Note", r.Note), ("SaleId", r.SaleId), ("Tender", r.Tender), ("Grade", r.Grade), ("Volume", r.Volume), ("Money", r.Money), ("UnrecordedUpTo", r.UnrecordedUpTo), ("DeliveryConfidence", "under-recorded"));
+                _paymentBox.Post(new PaymentMessage.Complete(r.SaleId!, r.Money));
+                break;
+            case RecoveryKind.Reversed:
+                Ledger.Append("recovery.reversed", $"{r.SaleId} {r.Tender} no fuel recorded, hold or cash returned");
+                Log.Warn("recovery", "{Note}", ("Note", r.Note), ("SaleId", r.SaleId), ("Tender", r.Tender));
+                _paymentBox.Post(new PaymentMessage.Reverse(r.SaleId!));
+                break;
+            case RecoveryKind.CompletionResent:
+                Ledger.Append("recovery.completion", $"{r.SaleId} {r.Tender} {r.Volume} {r.Money} completion sent again");
+                Log.Warn("recovery", "{Note}", ("Note", r.Note), ("SaleId", r.SaleId), ("Money", r.Money));
+                _paymentBox.Post(new PaymentMessage.Complete(r.SaleId!, r.Money));
+                break;
+            default:
+                Log.Write("recovery", "{Note}", ("Note", r.Note));
+                break;
+        }
+        if (Gateway.Pending.Count > 0) _paymentBox.Post(new PaymentMessage.DrainPending(CurrentSaleId));
+    }
+
+    private JournalSnapshot CaptureSnapshot()
+    {
+        SaleSnapshot s;
+        int counter;
+        lock (_gate) { s = _sale.Snapshot(_saleDeadline); counter = _saleCounter; }
+        return new JournalSnapshot(
+            JournalSnapshot.CurrentVersion, _clock.GetUtcNow(), RunId, _options.PumpId, counter,
+            new JournalSale(s.SaleId, s.State.ToString(), s.Tender.ToString(), s.Grade.ToString(), s.GradeSelected, s.CardName,
+                s.Ceiling.Cents, s.Volume.MilliGallons, s.Money.Cents, s.Flow.MilliGallonsPerSecond, s.Hold.ToString(), s.CashPrepaid.Cents),
+            Pump.Phase.ToString(), Pump.SelectedGrade?.ToString(),
+            Gateway.Pending.Select(p => new JournalPending(p.SaleId, p.Kind.ToString(), p.Final.Cents)).ToList(),
+            Gateway.Tenders.ToDictionary(kv => kv.Key, kv => kv.Value.ToString()),
+            Drawer.Open.ToDictionary(kv => kv.Key, kv => kv.Value.Cents),
+            Drawer.ChangeDue.ToDictionary(kv => kv.Key, kv => kv.Value.Cents),
+            Site.CreditHold.Cents, Site.DebitHold.Cents, Site.FailedPins, Site.LockedUntil,
+            Totalizer.Total.MilliGallons, Nonces.Export().ToList(), Issuer.Export());
+    }
+
+    /// <summary>Write the snapshot. Called by the one-second timer and on every sale change, serialized so two never interleave.</summary>
+    public void SaveJournal()
+    {
+        if (_options.Journal is not { } j) return;
+        lock (_journalGate)
+        {
+            try { StateJournal.Save(j.StatePath, CaptureSnapshot()); }
+            catch (Exception ex) { Log.Error("journal", "snapshot failed: {Message}", ("Message", ex.Message)); }
+        }
     }
 
     private readonly bool _ownsLog;
@@ -289,13 +437,32 @@ public sealed class Simulation : IDisposable
     private void HandleSaleEvent(SaleEvent e)
     {
         IReadOnlyList<SaleCommand> commands;
+        SaleState before, after;
+        SaleSnapshot snap;
         lock (_gate)
         {
             if (e.SaleId != _sale.SaleId) { HandleOrphanEvent(e); return; }
+            before = _sale.State;
             commands = _sale.Apply(e);
+            after = _sale.State;
+            snap = _sale.Snapshot();
         }
         foreach (var c in commands) Execute(c);
+        RecordSaleBoundary(e, before, after, snap);
         Publish();
+    }
+
+    /// <summary>
+    /// The session between the driver and the pump, as ledger entries: one at
+    /// the open, one at the close. With the pump's own entries between them,
+    /// the custody file tells the whole sale without the debug log.
+    /// </summary>
+    private void RecordSaleBoundary(SaleEvent e, SaleState before, SaleState after, SaleSnapshot s)
+    {
+        if (before == SaleState.Idle && after == SaleState.Authorizing)
+            Ledger.Append("sale.open", $"{s.SaleId} {s.Tender} {(s.Tender == Tender.Cash ? s.CashPrepaid.ToString() : s.CardName)} grade {(s.GradeSelected ? s.Grade.ToString() : "unselected")}");
+        else if (before != after && (after == SaleState.Idle || SaleStateMachine.IsTerminal(after)) && before != SaleState.Idle)
+            Ledger.Append("sale.close", $"{s.SaleId} {after} {s.End} {s.Volume} {s.Money} hold {s.Hold}{(s.Tender == Tender.Cash ? $" change {s.ChangeDue}" : "")}");
     }
 
     /// <summary>
@@ -545,15 +712,33 @@ public sealed class Simulation : IDisposable
         SaleSnapshot snap;
         lock (_gate) snap = _sale.Snapshot(_saleDeadline);
         SaleChanged?.Invoke(snap);
+        SaveJournal();
     }
 
-    public void Dispose()
+    private int _torndown;
+
+    public void Dispose() => TearDown();
+
+    /// <summary>
+    /// Power loss, on purpose. Stops the workers with no close-out and no final
+    /// snapshot, which is what a crash leaves behind. The next Simulation built
+    /// on the same journal directory recovers from the last periodic snapshot.
+    /// Dispose does the same work; neither writes a final snapshot, because a
+    /// graceful stop has nothing open and a crash gets no chance to.
+    /// </summary>
+    public void SimulatePowerLoss() => TearDown();
+
+    private void TearDown()
     {
+        if (Interlocked.Exchange(ref _torndown, 1) == 1) return;
+        _journalTimer?.Dispose();
+        _journalTimer = null;
         _cts.Cancel();
         lock (_gate) _saleTimer?.Dispose();
         // The strategy owns the workers, mailboxes, and tickers. One Dispose, in reverse creation order.
         _dispatch.Dispose();
         _cts.Dispose();
         if (_ownsLog && Log is IDisposable d) d.Dispose();
+        _custody?.Dispose();
     }
 }

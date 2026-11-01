@@ -11,6 +11,7 @@
     <ProjectReference Include="..\GasPump.Payment\GasPump.Payment.csproj" />
     <ProjectReference Include="..\GasPump.Security\GasPump.Security.csproj" />
     <ProjectReference Include="..\GasPump.Pump\GasPump.Pump.csproj" />
+    <ProjectReference Include="..\GasPump.Custody\GasPump.Custody.csproj" />
     <ProjectReference Include="$(AsyncProxyProjectPath)" />
   </ItemGroup>
   <ItemGroup>

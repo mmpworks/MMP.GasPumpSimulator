@@ -29,11 +29,18 @@ public sealed class HeraldEventLog : IEventLog, IDisposable
     public event Action<LogLine>? Written;
 
     /// <param name="configure">Extra Herald sinks and filters. The bridge back to the simulation is always present.</param>
-    public HeraldEventLog(TimeProvider clock, Action<QuickLogBuilder>? configure = null)
+    /// <param name="custody">
+    /// A second sink that receives only the events the filter admits. This is
+    /// where TesseraSeal's append-only, HMAC-chained custody file plugs in: the
+    /// debug file gets everything, the custody file gets the evidence.
+    /// </param>
+    public HeraldEventLog(TimeProvider clock, Action<QuickLogBuilder>? configure = null, (ILogger Sink, Func<LogEvent, bool> Filter)? custody = null)
     {
         _clock = clock;
         _bridge = new Bridge(this);
-        var builder = QuickLogBuilder.Create().WithBridge(_bridge).WithMinimumLevel("trace");
+        // The UI stream skips the ledger mirror: the ledger has its own panel, and the mirror exists for the files.
+        var builder = QuickLogBuilder.Create().WithBridge(_bridge, e => e.Category.Value != "ledger").WithMinimumLevel("trace");
+        if (custody is { } c) builder.WithBridge(c.Sink, c.Filter);
         configure?.Invoke(builder);
         _herald = builder.BuildAndCommit();
     }

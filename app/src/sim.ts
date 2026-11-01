@@ -12,6 +12,10 @@ export interface Sale {
   tender: 'Credit' | 'Debit' | 'Cash'; cashPrepaidCents: number; changeDueCents: number
 }
 export interface Site { creditHoldCents: number; debitHoldCents: number; failedPins: number; lockedUntil: string | null; maxPinFailures: number }
+export interface Recovery {
+  kind: 'CleanStart' | 'ClosedOut' | 'Reversed' | 'CompletionResent'; previousRunId: string; saleId: string | null; tender: string; grade: string
+  gallons: number; cents: number; unrecordedUpToGallons: number; snapshotAgeSeconds: number; underRecorded: boolean; note: string
+}
 export interface Armed { saleId: string; ceilingCents: number; maxGallons: number; clamped: boolean; clampNote: string }
 export interface Pending { saleId: string; kind: 'Completion' | 'Reversal'; cents: number }
 export interface State {
@@ -26,6 +30,9 @@ export interface State {
   openHolds: string[]
   site: Site
   cash: { open: { saleId: string; cents: number }[]; changeDue: { saleId: string; cents: number }[] }
+  runId: string
+  recovery: Recovery
+  custody: { path: string | null; journalPath: string | null }
   now: string
   limits: { maxCents: number; maxGallons: number; maxMinutes: number; maxGpm: number }
   prices: Record<string, string>
@@ -74,6 +81,10 @@ export function connect() {
       case 'ledger':
         ledger.push(m); if (ledger.length > 400) ledger.shift()
         break
+      case 'run':
+        // The host swapped simulations (power loss). The ledger restarts at seq 1; the log keeps both runs.
+        ledger.splice(0)
+        break
     }
   }
 }
@@ -115,6 +126,9 @@ export const api = {
     a.click()
     URL.revokeObjectURL(a.href)
   },
+  custodyInfo: async () => (await fetch(`${HOST}/api/custody`)).json() as Promise<{ runId: string; path: string | null; journalPath: string | null; ikmPath: string; files: string[] }>,
+  verifyCustody: async () => (await (await fetch(`${HOST}/api/custody/verify`, { method: 'POST' })).json()) as { ok: boolean; failureAtSeq: number | null; reason: string | null; lines: number; status: string },
+  powerLoss: async () => (await (await fetch(`${HOST}/api/host/powerloss`, { method: 'POST' })).json()) as { recovery: Recovery; runId: string },
   verifyLedger: async () => (await fetch(`${HOST}/api/ledger`)).json() as Promise<{ verify: number; totalizer: number }>,
 }
 

@@ -158,4 +158,40 @@ public sealed class IssuerSimulator : IIssuer
     {
         lock (_gate) return _accounts.TryGetValue(pan, out var a) ? a.Available : Money.Zero;
     }
+
+    /// <summary>
+    /// For the journal. The real bank keeps its own books; this simulator's bank
+    /// lives in the same process as the pump, so a restart has to bring it back
+    /// too or every open hold would vanish with the process.
+    /// </summary>
+    public IssuerState Export()
+    {
+        lock (_gate)
+        {
+            return new IssuerState(
+                _accounts.Select(kv => new IssuerAccountState(kv.Key, kv.Value.Available.Cents, kv.Value.Status.ToString(), kv.Value.Pin, kv.Value.VelocityLimit, kv.Value.RecentUses.ToList())).ToList(),
+                _holds.Select(kv => new IssuerHoldState(kv.Key, kv.Value.Pan, kv.Value.Amount.Cents)).ToList(),
+                _voided.ToList());
+        }
+    }
+
+    public void Import(IssuerState state)
+    {
+        lock (_gate)
+        {
+            _accounts.Clear(); _holds.Clear(); _voided.Clear();
+            foreach (var a in state.Accounts)
+            {
+                var acct = new Account { Available = new Money(a.AvailableCents), Status = Enum.Parse<AccountStatus>(a.Status), Pin = a.Pin, VelocityLimit = a.VelocityLimit };
+                acct.RecentUses.AddRange(a.RecentUses);
+                _accounts[a.Pan] = acct;
+            }
+            foreach (var h in state.Holds) _holds[h.SaleId] = new Hold(h.Pan, new Money(h.AmountCents));
+            foreach (var v in state.Voided) _voided.Add(v);
+        }
+    }
 }
+
+public sealed record IssuerAccountState(string Pan, long AvailableCents, string Status, string? Pin, int VelocityLimit, List<DateTimeOffset> RecentUses);
+public sealed record IssuerHoldState(string SaleId, string Pan, long AmountCents);
+public sealed record IssuerState(List<IssuerAccountState> Accounts, List<IssuerHoldState> Holds, List<string> Voided);

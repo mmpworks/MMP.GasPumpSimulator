@@ -1,4 +1,5 @@
 using System.Net.WebSockets;
+using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using GasPump.Core;
@@ -18,23 +19,40 @@ builder.Services.ConfigureHttpJsonOptions(o =>
 // --strategy threaded|channel|asyncproxy. Threaded is the default so the "old way" is what you see first.
 var strategyName = args.SkipWhile(a => a != "--strategy").Skip(1).FirstOrDefault() ?? "threaded";
 var clock = TimeProvider.System;
-IDispatchStrategy dispatch = strategyName switch
-{
-    "channel" => new ChannelDispatch(clock),
-    "asyncproxy" => new AsyncProxyDispatch(clock),
-    _ => new ThreadedDispatch(clock),
-};
-// The simulator's log runs on Herald.OSS. The bridge back to the UI is built in; the host adds a file and the console.
-// One NDJSON file per host session, so a run can be reviewed later with every property intact.
+
+// One directory holds the three files: the Herald debug log (NDJSON, one per session), the state journal
+// (state.json, rewritten every second), and the TesseraSeal custody file (one HMAC chain per run).
 // GASPUMP_LOG_DIR overrides the folder. Default: %LOCALAPPDATA%\MMP.GasPumpSimulator\logs.
 var logDir = Environment.GetEnvironmentVariable("GASPUMP_LOG_DIR")
     ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "MMP.GasPumpSimulator", "logs");
 Directory.CreateDirectory(logDir);
 var heraldLogPath = Path.Combine(logDir, $"gaspump-{DateTime.Now:yyyyMMdd-HHmmss}.ndjson");
-var log = new HeraldEventLog(clock, b => b.WithFileSink(heraldLogPath).WithConsoleSink());
-var sim = new Simulation(dispatch, clock, SimulationOptions.Default with { HoldAmount = Money.FromDollars(30) }, log: log);
-var hub = new EventHub(sim);
-builder.Services.AddSingleton(sim);
+
+// The custody key. Steve's spec puts this in a KMS or HSM; the simulator keeps a software key beside the logs so
+// the verifier can read the same bytes. GASPUMP_CUSTODY_IKM_HEX overrides it. Never a production posture.
+var ikmPath = Path.Combine(logDir, "custody.ikm");
+byte[] ikm;
+if (Environment.GetEnvironmentVariable("GASPUMP_CUSTODY_IKM_HEX") is { Length: >= 64 } hex) ikm = Convert.FromHexString(hex);
+else if (File.Exists(ikmPath)) ikm = Convert.FromHexString(File.ReadAllText(ikmPath).Trim());
+else { ikm = RandomNumberGenerator.GetBytes(32); File.WriteAllText(ikmPath, Convert.ToHexString(ikm)); }
+
+var options = SimulationOptions.Default with
+{
+    HoldAmount = Money.FromDollars(30),
+    Journal = new JournalOptions(logDir, "PUMP-07", ikm),
+    LogSinks = b => b.WithFileSink(heraldLogPath).WithConsoleSink(),
+};
+
+IDispatchStrategy MakeDispatch() => strategyName switch
+{
+    "channel" => new ChannelDispatch(clock),
+    "asyncproxy" => new AsyncProxyDispatch(clock),
+    _ => new ThreadedDispatch(clock),
+};
+
+var simHost = new SimulationHost(() => new Simulation(MakeDispatch(), clock, options));
+var hub = new EventHub(simHost);
+builder.Services.AddSingleton(simHost);
 builder.Services.AddSingleton(hub);
 
 var app = builder.Build();
@@ -42,66 +60,89 @@ app.UseCors();
 app.UseWebSockets();
 
 var json = new JsonSerializerOptions(JsonSerializerDefaults.Web) { Converters = { new JsonStringEnumConverter() } };
+Simulation Sim() => simHost.Current;
 
-app.MapGet("/api/state", () => Results.Json(Contracts.State(sim), json));
+app.MapGet("/api/state", () => Results.Json(Contracts.State(Sim()), json));
 app.MapGet("/api/cards", () => Results.Json(TestCards.ByName.Select(kv => new { name = kv.Key, last4 = kv.Value.Last4, kind = kv.Value.Kind.ToString(), expiry = $"{kv.Value.ExpiryMonth:00}/{kv.Value.ExpiryYear}" }), json));
-app.MapGet("/api/log", (int? after) => Results.Json(sim.Log.Snapshot().Skip(after ?? 0).Select(Contracts.Log), json));
-app.MapGet("/api/logfile", () => Results.Json(new { path = heraldLogPath, directory = logDir, format = "ndjson (Herald.OSS json_file sink)", lines = sim.Log.Snapshot().Count }, json));
+app.MapGet("/api/log", (int? after) => Results.Json(Sim().Log.Snapshot().Skip(after ?? 0).Select(Contracts.Log), json));
+app.MapGet("/api/logfile", () => Results.Json(new { path = heraldLogPath, directory = logDir, format = "ndjson (Herald.OSS json_file sink)", lines = Sim().Log.Snapshot().Count }, json));
 // A plain-text copy of everything since the host started, rendered from the same lines the UI shows.
 app.MapGet("/api/log/export", (string? format) =>
 {
-    var lines = sim.Log.Snapshot();
+    var lines = Sim().Log.Snapshot();
     if (format == "json")
         return Results.Json(lines.Select(Contracts.Log), json);
     var text = string.Join('\n', lines.Select(l => $"{l.At:yyyy-MM-dd HH:mm:ss.fff}  {l.Severity,-5} {l.Source,-8} {l.Message}" + (l.Props.Count == 0 ? "" : "  {" + string.Join(", ", l.Props.Select(p => $"{p.Key}={p.Value}")) + "}")));
     return Results.Text(text + "\n", "text/plain");
 });
-app.MapGet("/api/ledger", () => Results.Json(new { verify = sim.Ledger.Verify(), totalizer = sim.Totalizer.Total.Gallons, entries = sim.Ledger.Snapshot() }, json));
+app.MapGet("/api/ledger", () => Results.Json(new { verify = Sim().Ledger.Verify(), totalizer = Sim().Totalizer.Total.Gallons, entries = Sim().Ledger.Snapshot() }, json));
 
-app.MapPost("/api/card", (CardRequest r) => Results.Json(new { saleId = sim.PresentCard(r.Name, r.Grade, r.Tender ?? Tender.Credit) }, json));
-app.MapPost("/api/cash", (CashRequest r) => Results.Json(new { saleId = sim.PayCash(new Money(r.Cents), r.Grade) }, json));
-app.MapPost("/api/cash/collected", () => { sim.CollectChange(); return Results.Ok(); });
+// The custody file: TesseraSeal's verifier over this run's chain, plus the list of earlier runs' files.
+app.MapGet("/api/custody", () =>
+{
+    var s = Sim();
+    var files = Directory.GetFiles(logDir, "custody-*.ndjson").OrderByDescending(f => f).Select(Path.GetFileName).ToArray();
+    return Results.Json(new { runId = s.RunId, path = s.CustodyPath, journalPath = s.JournalPath, ikmPath, files }, json);
+});
+app.MapPost("/api/custody/verify", () =>
+{
+    var (ok, seq, reason, lines) = Sim().VerifyCustody();
+    Sim().Log.Write("custody", "verify {Status} {Reason} ({Lines} lines)", ("Status", ok ? "PASS" : "FAIL"), ("Reason", reason ?? "chain intact"), ("Lines", lines));
+    return Results.Json(new { ok, failureAtSeq = seq, reason, lines, status = ok ? "Status: PASS" : $"Status: FAIL\nReason: {reason}" }, json);
+});
+// Power loss on purpose: no close-out, no final snapshot. The replacement recovers from the last periodic one.
+app.MapPost("/api/host/powerloss", () =>
+{
+    simHost.PowerLoss();
+    return Results.Json(new { recovery = Contracts.Recovery(Sim().LastRecovery), runId = Sim().RunId }, json);
+});
+
+app.MapPost("/api/card", (CardRequest r) => Results.Json(new { saleId = Sim().PresentCard(r.Name, r.Grade, r.Tender ?? Tender.Credit) }, json));
+app.MapPost("/api/cash", (CashRequest r) => Results.Json(new { saleId = Sim().PayCash(new Money(r.Cents), r.Grade) }, json));
+app.MapPost("/api/cash/collected", () => { Sim().CollectChange(); return Results.Ok(); });
 app.MapPost("/api/admin/limits", (AdminRequest r) =>
 {
-    var (ok, reason) = sim.AdminSetHold(r.Pin ?? "", r.Tender, new Money(r.Cents));
-    return Results.Json(new { ok, reason, creditHoldCents = sim.Site.CreditHold.Cents, debitHoldCents = sim.Site.DebitHold.Cents }, json);
+    var (ok, reason) = Sim().AdminSetHold(r.Pin ?? "", r.Tender, new Money(r.Cents));
+    return Results.Json(new { ok, reason, creditHoldCents = Sim().Site.CreditHold.Cents, debitHoldCents = Sim().Site.DebitHold.Cents }, json);
 });
-app.MapPost("/api/grade", (GradeRequest r) => { sim.SelectGrade(r.Grade); return Results.Ok(); });
-app.MapPost("/api/nozzle/lift", () => { sim.LiftNozzle(); return Results.Ok(); });
-app.MapPost("/api/nozzle/seat", () => { sim.SeatNozzle(); return Results.Ok(); });
-app.MapPost("/api/nozzle/unseat", () => { sim.UnseatNozzle(); return Results.Ok(); });
-app.MapPost("/api/nozzle/hang", () => { sim.HangNozzle(); return Results.Ok(); });
-app.MapPost("/api/trigger/squeeze", () => { sim.SqueezeTrigger(); return Results.Ok(); });
-app.MapPost("/api/trigger/release", () => { sim.ReleaseTrigger(); return Results.Ok(); });
-app.MapPost("/api/cancel", () => { sim.Cancel(); return Results.Ok(); });
-app.MapPost("/api/reset", () => { sim.ResetSale(); return Results.Ok(); });
-app.MapPost("/api/drain", () => { sim.DrainPendingCompletions(); return Results.Ok(); });
+app.MapPost("/api/grade", (GradeRequest r) => { Sim().SelectGrade(r.Grade); return Results.Ok(); });
+app.MapPost("/api/nozzle/lift", () => { Sim().LiftNozzle(); return Results.Ok(); });
+app.MapPost("/api/nozzle/seat", () => { Sim().SeatNozzle(); return Results.Ok(); });
+app.MapPost("/api/nozzle/unseat", () => { Sim().UnseatNozzle(); return Results.Ok(); });
+app.MapPost("/api/nozzle/hang", () => { Sim().HangNozzle(); return Results.Ok(); });
+app.MapPost("/api/trigger/squeeze", () => { Sim().SqueezeTrigger(); return Results.Ok(); });
+app.MapPost("/api/trigger/release", () => { Sim().ReleaseTrigger(); return Results.Ok(); });
+app.MapPost("/api/cancel", () => { Sim().Cancel(); return Results.Ok(); });
+app.MapPost("/api/reset", () => { Sim().ResetSale(); return Results.Ok(); });
+app.MapPost("/api/drain", () => { Sim().DrainPendingCompletions(); return Results.Ok(); });
 
 app.MapPost("/api/network", (NetworkRequest r) =>
 {
-    if (r.Mode is { } m) sim.Network.Mode = m;
-    if (r.LatencyMs is { } l) sim.Network.Latency = TimeSpan.FromMilliseconds(l);
-    if (r.LateResponseMs is { } late) sim.Network.LateResponse = TimeSpan.FromMilliseconds(late);
-    if (r.FlapFailureRate is { } f) sim.Network.FlapFailureRate = f;
-    sim.Log.Write("network", $"mode {sim.Network.Mode}, latency {sim.Network.Latency.TotalMilliseconds} ms, late answer {sim.Network.LateResponse.TotalSeconds} s");
+    var s = Sim();
+    if (r.Mode is { } m) s.Network.Mode = m;
+    if (r.LatencyMs is { } l) s.Network.Latency = TimeSpan.FromMilliseconds(l);
+    if (r.LateResponseMs is { } late) s.Network.LateResponse = TimeSpan.FromMilliseconds(late);
+    if (r.FlapFailureRate is { } f) s.Network.FlapFailureRate = f;
+    s.Log.Write("network", $"mode {s.Network.Mode}, latency {s.Network.Latency.TotalMilliseconds} ms, late answer {s.Network.LateResponse.TotalSeconds} s");
     return Results.Ok();
 });
 
 app.MapPost("/api/attack/{kind}", (string kind, AttackRequest? r) =>
 {
+    var s = Sim();
     switch (kind)
     {
-        case "replay": sim.Log.Write("attack", "replaying the last token"); sim.AttackReplayLastToken(); break;
-        case "tamper": sim.Log.Write("attack", $"tampering ceiling to {new Money(r?.Cents ?? 200_000)}"); sim.AttackTamperCeiling(new Money(r?.Cents ?? 200_000)); break;
+        case "replay": s.Log.Write("attack", "replaying the last token"); s.AttackReplayLastToken(); break;
+        case "tamper": s.Log.Write("attack", $"tampering ceiling to {new Money(r?.Cents ?? 200_000)}"); s.AttackTamperCeiling(new Money(r?.Cents ?? 200_000)); break;
         case "overlimit":
             var gallons = Volume.FromGallons(r?.Gallons ?? 600);
             var money = new Money(r?.Cents ?? 200_000);
-            sim.Log.Write("attack", $"signed token for {gallons} and {money}, bypassing the issuer");
-            sim.AttackSignedOverLimit(gallons, money);
+            s.Log.Write("attack", $"signed token for {gallons} and {money}, bypassing the issuer");
+            s.AttackSignedOverLimit(gallons, money);
             break;
-        case "spoof": sim.AttackSpoofPulses(r?.Pulses ?? 2000); break;
-        case "notoken": sim.Log.Write("attack", "arming with an empty token"); sim.AttackArmWithoutToken(); break;
-        case "pinbrute": sim.AttackBruteForceAdminPin(); break;
+        case "spoof": s.AttackSpoofPulses(r?.Pulses ?? 2000); break;
+        case "notoken": s.Log.Write("attack", "arming with an empty token"); s.AttackArmWithoutToken(); break;
+        case "pinbrute": s.AttackBruteForceAdminPin(); break;
         default: return Results.NotFound(new { error = $"unknown attack '{kind}'" });
     }
     return Results.Ok();
@@ -114,8 +155,8 @@ app.Map("/ws", async (HttpContext ctx) =>
     await hub.ServeAsync(socket, json, ctx.RequestAborted);
 });
 
-app.Lifetime.ApplicationStopping.Register(() => { sim.Dispose(); log.Dispose(); });
-sim.Log.Write("host", "listening on {Url} with {Dispatch} dispatch, Herald.OSS log at {LogPath}", ("Url", "http://localhost:5177"), ("Dispatch", sim.StrategyName), ("LogPath", heraldLogPath));
+app.Lifetime.ApplicationStopping.Register(() => simHost.Dispose());
+Sim().Log.Write("host", "listening on {Url} with {Dispatch} dispatch, Herald.OSS log at {LogPath}, custody at {Custody}", ("Url", "http://localhost:5177"), ("Dispatch", Sim().StrategyName), ("LogPath", heraldLogPath), ("Custody", Sim().CustodyPath));
 app.Run();
 
 record CardRequest(string Name, Grade? Grade, Tender? Tender);
