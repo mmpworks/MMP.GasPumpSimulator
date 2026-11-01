@@ -4,26 +4,18 @@ import { state, flowTrace, dollars, nowMs, secondsLeft, mmss } from '../sim'
 
 const sale = computed(() => state.value?.sale)
 const pct = computed(() => sale.value && sale.value.ceilingCents > 0 ? Math.min(100, (sale.value.cents / sale.value.ceilingCents) * 100) : 0)
-const phaseClass = computed(() => {
-  const p = sale.value?.phase
-  if (p === 'full') return 'ok'
-  if (p === 'taper' || p === 'creep') return 'warn'
-  if (p === 'faulted' || p === 'declined') return 'bad'
-  return 'info'
-})
 const maxTrace = computed(() => Math.max(1, ...flowTrace))
-
-// The driver's screen. One headline, one line of detail, one next step, and a countdown when a timer is running.
 const left = computed(() => secondsLeft(sale.value, nowMs.value))
-const noticeClass = computed(() => {
+
+const noticeType = computed<'success' | 'warning' | 'error' | 'info'>(() => {
   const a = sale.value?.notice.action
-  if (a === 'UseAnotherPump' || a === 'SeeAttendant') return 'bad'
-  if (a === 'TryAgain' || a === 'UseAnotherCard') return 'warn'
-  if (a === 'Leave' || a === 'HangToStop') return 'ok'
+  if (a === 'UseAnotherPump' || a === 'SeeAttendant') return 'error'
+  if (a === 'TryAgain' || a === 'UseAnotherCard') return 'warning'
+  if (a === 'Leave' || a === 'HangToStop') return 'success'
   return 'info'
 })
 const actionText: Record<string, string> = {
-  None: '', Wait: 'Please wait', LiftNozzle: 'Lift the nozzle', HangToStop: 'Hang up to stop', Leave: 'You may go',
+  None: '', Wait: 'Please wait', LiftNozzle: 'Lift the nozzle', HangToStop: 'Hang up to finish', Leave: 'You may go',
   TryAgain: 'Try again or use another pump', UseAnotherCard: 'Use another card', UseAnotherPump: 'Use another pump', SeeAttendant: 'See the attendant',
 }
 const countdownLabel = computed(() => {
@@ -34,59 +26,76 @@ const countdownLabel = computed(() => {
   if (s === 'Completing') return 'queues in'
   return 'screen clears in'
 })
-const holdClass = computed(() => {
+const phaseColor = computed(() => {
+  const p = sale.value?.phase
+  if (p === 'full') return 'success'
+  if (p === 'taper' || p === 'creep' || p === 'paused') return 'warning'
+  if (p === 'faulted' || p === 'declined') return 'error'
+  return 'info'
+})
+const holdColor = computed(() => {
   const h = sale.value?.hold
-  if (h === 'ReleasePending' || h === 'SettlePending') return 'warn'
-  if (h === 'Released' || h === 'Settled') return 'ok'
+  if (h === 'ReleasePending' || h === 'SettlePending') return 'warning'
+  if (h === 'Released' || h === 'Settled') return 'success'
   if (h === 'Held' || h === 'Requested') return 'info'
-  return ''
+  return undefined
 })
 const holdText: Record<string, string> = {
   None: 'no hold', Requested: 'hold requested', Held: 'hold on card', Settled: 'charged', Released: 'hold released',
-  SettlePending: 'charge queued, bank link down', ReleasePending: 'release queued, bank link down',
+  SettlePending: 'charge queued', ReleasePending: 'release queued',
 }
 </script>
 
 <template>
-  <div>
-    <h2>Dispenser</h2>
-    <div v-if="sale" class="notice" :class="noticeClass">
-      <div class="headline">{{ sale.notice.headline }}</div>
-      <div class="detail">{{ sale.notice.detail }}</div>
-      <div class="foot">
-        <span class="badge" :class="noticeClass">{{ actionText[sale.notice.action] }}</span>
-        <span v-if="left !== null" class="countdown">{{ countdownLabel }} {{ mmss(left) }}</span>
+  <v-card class="pane-card">
+    <v-card-title>Dispenser</v-card-title>
+    <v-card-text>
+      <v-alert v-if="sale" :type="noticeType" :title="sale.notice.headline" class="mb-3">
+        <div class="text-body-2">{{ sale.notice.detail }}</div>
+        <div class="d-flex align-center ga-3 mt-2">
+          <v-chip v-if="actionText[sale.notice.action]" :color="noticeType" variant="flat" size="small">{{ actionText[sale.notice.action] }}</v-chip>
+          <span v-if="left !== null" class="muted" style="font-family: ui-monospace, Consolas, monospace">{{ countdownLabel }} {{ mmss(left) }}</span>
+        </div>
+      </v-alert>
+
+      <div v-if="sale && state" class="face mb-3">
+        <div class="row"><span class="label">THIS SALE</span><span class="big">{{ dollars(sale.cents) }}</span></div>
+        <div class="row"><span class="label">GALLONS</span><span class="big">{{ sale.gallons.toFixed(3) }}</span></div>
+        <div class="row"><span class="label">PRICE / GAL ({{ sale.grade }})</span><span class="mid">{{ state.prices[sale.grade] }}</span></div>
+        <div class="row"><span class="label">FLOW</span><span class="mid">{{ sale.gpm.toFixed(2) }} gpm</span></div>
+        <div class="row"><span class="label">CEILING</span><span class="mid">{{ sale.ceilingCents ? dollars(sale.ceilingCents) : '--' }}</span></div>
       </div>
-    </div>
-    <div v-if="sale && state" class="face">
-      <div class="row"><span class="label">THIS SALE</span><span class="big">{{ dollars(sale.cents) }}</span></div>
-      <div class="row"><span class="label">GALLONS</span><span class="big">{{ sale.gallons.toFixed(3) }}</span></div>
-      <div class="row"><span class="label">PRICE / GAL ({{ sale.grade }})</span><span class="mid">{{ state.prices[sale.grade] }}</span></div>
-      <div class="row"><span class="label">FLOW</span><span class="mid">{{ sale.gpm.toFixed(2) }} gpm</span></div>
-      <div class="row"><span class="label">CEILING</span><span class="mid">{{ sale.ceilingCents ? dollars(sale.ceilingCents) : '--' }}</span></div>
-    </div>
-    <div class="status" style="margin-top: 10px">
-      <span class="badge info">{{ sale?.state }}</span>
-      <span class="badge" :class="phaseClass">{{ sale?.phase }}</span>
-      <span class="badge" :class="holdClass" title="where the driver's money is">{{ sale?.tender === 'Cash' ? 'cash' : sale?.tender?.toLowerCase() }}: {{ holdText[sale?.hold ?? 'None'] }}</span>
-      <span class="badge" :class="state?.pump.phase === 'Faulted' ? 'bad' : ''">pump {{ state?.pump.phase }}</span>
-      <span v-if="state?.pump.armed?.clamped" class="badge bad">CLAMPED: {{ state?.pump.armed?.clampNote }}</span>
-    </div>
-    <div class="bar"><div :style="{ width: pct + '%' }"></div></div>
-    <div class="muted" style="margin-top: 4px">{{ pct.toFixed(0) }}% of ceiling. Taper starts at 80%. Creep floor 8%.</div>
-    <div class="trace" title="flow rate, last 240 ticks">
-      <i v-for="(g, i) in flowTrace" :key="i" :style="{ height: (g / maxTrace) * 100 + '%' }"></i>
-    </div>
-    <div class="kv" style="margin-top: 10px">
-      <b>sale</b><span>{{ sale?.saleId }} {{ sale?.cardName ?? '' }}</span>
-      <b>last</b><span>{{ sale?.lastMessage ?? '' }}</span>
-      <b>fault</b><span :style="{ color: state?.pump.fault ? 'var(--bad)' : '' }">{{ state?.pump.fault ?? 'none' }}</span>
-      <b>bank owes</b><span :style="{ color: state?.pending.length ? 'var(--warn)' : '' }">
-        <template v-if="state?.pending.length">{{ state.pending.map(p => `${p.kind} ${p.saleId}${p.cents ? ' ' + dollars(p.cents) : ''}`).join(', ') }} (queued, drains when the link returns)</template>
-        <template v-else>nothing queued</template>
-      </span>
-      <b>open holds</b><span :style="{ color: state?.openHolds.length ? 'var(--info)' : '' }">{{ state?.openHolds.length ? state.openHolds.join(', ') : 'none at the bank' }}</span>
-      <b>totalizer</b><span>{{ state?.pump.totalizerGallons.toFixed(3) }} gal (sealed, never resets)</span>
-    </div>
-  </div>
+
+      <div class="row-wrap mb-2">
+        <v-chip color="info">{{ sale?.state }}</v-chip>
+        <v-chip :color="phaseColor">{{ sale?.phase }}</v-chip>
+        <v-chip :color="holdColor">{{ sale?.tender?.toLowerCase() }}: {{ holdText[sale?.hold ?? 'None'] }}</v-chip>
+        <v-chip :color="state?.pump.phase === 'Faulted' ? 'error' : undefined">pump {{ state?.pump.phase }}</v-chip>
+        <v-chip v-if="state?.pump.armed?.clamped" color="error" variant="flat">CLAMPED: {{ state?.pump.armed?.clampNote }}</v-chip>
+      </div>
+
+      <v-progress-linear :model-value="pct" color="success" height="10" rounded class="mb-1" />
+      <div class="muted mb-2">{{ pct.toFixed(0) }}% of ceiling. Taper starts at 80%. Creep floor 8%.</div>
+      <div class="trace mb-3" title="flow rate, last 240 ticks">
+        <i v-for="(g, i) in flowTrace" :key="i" :style="{ height: (g / maxTrace) * 100 + '%' }"></i>
+      </div>
+
+      <v-table density="compact">
+        <tbody>
+          <tr><td class="muted">sale</td><td>{{ sale?.saleId }} {{ sale?.cardName ?? '' }}</td></tr>
+          <tr><td class="muted">last</td><td>{{ sale?.lastMessage ?? '' }}</td></tr>
+          <tr><td class="muted">fault</td><td :class="{ 'text-error': state?.pump.fault }">{{ state?.pump.fault ?? 'none' }}</td></tr>
+          <tr>
+            <td class="muted">bank owes</td>
+            <td :class="{ 'text-warning': state?.pending.length }">
+              <template v-if="state?.pending.length">{{ state.pending.map(p => `${p.kind} ${p.saleId}${p.cents ? ' ' + dollars(p.cents) : ''}`).join(', ') }} (queued)</template>
+              <template v-else>nothing queued</template>
+            </td>
+          </tr>
+          <tr><td class="muted">open holds</td><td :class="{ 'text-info': state?.openHolds.length }">{{ state?.openHolds.length ? state.openHolds.join(', ') : 'none at the bank' }}</td></tr>
+          <tr><td class="muted">totalizer</td><td>{{ state?.pump.totalizerGallons.toFixed(3) }} gal (sealed, never resets)</td></tr>
+        </tbody>
+      </v-table>
+    </v-card-text>
+  </v-card>
 </template>

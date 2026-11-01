@@ -11,26 +11,31 @@ const shown = computed(() => {
 })
 // Clears the screen only. The host keeps its full log; a reconnect brings the last 200 lines back.
 const clear = () => log.splice(0)
+const propsOf = (p: Record<string, string | null> | undefined) => Object.entries(p ?? {}).map(([k, v]) => `${k} = ${v}`).join('\n')
 </script>
 
 <template>
-  <div>
-    <div class="controls" style="margin-bottom: 8px">
-      <h2 style="margin: 0; flex: 1">Event log <span class="muted">({{ shown.length }}, Herald.OSS, hover a line for its properties)</span></h2>
-      <input v-model="filter" placeholder="filter: sale, pump, payment, attack, text" style="width: 260px" />
-      <button @click="api.exportLog('text')" title="plain text, since the host started">Save .txt</button>
-      <button @click="api.exportLog('json')" title="JSON with properties, since the host started">Save .json</button>
-      <button @click="clear">Clear screen</button>
-    </div>
-    <div class="muted" style="margin-bottom: 6px" v-if="logFile" :title="logFile.format">
-      Herald.OSS is also writing every line, with its properties, to <code>{{ logFile.path }}</code>
-    </div>
-    <div class="list">
-      <div v-for="(l, i) in shown" :key="shown.length - i" class="line cols" :class="'sev-' + l.severity" :title="Object.entries(l.props ?? {}).map(([k, v]) => k + ' = ' + v).join('\n')">
-        <span class="muted">{{ time(l.at) }}</span>
-        <span class="src" :class="l.source">{{ l.source }}</span>
-        <span>{{ l.message }}</span>
+  <v-card class="pane-card fixed">
+    <v-card-title class="d-flex align-center ga-3">
+      <span>Event log</span>
+      <span class="muted text-none" style="letter-spacing: 0; text-transform: none">{{ shown.length }} lines · Herald.OSS · hover a line for its properties</span>
+      <v-spacer />
+      <v-text-field v-model="filter" placeholder="filter: sale, pump, payment, attack, admin, text" prepend-inner-icon="mdi-magnify" clearable style="max-width: 360px" />
+      <v-btn prepend-icon="mdi-file-document-outline" title="plain text, since the host started" @click="api.exportLog('text')">Save .txt</v-btn>
+      <v-btn prepend-icon="mdi-code-json" title="JSON with properties, since the host started" @click="api.exportLog('json')">Save .json</v-btn>
+      <v-btn variant="text" prepend-icon="mdi-broom" @click="clear">Clear screen</v-btn>
+    </v-card-title>
+    <v-card-text>
+      <div v-if="logFile" class="muted mb-2" :title="logFile.format">
+        Herald.OSS is also writing every line, with its properties, to <code>{{ logFile.path }}</code>
       </div>
-    </div>
-  </div>
+      <div class="mono-list">
+        <div v-for="(l, i) in shown" :key="shown.length - i" class="line" :class="'sev-' + l.severity" :title="propsOf(l.props)">
+          <span class="muted">{{ time(l.at) }}</span>
+          <span class="src" :class="l.source">{{ l.source }}</span>
+          <span>{{ l.message }}</span>
+        </div>
+      </div>
+    </v-card-text>
+  </v-card>
 </template>

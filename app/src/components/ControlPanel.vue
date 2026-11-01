@@ -17,72 +17,74 @@ const flowing = computed(() => pump.value?.phase === 'Dispensing')
 const canSqueeze = computed(() => armed.value && !flowing.value && nozzleOut.value && seated.value && !!pump.value?.selectedGrade)
 const canCancel = computed(() => s.value === 'Authorizing' || s.value === 'ReadyToPump')
 const grades = ['Regular', 'Plus', 'Premium']
-const cardList = computed(() => cards.value.filter(c => tender.value === 'Debit' ? true : true))
+const cardItems = computed(() => cards.value.map(c => ({ title: `${c.name} · ${c.kind} ····${c.last4} exp ${c.expiry}`, value: c.name })))
 const changeDue = computed(() => state.value?.cash.changeDue.find(c => c.saleId === sale.value?.saleId))
+const siteCeiling = computed(() => state.value && tender.value !== 'Cash' ? dollars(tender.value === 'Debit' ? state.value.site.debitHoldCents : state.value.site.creditHoldCents) : null)
 
 function start() {
   if (tender.value === 'Cash') api.payCash(Math.round(cashDollars.value * 100))
   else api.presentCard(card.value, tender.value)
 }
+function selectedGrade(g: string | null) { if (g) api.selectGrade(g) }
 </script>
 
 <template>
-  <div>
-    <h2>Driver</h2>
-    <div class="controls" style="margin-bottom: 6px">
-      <span class="muted">pay with</span>
-      <button v-for="t in ['Credit', 'Debit', 'Cash'] as const" :key="t" :class="{ primary: tender === t }" @click="tender = t">{{ t }}</button>
-      <span class="muted" v-if="state && tender !== 'Cash'">site ceiling {{ dollars(tender === 'Debit' ? state.site.debitHoldCents : state.site.creditHoldCents) }}</span>
-    </div>
-    <div class="controls" style="margin-bottom: 10px">
-      <template v-if="tender !== 'Cash'">
-        <select v-model="card" title="Each card is named after what it will do">
-          <option v-for="c in cardList" :key="c.name" :value="c.name">{{ c.name }} · {{ c.kind }} ····{{ c.last4 }} exp {{ c.expiry }}</option>
-        </select>
-        <button class="primary" :disabled="!canPresent" @click="start">Present card</button>
-      </template>
-      <template v-else>
-        <label class="muted">cash to cashier $</label>
-        <input type="number" v-model.number="cashDollars" min="1" step="5" style="width: 90px" />
-        <button class="primary" :disabled="!canPresent" @click="start">Pay cashier {{ dollars(Math.round(cashDollars * 100)) }}</button>
-      </template>
-      <button :disabled="!canCancel" @click="api.cancel()">Cancel</button>
-      <button @click="api.reset()">New sale</button>
-    </div>
-    <div v-if="changeDue" class="controls" style="margin-bottom: 10px">
-      <span class="badge warn">cashier owes you {{ dollars(changeDue.cents) }}</span>
-      <button @click="api.changeCollected()">Collect change</button>
-    </div>
+  <v-card class="pane-card">
+    <v-card-title>Driver</v-card-title>
+    <v-card-text>
+      <div class="step">Pay with</div>
+      <div class="row-wrap mb-2">
+        <v-btn v-for="t in (['Credit', 'Debit', 'Cash'] as const)" :key="t" :color="tender === t ? 'primary' : undefined"
+               :variant="tender === t ? 'flat' : 'outlined'" @click="tender = t">{{ t }}</v-btn>
+        <span v-if="siteCeiling" class="muted">site ceiling {{ siteCeiling }}</span>
+      </div>
+      <div class="row-wrap mb-2">
+        <v-select v-if="tender !== 'Cash'" v-model="card" :items="cardItems" label="card" style="min-width: 260px; max-width: 360px" />
+        <v-text-field v-else v-model.number="cashDollars" type="number" label="cash to cashier, $" min="1" step="5" style="max-width: 160px" />
+        <v-btn color="primary" variant="flat" :disabled="!canPresent" @click="start">
+          {{ tender === 'Cash' ? `Pay cashier ${dollars(Math.round(cashDollars * 100))}` : 'Present card' }}
+        </v-btn>
+        <v-btn :disabled="!canCancel" @click="api.cancel()">Cancel</v-btn>
+        <v-btn variant="text" @click="api.reset()">New sale</v-btn>
+      </div>
+      <v-alert v-if="changeDue" type="warning" class="mb-2">
+        <div class="d-flex align-center ga-3">
+          <span>Cashier owes you {{ dollars(changeDue.cents) }}</span>
+          <v-btn size="x-small" variant="flat" color="warning" @click="api.changeCollected()">Collect change</v-btn>
+        </div>
+      </v-alert>
 
-    <div class="muted" style="margin-bottom: 4px">1. Grade <span v-if="pump?.selectedGrade" class="badge ok">{{ pump.selectedGrade }}</span></div>
-    <div class="controls" style="margin-bottom: 10px">
-      <button v-for="g in grades" :key="g" :disabled="!canGrade" :class="{ primary: pump?.selectedGrade === g }" @click="api.selectGrade(g)">
-        {{ g }} <span class="muted">{{ state?.prices[g] }}</span>
-      </button>
-    </div>
+      <div class="step">1. Grade <v-chip v-if="pump?.selectedGrade" color="success">{{ pump.selectedGrade }}</v-chip></div>
+      <div class="row-wrap">
+        <v-btn v-for="g in grades" :key="g" :disabled="!canGrade" :color="pump?.selectedGrade === g ? 'primary' : undefined"
+               :variant="pump?.selectedGrade === g ? 'flat' : 'outlined'" @click="selectedGrade(g)">
+          {{ g }} <span class="ml-1" :class="pump?.selectedGrade === g ? '' : 'muted'">{{ state?.prices[g] }}</span>
+        </v-btn>
+      </div>
 
-    <div class="muted" style="margin-bottom: 4px">2. Nozzle
-      <span class="badge" :class="nozzleOut ? 'info' : ''">{{ nozzleOut ? 'off harness' : 'on harness' }}</span>
-      <span class="badge" :class="seated ? 'ok' : ''">{{ seated ? 'in tank' : 'not in tank' }}</span>
-    </div>
-    <div class="grid2" style="margin-bottom: 10px">
-      <button v-if="!nozzleOut" :disabled="!armed" @click="api.lift()">Lift nozzle</button>
-      <button v-else @click="api.hang()">Hang nozzle{{ pump?.poured ? ' (ends sale)' : '' }}</button>
-      <button v-if="!seated" :disabled="!armed || !nozzleOut" @click="api.seat()">Put in tank</button>
-      <button v-else @click="api.unseat()">Pull out of tank</button>
-    </div>
+      <div class="step">2. Nozzle
+        <v-chip :color="nozzleOut ? 'info' : undefined">{{ nozzleOut ? 'off harness' : 'on harness' }}</v-chip>
+        <v-chip :color="seated ? 'success' : undefined">{{ seated ? 'in tank' : 'not in tank' }}</v-chip>
+      </div>
+      <div class="row-wrap">
+        <v-btn v-if="!nozzleOut" :disabled="!armed" prepend-icon="mdi-gas-station" @click="api.lift()">Lift nozzle</v-btn>
+        <v-btn v-else prepend-icon="mdi-gas-station-off" @click="api.hang()">Hang nozzle{{ pump?.poured ? ' (ends sale)' : '' }}</v-btn>
+        <v-btn v-if="!seated" :disabled="!armed || !nozzleOut" prepend-icon="mdi-car" @click="api.seat()">Put in tank</v-btn>
+        <v-btn v-else prepend-icon="mdi-car-off" @click="api.unseat()">Pull out of tank</v-btn>
+      </div>
 
-    <div class="muted" style="margin-bottom: 4px">3. Trigger <span class="badge" :class="flowing ? 'ok' : ''">{{ flowing ? 'flowing' : 'closed' }}</span></div>
-    <div class="grid2" style="margin-bottom: 10px">
-      <!-- One button, two states: it reads what the next press will do. -->
-      <button v-if="flowing" class="danger" @click="api.release()">Release trigger (pause)</button>
-      <button v-else class="primary" :disabled="!canSqueeze" @click="api.squeeze()">Squeeze trigger{{ pump?.poured ? ' (resume)' : '' }}</button>
-      <button :disabled="!state?.pending.length" @click="api.drain()">Drain queued to bank ({{ state?.pending.length ?? 0 }})</button>
-    </div>
+      <div class="step">3. Trigger <v-chip :color="flowing ? 'success' : undefined">{{ flowing ? 'flowing' : 'closed' }}</v-chip></div>
+      <div class="row-wrap">
+        <!-- One button, two states: it reads what the next press will do. -->
+        <v-btn v-if="flowing" color="warning" variant="flat" prepend-icon="mdi-pause" @click="api.release()">Release trigger (pause)</v-btn>
+        <v-btn v-else color="primary" variant="flat" :disabled="!canSqueeze" prepend-icon="mdi-play" @click="api.squeeze()">Squeeze trigger{{ pump?.poured ? ' (resume)' : '' }}</v-btn>
+        <v-btn :disabled="!state?.pending.length" prepend-icon="mdi-bank-transfer" @click="api.drain()">Drain queued to bank ({{ state?.pending.length ?? 0 }})</v-btn>
+      </div>
 
-    <p class="muted" style="margin: 10px 0 0">
-      Credit asks the bank for the site's credit ceiling. Debit asks for the debit ceiling and gets the lesser of that and the bank's answer; use a
-      Debit card for it. Cash sets the ceiling to the cent, no bank. Fuel flows only with a grade chosen, the nozzle in the tank, and the trigger held.
-    </p>
-  </div>
+      <p class="muted mt-4 mb-0">
+        Credit asks the bank for the site's credit ceiling. Debit asks for the debit ceiling and gets the lesser of that and the bank's answer; use a
+        Debit card for it. Cash sets the ceiling to the cent, no bank. Fuel flows only with a grade chosen, the nozzle in the tank, and the trigger held.
+      </p>
+    </v-card-text>
+  </v-card>
 </template>
