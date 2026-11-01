@@ -1,6 +1,7 @@
 // Electron main. Starts the .NET host, opens one window, stops the host on exit.
 // Set GASPUMP_HOST=external to skip spawning and use a host you started yourself.
 // Set GASPUMP_STRATEGY=channel to run the Task/Channel dispatch instead of threads.
+// Set GASPUMP_DISPENSER=inproc to keep the pump inside the station process instead of GasPump.Dispenser.exe.
 const { app, BrowserWindow } = require('electron')
 const { spawn } = require('node:child_process')
 const path = require('node:path')
@@ -13,7 +14,8 @@ function startHost() {
   if (process.env.GASPUMP_HOST === 'external') return
   const project = path.resolve(__dirname, '..', '..', 'src', 'GasPump.Host')
   const strategy = process.env.GASPUMP_STRATEGY || 'threaded'
-  host = spawn('dotnet', ['run', '--project', project, '--', '--strategy', strategy], {
+  const dispenser = process.env.GASPUMP_DISPENSER || 'socket'
+  host = spawn('dotnet', ['run', '--project', project, '--', '--strategy', strategy, '--dispenser', dispenser], {
     stdio: ['ignore', 'pipe', 'pipe'],
     windowsHide: true,
   })

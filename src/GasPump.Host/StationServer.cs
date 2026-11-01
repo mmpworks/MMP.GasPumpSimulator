@@ -4,13 +4,13 @@ using MMP.Herald.Compliance.Audit;
 namespace GasPump.Host;
 
 /// <summary>
-/// The station's side of the custody stream, in the same process for the
-/// demonstration. It subscribes to every custody line the dispenser
-/// publishes and appends it, unchanged, to its own file per run. Because the
-/// bytes are the same, TesseraSeal's verifier accepts the server's copy with
-/// the same key, and the server can tell when the dispenser's chain and its
-/// own copy disagree. A real station server would receive these over the
-/// wire; the WebSocket at /ws/custody is that wire for any outside listener.
+/// The station's copy of the dispenser's chain. It subscribes to every
+/// custody line the dispenser publishes and appends it, unchanged, to a file
+/// per dispenser run. Because the bytes are the same, TesseraSeal's verifier
+/// accepts the copy with the same key, and the station can tell when the
+/// dispenser's chain and its own copy disagree. In-process the lines come off
+/// a tail of the shared file; over the socket they come off the wire, which
+/// is what a real station server receives. /ws/custody hands them on.
 /// </summary>
 public sealed class StationServer : IDisposable
 {
@@ -18,8 +18,7 @@ public sealed class StationServer : IDisposable
     private readonly byte[] _ikm;
     private readonly Lock _gate = new();
     private readonly List<Action<string>> _subscribers = [];
-    private Simulation? _bound;
-    private Action<string>? _handler;
+    private IDisposable? _subscription;
 
     public StationServer(string directory, byte[] ikm)
     {
@@ -29,34 +28,40 @@ public sealed class StationServer : IDisposable
 
     public string? CopyPath { get; private set; }
     public long LinesReceived { get; private set; }
+    /// <summary>The dispenser run the current copy belongs to.</summary>
     public string? RunId { get; private set; }
 
-    /// <summary>Follow this simulation's custody stream. Called on every swap.</summary>
+    /// <summary>Follow this station's dispenser. Called on every station swap; a dispenser restart shows up as a new run id on the lines.</summary>
     public void Bind(Simulation sim)
     {
         lock (_gate)
         {
-            if (_bound?.Custody is { } old && _handler is not null) old.Line -= _handler;
-            _bound = sim;
-            RunId = sim.RunId;
-            LinesReceived = 0;
-            CopyPath = Path.Combine(_directory, $"station-copy-{sim.RunId}.ndjson");
-            if (sim.Custody is null) return;
-            _handler = line =>
-            {
-                lock (_gate)
-                {
-                    File.AppendAllText(CopyPath!, line + "\n");
-                    LinesReceived++;
-                }
-                Action<string>[] subs;
-                lock (_gate) subs = _subscribers.ToArray();
-                foreach (var s in subs) s(line);
-            };
-            // Replay first: the header and the recovery entries were written before the server bound.
-            sim.Custody.SubscribeWithReplay(_handler);
+            _subscription?.Dispose();
+            _subscription = sim.SubscribeDispenserCustody(OnLine);
         }
     }
+
+    private void OnLine(string runId, string line)
+    {
+        lock (_gate)
+        {
+            if (runId != RunId)
+            {
+                RunId = runId;
+                CopyPath = Path.Combine(_directory, $"station-copy-{runId}.ndjson");
+                LinesReceived = File.Exists(CopyPath) ? File.ReadLines(CopyPath).Count() : 0;
+                // A replay of lines the copy already holds is skipped by count; the chain is append-only, so the prefix matches.
+            }
+            if (LinesReceived > 0 && _replaySkip > 0) { _replaySkip--; return; }
+            File.AppendAllText(CopyPath!, line + "\n");
+            LinesReceived++;
+        }
+        Action<string>[] subs;
+        lock (_gate) subs = _subscribers.ToArray();
+        foreach (var s in subs) s(line);
+    }
+
+    private long _replaySkip;
 
     /// <summary>Outside listeners: the WebSocket topic hands each line on.</summary>
     public IDisposable Subscribe(Action<string> onLine)
@@ -65,7 +70,7 @@ public sealed class StationServer : IDisposable
         return new Unsubscriber(this, onLine);
     }
 
-    /// <summary>Run TesseraSeal's verifier over the server's own copy. The copy is closed between appends, so it reads directly.</summary>
+    /// <summary>Run TesseraSeal's verifier over the station's copy. The copy is closed between appends, so it reads directly.</summary>
     public (bool Ok, long? FailureAtSeq, string? Reason, int Lines) VerifyCopy()
     {
         lock (_gate)
@@ -78,10 +83,7 @@ public sealed class StationServer : IDisposable
 
     public void Dispose()
     {
-        lock (_gate)
-        {
-            if (_bound?.Custody is { } c && _handler is not null) c.Line -= _handler;
-        }
+        lock (_gate) { _subscription?.Dispose(); _subscription = null; }
     }
 
     private sealed class Unsubscriber(StationServer owner, Action<string> onLine) : IDisposable

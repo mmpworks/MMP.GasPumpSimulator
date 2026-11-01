@@ -37,7 +37,7 @@ public sealed class CustodyStream(string path)
                 var text = reader.ReadToEnd();
                 var complete = text.LastIndexOf('\n');
                 if (complete >= 0)
-                    foreach (var line in text[..complete].Split('\n')) onLine(line);
+                    foreach (var line in text[..complete].Split('\n')) onLine(line.TrimEnd('\r'));
                 // Everything replayed counts as published; the next Pump starts after it.
                 var replayedBytes = System.Text.Encoding.UTF8.GetByteCount(text[..(complete + 1)]);
                 if (replayedBytes > _offset) { _offset = replayedBytes; _partial.Clear(); }
@@ -69,7 +69,8 @@ public sealed class CustodyStream(string path)
                 {
                     if (buffer[i] == (byte)'\n')
                     {
-                        lines.Add(System.Text.Encoding.UTF8.GetString(_partial.ToArray()));
+                        // The sink ends a line with the platform newline; the line itself is the JSON, with no CR.
+                        lines.Add(System.Text.Encoding.UTF8.GetString(_partial.ToArray()).TrimEnd('\r'));
                         _partial.Clear();
                     }
                     else _partial.Add(buffer[i]);

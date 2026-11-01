@@ -10,6 +10,8 @@ namespace GasPump.Host;
 /// own bounded queue; a slow client drops its oldest messages rather than
 /// slowing the simulation. The pump never waits on a browser. When the host
 /// swaps the simulation (power loss), the hub rebinds and pushes a full state.
+/// Every log line and ledger entry carries its origin, dispenser or station,
+/// so the UI can keep the two sides apart.
 /// </summary>
 public sealed class EventHub
 {
@@ -17,6 +19,7 @@ public sealed class EventHub
     private readonly Lock _gate = new();
     private readonly List<Channel<object>> _clients = [];
     private StationServer? _station;
+    private DispenserProcess? _process;
 
     public EventHub(SimulationHost host)
     {
@@ -28,22 +31,32 @@ public sealed class EventHub
             // A new run: tell the UI to start its ledger over, replay what the new simulation wrote while it was
             // being built (the recovery entries), then the full state.
             Broadcast(new { type = "run", runId = sim.RunId });
-            foreach (var l in sim.Log.Snapshot()) Broadcast(Contracts.Log(l));
-            foreach (var e in sim.Ledger.Snapshot()) Broadcast(Contracts.Ledger(e));
+            Replay(sim, m => Broadcast(m));
             Broadcast(StateFor(sim));
         };
     }
 
-    /// <summary>The station server, once built, so the state push can carry its counters.</summary>
-    public void Attach(StationServer station) => _station = station;
+    /// <summary>The station server and the dispenser process, once built, so the state push can carry their counters.</summary>
+    public void Attach(StationServer station, DispenserProcess? process) { _station = station; _process = process; }
 
-    private object StateFor(Simulation sim) => Contracts.State(sim, _host, _station);
+    private object StateFor(Simulation sim) => Contracts.State(sim, _host, _station, _process);
 
     private void Bind(Simulation sim)
     {
         sim.SaleChanged += s => Broadcast(Contracts.Sale(s));
-        sim.Log.Written += l => Broadcast(Contracts.Log(l));
-        sim.Ledger.Appended += e => Broadcast(Contracts.Ledger(e));
+        sim.Log.Written += l => Broadcast(Contracts.Log(l, Origins.OfLog(l)));
+        sim.Ledger.Appended += e => Broadcast(Contracts.Ledger(e, Origins.OfLedger(e.Kind)));
+        sim.DispenserLog += l => Broadcast(Contracts.Log(l, Origins.Dispenser));
+        sim.DispenserLedger += e => { if (e.Seq == 1) Broadcast(new { type = "dispenser-run", runId = sim.Link.RemoteRunId }); Broadcast(Contracts.Ledger(e, Origins.Dispenser)); };
+        sim.DispenserViewChanged += v => Broadcast(Contracts.Pump(v));
+    }
+
+    private static void Replay(Simulation sim, Action<object> send, int take = int.MaxValue)
+    {
+        foreach (var l in sim.Log.Snapshot().TakeLast(take)) send(Contracts.Log(l, Origins.OfLog(l)));
+        foreach (var l in sim.DispenserLogSnapshot().TakeLast(take)) send(Contracts.Log(l, Origins.Dispenser));
+        foreach (var e in sim.Ledger.Snapshot().TakeLast(take)) send(Contracts.Ledger(e, Origins.OfLedger(e.Kind)));
+        foreach (var e in sim.DispenserLedgerSnapshot().TakeLast(take)) send(Contracts.Ledger(e, Origins.Dispenser));
     }
 
     private void Broadcast(object message)
@@ -55,15 +68,14 @@ public sealed class EventHub
 
     public async Task ServeAsync(WebSocket socket, JsonSerializerOptions json, CancellationToken ct)
     {
-        var channel = Channel.CreateBounded<object>(new BoundedChannelOptions(512) { FullMode = BoundedChannelFullMode.DropOldest, SingleReader = true });
+        var channel = Channel.CreateBounded<object>(new BoundedChannelOptions(1024) { FullMode = BoundedChannelFullMode.DropOldest, SingleReader = true });
         lock (_gate) _clients.Add(channel);
         try
         {
             // Full state first, then the stream. The UI never has to merge a gap.
             var sim = _host.Current;
             channel.Writer.TryWrite(StateFor(sim));
-            foreach (var l in sim.Log.Snapshot().TakeLast(200)) channel.Writer.TryWrite(Contracts.Log(l));
-            foreach (var e in sim.Ledger.Snapshot().TakeLast(200)) channel.Writer.TryWrite(Contracts.Ledger(e));
+            Replay(sim, m => channel.Writer.TryWrite(m), take: 200);
 
             var pump = Task.Run(async () =>
             {

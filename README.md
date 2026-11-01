@@ -18,13 +18,17 @@ A pay-at-the-pump fuel dispenser, simulated. Present a card, get a two-phase aut
 10. **Forecourt faults with diagnostic codes.** Tank runs dry, pulser dies, drive-off. Each is caught by a disagreement between two facts the controller already has, names its part with a code such as `PUMP.STP.NOFLOW`, settles for the fuel that was metered, and tells the driver the right next step. The same code sits in the log, the ledger, and the custody file. `docs/diagnostics.md` is the table.
 11. **E-stop.** One button, station-wide. The record is written before the power drops, so the cashier's reset closes the open sale with nothing unrecorded.
 12. **Custody stream.** Every custody line goes out byte for byte as it lands. A station server keeps its own copy per run and verifies it with the same verifier. `ws://localhost:5177/ws/custody` is the same stream for anything outside.
-13. **Logging on Herald.OSS.** Every worker writes structured events through [Herald.OSS](https://github.com/mmpworks/Herald.OSS) 0.14.0. A bridge sink feeds the UI stream and the tests; the host adds a console sink and an NDJSON file per session so a run can be reviewed later with every property intact.
+13. **Two processes.** The dispenser runs in `GasPump.Dispenser.exe` and the station in `GasPump.Host.exe`, joined by TCP on localhost. The pump's hard limits, authority, nonces, totalizer, ledger, and chain live in the dispenser process; the sale, the money, the journal, and the copy of the dispenser's chain live in the station. Pull either plug and watch the other side stay safe. The app shows them as two columns, amber and blue, with the wire between them.
+14. **Logging on Herald.OSS.** Every worker writes structured events through [Herald.OSS](https://github.com/mmpworks/Herald.OSS) 0.14.0. A bridge sink feeds the UI stream and the tests; the host adds a console sink and an NDJSON file per session so a run can be reviewed later with every property intact.
 9. **Concurrency.** Three workers, sale, pump, and payment, pass messages through bounded mailboxes and share no state. How they run is a Strategy: `ThreadedDispatch` is a thread per worker with blocking queues. `ChannelDispatch` is a Task per worker over bounded channels. `AsyncProxyDispatch` is the 2008 machine without the 2008 threads: each worker is an iterator-driven state machine from [MMP.AsyncProxy](https://github.com/mmpworks/MMP.AsyncProxy), its loop yields a future for the next message, and the loop resumes on a pool thread when one is posted. Every piece of it would compile for .NET 3.5. One end-to-end test runs the same sale under all three.
 
 ## Run it
 
 ```
-dotnet test                       # 191 tests, about 70 s, on a fake clock, every end-to-end theory under three dispatch strategies
+dotnet test                       # 194 tests, about 60 s: 191 on a fake clock under three dispatch strategies, 3 over a real TCP socket
+dotnet run --project src/GasPump.Host -- --strategy threaded                 # station; spawns the dispenser on port 5178
+dotnet run --project src/GasPump.Host -- --dispenser inproc                  # the old single process
+dotnet run --project src/GasPump.Dispenser -- --port 5178                    # a dispenser by hand, in its own terminal; the station adopts it
 cd app && npm install && npm run build && npx electron .
 ```
 
@@ -112,6 +116,12 @@ S0001 · Credit · Regular · 1.054 gal for $3.69 · up to 0.167 gal unrecorded 
 The ledger carries `recovery.restart` and `recovery.closeout ... DELIVERY LIKELY UNDER-RECORDED by up to 0.167 gal`, the log carries the same at Error level, the hold settles to the recorded money, and the next driver starts clean. Pull the plug while the pump is armed and nothing has poured, and the hold is reversed instead. The tests `Power_loss_mid_fuel_closes_the_sale_for_the_recorded_money_and_flags_under_delivery`, `Power_loss_while_armed_with_no_fuel_reverses_the_hold`, and `Power_loss_during_a_cash_sale_owes_change_for_the_unpumped_part` run under every dispatch strategy.
 
 The under-recording is real and by design. The journal is one second old at worst, so up to one second of flow at the last rate can leave the hose after the last record. The restart says so rather than guessing a number.
+
+## Two processes, two plugs
+
+- **Pull the dispenser's plug** (left column, while fuel is flowing). `GasPump.Dispenser.exe` dies. The left column goes OFFLINE, the strip goes red, and the station faults the sale with `LINK.DISPENSER.LOST`: "Pump offline. You were charged only for the N gal delivered. See the attendant." Restore dispenser power and a new dispenser run connects; the station starts a new copy of its chain.
+- **Pull the station's plug** (right column, Power tab). `GasPump.Host.exe` restarts its simulation while the dispenser keeps pouring under its own limits. The new station's first frame is `Stop`; the valve closes; the journal closes the sale and says how much may be unrecorded.
+- **E-STOP**. The station writes the record, then cuts the dispenser's power: the dispenser process exits. Reset at the cashier restarts it, then the station.
 
 ## Forecourt faults
 

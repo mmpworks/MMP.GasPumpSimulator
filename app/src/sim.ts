@@ -1,7 +1,11 @@
-// One place that talks to the host. REST for commands, one WebSocket for the stream.
+// One place that talks to the station host. REST for commands, one WebSocket for the stream.
+// Everything the UI shows about the dispenser arrived at the station over the dispenser link;
+// the UI never talks to the dispenser process itself. That is the point of the two columns.
 import { reactive, ref } from 'vue'
 
 export const HOST = (window as unknown as { gaspump?: { hostUrl: string } }).gaspump?.hostUrl ?? 'http://localhost:5177'
+
+export type Origin = 'dispenser' | 'station'
 
 export interface Notice { headline: string; detail: string; action: string }
 export interface Sale {
@@ -12,7 +16,16 @@ export interface Sale {
   tender: 'Credit' | 'Debit' | 'Cash'; cashPrepaidCents: number; changeDueCents: number
   faultCode: string | null; faultPart: string | null
 }
-export interface Station { estopActive: boolean; estopAt: string | null; custodyLinesPublished: number; custodyLinesReceived: number; custodyCopyPath: string | null }
+export interface Station {
+  pid: number; port: number; runId: string; custodyPath: string | null
+  estopActive: boolean; estopAt: string | null
+  custodyLinesPublished: number; custodyLinesReceived: number; custodyCopyPath: string | null; custodyCopyRunId: string | null
+}
+export interface DispenserLink {
+  link: 'socket' | 'in-process'; connected: boolean; pid: number | null; runId: string | null; custodyPath: string | null
+  framesSent: number; framesReceived: number; custodyLines: number; port: number | null
+  processRunning: boolean; external: boolean; lastExit: string | null
+}
 export interface Site { creditHoldCents: number; debitHoldCents: number; failedPins: number; lockedUntil: string | null; maxPinFailures: number }
 export interface Recovery {
   kind: 'CleanStart' | 'ClosedOut' | 'Reversed' | 'CompletionResent'; previousRunId: string; saleId: string | null; tender: string; grade: string
@@ -20,14 +33,16 @@ export interface Recovery {
 }
 export interface Armed { saleId: string; ceilingCents: number; maxGallons: number; clamped: boolean; clampNote: string }
 export interface Pending { saleId: string; kind: 'Completion' | 'Reversal'; cents: number }
+export interface Pump {
+  phase: string; armed: Armed | null; fault: string | null; faultCode: string | null; totalizerGallons: number
+  nozzleLifted: boolean; nozzleSeated: boolean; triggerHeld: boolean; selectedGrade: string | null; poured: boolean
+  supplyAvailable: boolean; breakawayOpen: boolean; pulserDead: boolean; ledgerIntact: boolean; runId: string; pid: number
+}
 export interface State {
   strategy: string; pumpId: string; sale: Sale
   station: Station
-  pump: {
-    phase: string; armed: Armed | null; fault: string | null; faultCode: string | null; totalizerGallons: number
-    nozzleLifted: boolean; nozzleSeated: boolean; triggerHeld: boolean; selectedGrade: string | null; poured: boolean
-    supplyAvailable: boolean; breakawayOpen: boolean; pulserDead: boolean
-  }
+  dispenser: DispenserLink
+  pump: Pump
   network: { mode: string; latencyMs: number; lateResponseMs: number; flapFailureRate: number }
   pendingCompletions: { saleId: string; cents: number }[]
   pending: Pending[]
@@ -42,8 +57,8 @@ export interface State {
   prices: Record<string, string>
   ledgerOk: boolean
 }
-export interface LogLine { at: string; source: string; message: string; severity: 'Info' | 'Warn' | 'Error'; props: Record<string, string | null> }
-export interface LedgerEntry { seq: number; at: string; kind: string; detail: string; hash: string; prev: string }
+export interface LogLine { origin: Origin; at: string; source: string; message: string; severity: 'Info' | 'Warn' | 'Error'; props: Record<string, string | null> }
+export interface LedgerEntry { origin: Origin; seq: number; at: string; kind: string; detail: string; hash: string; prev: string }
 export interface Card { name: string; last4: string; kind: string; expiry: string }
 
 export const state = ref<State | null>(null)
@@ -79,16 +94,27 @@ export function connect() {
         if (m.state === 'Fueling') { flowTrace.push(m.gpm); if (flowTrace.length > 240) flowTrace.shift() }
         if (m.state === 'ReadyToPump' && m.phase !== 'armed') flowTrace.splice(0)
         break
+      case 'pump':
+        if (state.value) state.value.pump = m
+        break
       case 'log':
-        log.push(m); if (log.length > 400) log.shift()
+        log.push(m); if (log.length > 800) log.shift()
         break
       case 'ledger':
-        ledger.push(m); if (ledger.length > 400) ledger.shift()
+        ledger.push(m); if (ledger.length > 800) ledger.shift()
         break
-      case 'run':
-        // The host swapped simulations (power loss). The ledger restarts at seq 1; the log keeps both runs.
-        ledger.splice(0)
+      case 'run': {
+        // The station restarted (power loss or E-stop reset). Its ledger restarts at seq 1; the dispenser's does not.
+        const keep = ledger.filter(e => e.origin === 'dispenser')
+        ledger.splice(0, ledger.length, ...keep)
         break
+      }
+      case 'dispenser-run': {
+        // The dispenser restarted. Its ledger restarts at seq 1; the station's does not.
+        const keep = ledger.filter(e => e.origin === 'station')
+        ledger.splice(0, ledger.length, ...keep)
+        break
+      }
     }
   }
 }
@@ -120,7 +146,7 @@ export const api = {
   network: (mode?: string, latencyMs?: number, flapFailureRate?: number, lateResponseMs?: number) =>
     post('/api/network', { mode, latencyMs, flapFailureRate, lateResponseMs }),
   attack: (kind: string, body?: unknown) => post(`/api/attack/${kind}`, body ?? {}),
-  /** Save a copy of the host's log since start. Text for reading, JSON for tools. Lands in the browser's download folder. */
+  /** Save a copy of the station's log since start. Text for reading, JSON for tools. Lands in the browser's download folder. */
   exportLog: async (format: 'text' | 'json') => {
     const r = await fetch(`${HOST}/api/log/export?format=${format}`)
     const blob = await r.blob()
@@ -130,17 +156,22 @@ export const api = {
     a.click()
     URL.revokeObjectURL(a.href)
   },
-  custodyInfo: async () => (await fetch(`${HOST}/api/custody`)).json() as Promise<{ runId: string; path: string | null; journalPath: string | null; ikmPath: string; files: string[] }>,
+  custodyInfo: async () => (await fetch(`${HOST}/api/custody`)).json() as Promise<{ runId: string; path: string | null; journalPath: string | null; ikmPath: string; files: string[]; dispenserPath: string | null; dispenserRunId: string | null }>,
   verifyCustody: async () => (await (await fetch(`${HOST}/api/custody/verify`, { method: 'POST' })).json()) as { ok: boolean; failureAtSeq: number | null; reason: string | null; lines: number; status: string },
   fault: (kind: 'tankout' | 'tankback' | 'pulserdead' | 'pulserfix' | 'driveoff' | 'breakawayreset') => post(`/api/fault/${kind}`),
   estop: (pressedBy: string) => post('/api/station/estop', { pressedBy }),
   estopReset: async () => (await (await fetch(`${HOST}/api/station/reset`, { method: 'POST' })).json()) as { estopActive: boolean; recovery: Recovery; runId: string },
   verifyStationCopy: async () => (await (await fetch(`${HOST}/api/station/custody/verify`, { method: 'POST' })).json()) as { ok: boolean; failureAtSeq: number | null; reason: string | null; lines: number },
+  /** The station's plug. The dispenser process keeps running and is told Stop when the new station connects. */
   powerLoss: async () => (await (await fetch(`${HOST}/api/host/powerloss`, { method: 'POST' })).json()) as { recovery: Recovery; runId: string },
+  /** The dispenser's plug. The station sees the link drop and faults the sale with LINK.DISPENSER.LOST. */
+  dispenserPowerLoss: () => post('/api/dispenser/powerloss'),
+  dispenserPowerOn: () => post('/api/dispenser/poweron'),
   verifyLedger: async () => (await fetch(`${HOST}/api/ledger`)).json() as Promise<{ verify: number; totalizer: number }>,
 }
 
 export const dollars = (cents: number) => `$${(cents / 100).toFixed(2)}`
+export const basename = (p: string | null | undefined) => (p ? p.split(/[\\/]/).pop() ?? '' : '')
 
 /** Seconds left until the sale's armed deadline, or null when none is armed. */
 export function secondsLeft(sale: Sale | undefined, now: number): number | null {

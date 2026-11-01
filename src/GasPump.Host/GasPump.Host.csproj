@@ -5,5 +5,7 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\GasPump.Dispatch\GasPump.Dispatch.csproj" />
+    <!-- The dispenser process lands beside the host so the host can spawn it by path. -->
+    <ProjectReference Include="..\GasPump.Dispenser\GasPump.Dispenser.csproj" ReferenceOutputAssembly="false" OutputItemType="Content" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

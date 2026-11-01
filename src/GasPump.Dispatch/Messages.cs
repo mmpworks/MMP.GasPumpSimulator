@@ -1,9 +1,27 @@
+using System.Text.Json.Serialization;
 using GasPump.Core;
 using GasPump.Payment;
 
 namespace GasPump.Dispatch;
 
-/// <summary>What the sale worker and the driver send the pump worker. Note what is missing: there is no SetCeiling.</summary>
+/// <summary>What the sale worker and the driver send the pump worker. Note what is missing: there is no SetCeiling. The JSON attributes let the same record cross the socket to a dispenser process.</summary>
+[JsonPolymorphic(TypeDiscriminatorPropertyName = "$m")]
+[JsonDerivedType(typeof(Arm), nameof(Arm))]
+[JsonDerivedType(typeof(Close), nameof(Close))]
+[JsonDerivedType(typeof(SelectGrade), nameof(SelectGrade))]
+[JsonDerivedType(typeof(Lift), nameof(Lift))]
+[JsonDerivedType(typeof(Seat), nameof(Seat))]
+[JsonDerivedType(typeof(Unseat), nameof(Unseat))]
+[JsonDerivedType(typeof(Squeeze), nameof(Squeeze))]
+[JsonDerivedType(typeof(Release), nameof(Release))]
+[JsonDerivedType(typeof(Hang), nameof(Hang))]
+[JsonDerivedType(typeof(Tick), nameof(Tick))]
+[JsonDerivedType(typeof(Stop), nameof(Stop))]
+[JsonDerivedType(typeof(SpoofPulses), nameof(SpoofPulses))]
+[JsonDerivedType(typeof(Supply), nameof(Supply))]
+[JsonDerivedType(typeof(PulserDead), nameof(PulserDead))]
+[JsonDerivedType(typeof(DriveOff), nameof(DriveOff))]
+[JsonDerivedType(typeof(ResetBreakaway), nameof(ResetBreakaway))]
 public abstract record PumpMessage
 {
     public sealed record Arm(string SaleId, string Token, Grade? Grade) : PumpMessage;

@@ -255,7 +255,36 @@ Three beliefs set the boundaries, and the three workers already sit on them:
 | Telemetry is stored on the dispenser and sent to the station | the TesseraSeal sink plus `CustodyStream` | the custody file, and the byte-identical stream of its lines | the stream is the wire: `StationServer` in-process, `/ws/custody` for anything outside |
 | The station opens and closes the transaction session | sale worker (`SaleStateMachine`) and payment worker (`PaymentGateway`) | the sale saga, the tender, the money, the notice | the same mailbox seam |
 
-What moves across the first seam is already only messages: `PumpMessage` down, `SaleEvent` up. Nothing in the sale worker reads pump state, and nothing in the pump worker reads sale state. That is what lets the seam become a socket without touching either side. The journal is the one thing both sides would need to agree on across a real network, and that is the station's job in the belief table.
+What moves across the first seam is only messages: `PumpMessage` down, `SaleEvent` up. Nothing in the sale worker reads pump state, and nothing in the pump worker reads sale state. Since slice 2e that seam is a socket by default.
+
+## Two processes
+
+```
+GasPump.Host.exe  (the station)                     GasPump.Dispenser.exe  (the island)
+  sale worker, payment worker                         pump worker, ticker
+  SaleStateMachine, PaymentGateway, Issuer            PumpController, Hydraulics, Meter
+  SiteLimits, CashDrawer, journal (state.json)        PumpAuthority, NonceStore, Totalizer
+  station ledger, station chain                       dispenser ledger, dispenser chain
+  StationServer: copy of the dispenser chain          dispenser-state.json (totalizer, nonces)
+  SocketDispenserLink  <==== TCP 127.0.0.1:5178 ====>  DispenserServer
+       msg {saleId, PumpMessage}  ---->
+       power off                  ---->
+                                  <----  event {SaleEvent}, view, log, ledger, custody line
+```
+
+One JSON object per line. `PumpMessage` and `SaleEvent` carry a type discriminator, so the records that were the contract between two mailboxes are the contract between two processes with no translation. The tick never crosses the wire; the dispenser has its own.
+
+| Belief | Where it shows |
+|---|---|
+| The pump pumps under its authorized limits | The hard limits, the authority, and the nonce store live in the dispenser process. A station that signs for 600 gallons gets clamped by a process it cannot reach into. |
+| Custody is stored on the dispenser and sent to the station | The dispenser writes `dispenser-custody-<run>.ndjson` and streams each line as it lands. The station appends the same bytes to `station-copy-<run>.ndjson` and verifies the copy with the same key. |
+| The station owns session open and close | `sale.open` and `sale.close` are station ledger entries. The journal is the station's. Recovery is the station's. The dispenser never knows what a sale is; it knows a token, a valve, and a counter. |
+
+Each side is safe alone. Dispenser gone: the station faults the sale with `LINK.DISPENSER.LOST`, settles for the fuel it recorded, and refuses to pretend the pump is there. Station gone with the valve open: the dispenser keeps pouring under its own ceiling and time limit, and the first frame the new station sends is `Stop`. E-stop: the station writes its record and snapshot, sends `power off`, and the dispenser process closes its chain and exits; the cashier's reset starts it again before the new station connects.
+
+`--dispenser inproc` keeps both sides in one process behind the same `IDispenserLink` interface, which is how the 191 fake-clock tests run. The three socket tests run on a real clock over loopback.
+
+The UI is two columns and a strip. Amber, left: the pump face, the hand controls, the forecourt faults, and the dispenser's own log, ledger, and chain. Blue, right: payment, bank link, administrator, E-stop, journal, and the station's own records plus its copy of the dispenser chain. The strip between them is the wire: the port, the frame counters both ways, the chain lines received. Every record carries its origin, and over the socket that origin is a fact of which process sent it.
 
 ## Forecourt faults and the E-stop
 

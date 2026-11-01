@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace GasPump.Core;
 
 public enum SaleState
@@ -78,7 +80,34 @@ public enum DriverAction
 /// <summary>What the pump screen says. Headline, one line of detail, one next step.</summary>
 public sealed record DriverNotice(string Headline, string Detail, DriverAction Action);
 
-/// <summary>Everything that can happen to a sale. Device threads, timers, and the host all post one of these.</summary>
+/// <summary>Everything that can happen to a sale. Device threads, timers, and the host all post one of these. The JSON attributes let the same record cross a socket between the dispenser and the station.</summary>
+[JsonPolymorphic(TypeDiscriminatorPropertyName = "$e")]
+[JsonDerivedType(typeof(CardPresented), nameof(CardPresented))]
+[JsonDerivedType(typeof(CashPaid), nameof(CashPaid))]
+[JsonDerivedType(typeof(GradeSelected), nameof(GradeSelected))]
+[JsonDerivedType(typeof(NozzleSeated), nameof(NozzleSeated))]
+[JsonDerivedType(typeof(NozzleUnseated), nameof(NozzleUnseated))]
+[JsonDerivedType(typeof(FlowStarted), nameof(FlowStarted))]
+[JsonDerivedType(typeof(FlowPaused), nameof(FlowPaused))]
+[JsonDerivedType(typeof(FlowResumed), nameof(FlowResumed))]
+[JsonDerivedType(typeof(CardReadFailed), nameof(CardReadFailed))]
+[JsonDerivedType(typeof(Approved), nameof(Approved))]
+[JsonDerivedType(typeof(Declined), nameof(Declined))]
+[JsonDerivedType(typeof(AuthorizationTimedOut), nameof(AuthorizationTimedOut))]
+[JsonDerivedType(typeof(AuthorizationUnreachable), nameof(AuthorizationUnreachable))]
+[JsonDerivedType(typeof(PumpArmed), nameof(PumpArmed))]
+[JsonDerivedType(typeof(PumpRefused), nameof(PumpRefused))]
+[JsonDerivedType(typeof(NozzleLifted), nameof(NozzleLifted))]
+[JsonDerivedType(typeof(Progress), nameof(Progress))]
+[JsonDerivedType(typeof(NozzleHung), nameof(NozzleHung))]
+[JsonDerivedType(typeof(CeilingReached), nameof(CeilingReached))]
+[JsonDerivedType(typeof(CompletionSent), nameof(CompletionSent))]
+[JsonDerivedType(typeof(CompletionQueued), nameof(CompletionQueued))]
+[JsonDerivedType(typeof(Reversed), nameof(Reversed))]
+[JsonDerivedType(typeof(ReversalQueued), nameof(ReversalQueued))]
+[JsonDerivedType(typeof(Timeout), nameof(Timeout))]
+[JsonDerivedType(typeof(Cancel), nameof(Cancel))]
+[JsonDerivedType(typeof(Fault), nameof(Fault))]
 public abstract record SaleEvent(string SaleId)
 {
     /// <summary>Grade is null when the driver will pick it at the pump after approval, which is the normal path.</summary>

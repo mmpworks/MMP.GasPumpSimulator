@@ -1,5 +1,4 @@
 using System.Net.WebSockets;
-using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using GasPump.Core;
@@ -17,30 +16,34 @@ builder.Services.ConfigureHttpJsonOptions(o =>
 });
 
 // --strategy threaded|channel|asyncproxy. Threaded is the default so the "old way" is what you see first.
-var strategyName = args.SkipWhile(a => a != "--strategy").Skip(1).FirstOrDefault() ?? "threaded";
+// --dispenser socket|inproc. Socket is the default: the pump runs in GasPump.Dispenser.exe and this process is the station.
+// --dispenser-port 5178.
+string Arg(string name, string fallback) => args.SkipWhile(a => a != name).Skip(1).FirstOrDefault() ?? fallback;
+var strategyName = Arg("--strategy", "threaded");
+var dispenserMode = Arg("--dispenser", "socket");
+var dispenserPort = int.Parse(Arg("--dispenser-port", "5178"));
 var clock = TimeProvider.System;
 
-// One directory holds the three files: the Herald debug log (NDJSON, one per session), the state journal
-// (state.json, rewritten every second), and the TesseraSeal custody file (one HMAC chain per run).
-// GASPUMP_LOG_DIR overrides the folder. Default: %LOCALAPPDATA%\MMP.GasPumpSimulator\logs.
+// One directory holds the files of both processes: the station's Herald log (gaspump-*.ndjson), the state journal
+// (state.json, rewritten every second), the station's TesseraSeal chain (custody-RUN-*.ndjson), the dispenser's
+// log (dispenser-*.ndjson), chain (dispenser-custody-DSP-*.ndjson), state (dispenser-state-PUMP-07.json), and the
+// station's copy of the dispenser's chain (station-copy-*.ndjson). GASPUMP_LOG_DIR overrides the folder.
 var logDir = Environment.GetEnvironmentVariable("GASPUMP_LOG_DIR")
     ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "MMP.GasPumpSimulator", "logs");
 Directory.CreateDirectory(logDir);
 var heraldLogPath = Path.Combine(logDir, $"gaspump-{DateTime.Now:yyyyMMdd-HHmmss}.ndjson");
 
-// The custody key. Steve's spec puts this in a KMS or HSM; the simulator keeps a software key beside the logs so
-// the verifier can read the same bytes. GASPUMP_CUSTODY_IKM_HEX overrides it. Never a production posture.
+// The site custody key. Steve's spec puts this in a KMS or HSM; the simulator keeps a software key beside the logs
+// so both processes and the verifier read the same bytes. GASPUMP_CUSTODY_IKM_HEX overrides it. Never a production posture.
+var ikm = CustodyKeyFile.Load(logDir);
 var ikmPath = Path.Combine(logDir, "custody.ikm");
-byte[] ikm;
-if (Environment.GetEnvironmentVariable("GASPUMP_CUSTODY_IKM_HEX") is { Length: >= 64 } hex) ikm = Convert.FromHexString(hex);
-else if (File.Exists(ikmPath)) ikm = Convert.FromHexString(File.ReadAllText(ikmPath).Trim());
-else { ikm = RandomNumberGenerator.GetBytes(32); File.WriteAllText(ikmPath, Convert.ToHexString(ikm)); }
 
 var options = SimulationOptions.Default with
 {
     HoldAmount = Money.FromDollars(30),
     Journal = new JournalOptions(logDir, "PUMP-07", ikm),
     LogSinks = b => b.WithFileSink(heraldLogPath).WithConsoleSink(),
+    Dispenser = dispenserMode == "inproc" ? null : new DispenserLinkOptions("127.0.0.1", dispenserPort),
 };
 
 IDispatchStrategy MakeDispatch() => strategyName switch
@@ -50,13 +53,17 @@ IDispatchStrategy MakeDispatch() => strategyName switch
     _ => new ThreadedDispatch(clock),
 };
 
-var simHost = new SimulationHost(() => new Simulation(MakeDispatch(), clock, options), clock);
+// The dispenser process. Started before the station so the first connect lands; adopted if one is already listening.
+DispenserProcess? dispenserProcess = options.Dispenser is null ? null : new DispenserProcess(dispenserPort, "PUMP-07", logDir, strategyName);
+dispenserProcess?.Start();
+
+var simHost = new SimulationHost(() => new Simulation(MakeDispatch(), clock, options), clock, restoreDispenserPower: () => dispenserProcess?.Start());
 var hub = new EventHub(simHost);
-// The station server: receives the custody stream and keeps its own copy of the chain, per run.
+// The station server: receives the custody stream and keeps its own copy of the dispenser's chain, per dispenser run.
 var station = new StationServer(logDir, ikm);
 station.Bind(simHost.Current);
 simHost.Swapped += station.Bind;
-hub.Attach(station);
+hub.Attach(station, dispenserProcess);
 builder.Services.AddSingleton(simHost);
 builder.Services.AddSingleton(hub);
 builder.Services.AddSingleton(station);
@@ -68,27 +75,43 @@ app.UseWebSockets();
 var json = new JsonSerializerOptions(JsonSerializerDefaults.Web) { Converters = { new JsonStringEnumConverter() } };
 Simulation Sim() => simHost.Current;
 
-app.MapGet("/api/state", () => Results.Json(Contracts.State(Sim(), simHost, station), json));
+app.MapGet("/api/state", () => Results.Json(Contracts.State(Sim(), simHost, station, dispenserProcess), json));
+
+// The dispenser process: its power, from the station's side of the seam.
+app.MapGet("/api/dispenser", () => Results.Json(new { view = Contracts.Pump(Sim().View), link = Sim().Link.Kind, connected = Sim().Link.Connected, pid = Sim().Link.RemotePid, runId = Sim().Link.RemoteRunId, custodyPath = Sim().Link.RemoteCustodyPath, framesSent = Sim().Link.FramesSent, framesReceived = Sim().Link.FramesReceived, processRunning = dispenserProcess?.Running, external = dispenserProcess?.External, lastExit = dispenserProcess?.LastExit, port = dispenserProcess?.Port }, json));
+app.MapPost("/api/dispenser/powerloss", () =>
+{
+    if (dispenserProcess is null) return Results.Conflict(new { error = "the dispenser is in this process; use /api/host/powerloss" });
+    if (dispenserProcess.External) return Results.Conflict(new { error = "the dispenser was started by hand; stop it from its own terminal" });
+    dispenserProcess.Kill();
+    return Results.Ok();
+});
+app.MapPost("/api/dispenser/poweron", () =>
+{
+    if (dispenserProcess is null) return Results.Conflict(new { error = "the dispenser is in this process" });
+    dispenserProcess.Start();
+    return Results.Ok();
+});
 app.MapGet("/api/cards", () => Results.Json(TestCards.ByName.Select(kv => new { name = kv.Key, last4 = kv.Value.Last4, kind = kv.Value.Kind.ToString(), expiry = $"{kv.Value.ExpiryMonth:00}/{kv.Value.ExpiryYear}" }), json));
-app.MapGet("/api/log", (int? after) => Results.Json(Sim().Log.Snapshot().Skip(after ?? 0).Select(Contracts.Log), json));
+app.MapGet("/api/log", (int? after) => Results.Json(Sim().Log.Snapshot().Skip(after ?? 0).Select(l => Contracts.Log(l, Origins.OfLog(l))), json));
 app.MapGet("/api/logfile", () => Results.Json(new { path = heraldLogPath, directory = logDir, format = "ndjson (Herald.OSS json_file sink)", lines = Sim().Log.Snapshot().Count }, json));
 // A plain-text copy of everything since the host started, rendered from the same lines the UI shows.
 app.MapGet("/api/log/export", (string? format) =>
 {
     var lines = Sim().Log.Snapshot();
     if (format == "json")
-        return Results.Json(lines.Select(Contracts.Log), json);
+        return Results.Json(lines.Select(l => Contracts.Log(l, Origins.OfLog(l))), json);
     var text = string.Join('\n', lines.Select(l => $"{l.At:yyyy-MM-dd HH:mm:ss.fff}  {l.Severity,-5} {l.Source,-8} {l.Message}" + (l.Props.Count == 0 ? "" : "  {" + string.Join(", ", l.Props.Select(p => $"{p.Key}={p.Value}")) + "}")));
     return Results.Text(text + "\n", "text/plain");
 });
-app.MapGet("/api/ledger", () => Results.Json(new { verify = Sim().Ledger.Verify(), totalizer = Sim().Totalizer.Total.Gallons, entries = Sim().Ledger.Snapshot() }, json));
+app.MapGet("/api/ledger", () => Results.Json(new { verify = Sim().Ledger.Verify(), totalizer = new Volume(Sim().View.TotalizerMilliGallons).Gallons, entries = Sim().Ledger.Snapshot() }, json));
 
-// The custody file: TesseraSeal's verifier over this run's chain, plus the list of earlier runs' files.
+// The custody files: TesseraSeal's verifier over the station's chain, plus the list of files on disk from both sides.
 app.MapGet("/api/custody", () =>
 {
     var s = Sim();
-    var files = Directory.GetFiles(logDir, "custody-*.ndjson").OrderByDescending(f => f).Select(Path.GetFileName).ToArray();
-    return Results.Json(new { runId = s.RunId, path = s.CustodyPath, journalPath = s.JournalPath, ikmPath, files }, json);
+    var files = Directory.GetFiles(logDir, "*custody-*.ndjson").OrderByDescending(f => f).Select(Path.GetFileName).ToArray();
+    return Results.Json(new { runId = s.RunId, path = s.CustodyPath, journalPath = s.JournalPath, ikmPath, files, dispenserPath = s.Link.RemoteCustodyPath, dispenserRunId = s.Link.RemoteRunId }, json);
 });
 app.MapPost("/api/custody/verify", () =>
 {
@@ -110,7 +133,7 @@ app.MapPost("/api/station/reset", () =>
     simHost.Reset();
     return Results.Json(new { estopActive = simHost.EStopActive, recovery = Contracts.Recovery(Sim().LastRecovery), runId = Sim().RunId }, json);
 });
-app.MapGet("/api/station/custody", () => Results.Json(new { station.RunId, copyPath = station.CopyPath, linesReceived = station.LinesReceived, dispenserLines = Sim().Custody?.LinesPublished ?? 0 }, json));
+app.MapGet("/api/station/custody", () => Results.Json(new { station.RunId, copyPath = station.CopyPath, linesReceived = station.LinesReceived, dispenserLines = Sim().DispenserCustodyLines }, json));
 app.MapPost("/api/station/custody/verify", () =>
 {
     var (ok, seq, reason, lines) = station.VerifyCopy();
@@ -209,8 +232,9 @@ app.Map("/ws", async (HttpContext ctx) =>
     await hub.ServeAsync(socket, json, ctx.RequestAborted);
 });
 
-app.Lifetime.ApplicationStopping.Register(() => { station.Dispose(); simHost.Dispose(); });
-Sim().Log.Write("host", "listening on {Url} with {Dispatch} dispatch, Herald.OSS log at {LogPath}, custody at {Custody}", ("Url", "http://localhost:5177"), ("Dispatch", Sim().StrategyName), ("LogPath", heraldLogPath), ("Custody", Sim().CustodyPath));
+app.Lifetime.ApplicationStopping.Register(() => { station.Dispose(); simHost.Dispose(); dispenserProcess?.Dispose(); });
+Sim().Log.Write("host", "station pid {Pid} listening on {Url} with {Dispatch} dispatch, dispenser via {Link}{Port}, Herald.OSS log at {LogPath}, custody at {Custody}",
+    ("Pid", Environment.ProcessId), ("Url", "http://localhost:5177"), ("Dispatch", Sim().StrategyName), ("Link", Sim().Link.Kind), ("Port", options.Dispenser is { } d ? $" port {d.Port}" : ""), ("LogPath", heraldLogPath), ("Custody", Sim().CustodyPath));
 app.Run();
 
 record CardRequest(string Name, Grade? Grade, Tender? Tender);

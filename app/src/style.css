@@ -9,6 +9,29 @@ body { background: var(--bg); overflow: hidden; }
 .v-application__wrap { min-height: 100vh; max-height: 100vh; }
 .v-main { height: 100vh; box-sizing: border-box; }
 .workspace { height: 100%; box-sizing: border-box; }
+
+/* Two sides, two colours. Amber is the island; blue is the back office. The strip between them is the wire. */
+.side { height: 100%; display: flex; flex-direction: column; border-radius: 10px; padding: 6px; box-sizing: border-box; }
+.side.dispenser { background: linear-gradient(180deg, rgba(255,176,0,.10), rgba(255,176,0,.02)); border: 1px solid rgba(255,176,0,.35); }
+.side.station { background: linear-gradient(180deg, rgba(88,166,255,.10), rgba(88,166,255,.02)); border: 1px solid rgba(88,166,255,.35); }
+.side > .splitpanes { flex: 1 1 auto; min-height: 0; }
+.side-head { display: flex; align-items: center; gap: 10px; padding: 4px 8px 8px; flex: 0 0 auto; flex-wrap: wrap; }
+.side-title { font-size: 12px; letter-spacing: .12em; font-weight: 700; }
+.side.dispenser .side-title, .side.dispenser .side-head .v-icon { color: var(--led); }
+.side.station .side-title, .side.station .side-head .v-icon { color: var(--info); }
+.side.dispenser .pane-card { border-left: 3px solid rgba(255,176,0,.6); }
+.side.station .pane-card { border-left: 3px solid rgba(88,166,255,.6); }
+
+.link-strip { height: 100%; display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 14px 4px; box-sizing: border-box; text-align: center; font-size: 11px; color: var(--muted); }
+.link-strip .link-label { letter-spacing: .14em; font-weight: 700; color: var(--text); }
+.link-strip .link-kind { font-weight: 700; color: var(--text); }
+.link-strip .link-port { font-family: ui-monospace, Consolas, monospace; }
+.link-strip .wire { flex: 1 1 auto; width: 2px; min-height: 24px; background: var(--line); border-radius: 1px; }
+.link-strip .wire.live { background: linear-gradient(180deg, var(--led), var(--info)); box-shadow: 0 0 10px rgba(88,166,255,.4); }
+.link-strip .counter { display: flex; flex-direction: column; align-items: center; line-height: 1.2; }
+.link-strip .counter b { color: var(--text); font-size: 14px; font-variant-numeric: tabular-nums; }
+.link-strip.down .link-label { color: var(--bad); }
+.link-strip .link-foot { line-height: 1.4; }
 .pane-card { height: 100%; display: flex; flex-direction: column; overflow: hidden; }
 .pane-card > .v-card-title { font-size: 12px; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); padding: 10px 16px 6px; flex: 0 0 auto; }
 .pane-card > .v-card-text { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 8px 16px 14px; }
@@ -42,6 +65,7 @@ body { background: var(--bg); overflow: hidden; }
 .mono-list .line.ledger { grid-template-columns: 40px minmax(0, 1fr); }
 .mono-list .src { color: var(--muted); }
 .src.attack { color: var(--bad); } .src.pump { color: var(--accent); } .src.payment { color: var(--info); } .src.sale { color: #d2a8ff; } .src.admin { color: var(--warn); }
+.src.link, .src.dispenser, .src.station { color: var(--led); }
 .line.sev-Warn { color: var(--warn); } .line.sev-Error { color: var(--bad); }
 .hash { color: var(--muted); }
 .kind-ok { color: var(--accent); } .kind-bad { color: var(--bad); }

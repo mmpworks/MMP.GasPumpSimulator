@@ -24,7 +24,9 @@ public sealed record SimulationOptions(
     /// <summary>Where the state journal and the TesseraSeal custody file go. Null runs with neither, as the tests do by default.</summary>
     JournalOptions? Journal = null,
     /// <summary>Extra Herald sinks for the debug log (a file, the console). The UI bridge and the custody bridge are always wired.</summary>
-    Action<MMP.Herald.Quick.QuickLogBuilder>? LogSinks = null)
+    Action<MMP.Herald.Quick.QuickLogBuilder>? LogSinks = null,
+    /// <summary>Where the dispenser is. Null builds it in this process behind a mailbox; a host and port reach a <see cref="DispenserServer"/> over TCP.</summary>
+    DispenserLinkOptions? Dispenser = null)
 {
     public static SimulationOptions Default => new(
         PumpId: "PUMP-07",
@@ -41,14 +43,17 @@ public sealed record SimulationOptions(
 }
 
 /// <summary>
-/// Three workers and the wires between them.
+/// The station: two workers, a link to the dispenser, and the wires between them.
 ///
 ///   sale worker     owns the SaleStateMachine. The only thing that changes sale state.
-///   pump worker     owns the PumpController. The only thing that touches the valve.
 ///   payment worker  owns the PaymentGateway. The only thing that talks to the host.
+///   dispenser link  carries PumpMessages to the pump worker and SaleEvents back.
+///                   In-process the pump worker is a third mailbox here; over a
+///                   socket it lives in a DispenserServer in another process.
 ///
-/// Every arrow between them is a mailbox. The dispatch strategy decides how
-/// the workers run. The code in this file does not know or care.
+/// Every arrow between workers is a mailbox. The dispatch strategy decides how
+/// the workers run. The code in this file does not know or care, and it does
+/// not know which side of a process boundary the pump is on either.
 /// </summary>
 public sealed class Simulation : IDisposable
 {
@@ -56,14 +61,17 @@ public sealed class Simulation : IDisposable
     private readonly SimulationOptions _options;
     private readonly TimeProvider _clock;
     private readonly IMailbox<SaleEvent> _saleBox;
-    private readonly IMailbox<PumpMessage> _pumpBox;
     private readonly IMailbox<PaymentMessage> _paymentBox;
     private readonly List<IDisposable> _owned = [];
     private readonly Lock _gate = new();
     private readonly CancellationTokenSource _cts = new();
 
     private readonly NetworkSimulator _networkSim;
-    private readonly Hydraulics _hydraulics;
+    private readonly IDispenserLink _link;
+    private readonly Dispenser? _local;
+    private readonly List<LogLine> _dispenserLog = [];
+    private readonly List<LedgerEntry> _dispenserLedger = [];
+    private string? _dispenserLedgerRun;
     private SaleStateMachine _sale;
     private IDisposable? _saleTimer;
     private DateTimeOffset? _saleDeadline;
@@ -89,16 +97,14 @@ public sealed class Simulation : IDisposable
         else RunId = "RUN-unjournaled";
         Log = log ?? new HeraldEventLog(clock, _options.LogSinks, _custody is null ? null : (_custody, IsEvidence));
         Ledger = new EventLedger(clock);
-        Totalizer = new Totalizer();
         Issuer = issuer ?? IssuerSimulator.WithTestCards();
         Network = new NetworkFaultPolicy();
         // The token key is device configuration: it must be the same key after a reboot, or every token issued
         // before the reboot fails on signature instead of on the nonce it already burned. With a journal, derive
         // it from the custody IKM under its own label; without one, a fresh random key is fine for a one-off run.
+        // A dispenser in another process derives the same key from the same IKM (CustodyKeyFile.TokenKey).
         var key = hmacKey
-            ?? (_options.Journal is { } jk
-                ? System.Security.Cryptography.HKDF.DeriveKey(System.Security.Cryptography.HashAlgorithmName.SHA256, jk.Ikm, 32, info: System.Text.Encoding.UTF8.GetBytes("gaspump.token-key.v1"))
-                : System.Security.Cryptography.RandomNumberGenerator.GetBytes(32));
+            ?? (_options.Journal is { } jk ? CustodyKeyFile.TokenKey(jk.Ikm) : System.Security.Cryptography.RandomNumberGenerator.GetBytes(32));
         Signer = new HmacAuthorizationSigner(key);
         _networkSim = new NetworkSimulator(Network, clock);
         Site = new SiteLimits(clock, _options.HoldAmount, _options.DebitHold, _options.AdminPin);
@@ -111,12 +117,6 @@ public sealed class Simulation : IDisposable
             if (kind == "admin.limits") Log.Write("admin", "{Detail}", ("Detail", detail));
             else Log.Warn("admin", "{Kind}: {Detail}", ("Kind", kind), ("Detail", detail));
         };
-        Nonces = new NonceStore();
-        Authority = new PumpAuthority(new HmacAuthorizationVerifier(key, _options.PumpId, Nonces, TimeSpan.FromSeconds(5)), _options.HardLimits, Ledger, clock);
-        Meter = new Meter();
-        _hydraulics = new Hydraulics(_options.NominalFlow);
-        Pump = new PumpController(Authority, _hydraulics, Meter, Totalizer, Ledger, _options.Pricing, _options.Taper, clock);
-
         // The ledger is mirrored into Herald under its own category, which is how it reaches the custody file.
         Ledger.Appended += e => Log.Write("ledger", "#{Seq} {Kind} {Detail}", ("Seq", e.Seq), ("Kind", e.Kind), ("Detail", e.Detail), ("Hash", e.Hash), ("Prev", e.PrevHash));
         if (CustodyPath is not null)
@@ -127,23 +127,62 @@ public sealed class Simulation : IDisposable
             Ledger.Appended += _ => Custody.Pump();
         }
 
-        // Restore from the journal before any worker runs, then decide what to do about the sale that was open.
-        var snapshot = _options.Journal is { } jo ? StateJournal.Load(jo.StatePath) : null;
-        if (snapshot is not null) Restore(snapshot);
-        LastRecovery = RecoveryPlan.Build(snapshot, clock.GetUtcNow(), _options.Journal?.Period ?? TimeSpan.FromSeconds(1));
-
         _sale = NewSale();
-
         _saleBox = dispatch.CreateMailbox<SaleEvent>("sale", 1024);
-        _pumpBox = dispatch.CreateMailbox<PumpMessage>("pump", 1024);
         _paymentBox = dispatch.CreateMailbox<PaymentMessage>("payment", 64);
 
-        _owned.Add(dispatch.StartWorker("sale", _saleBox, HandleSaleEvent));
-        _owned.Add(dispatch.StartWorker("pump", _pumpBox, HandlePumpMessage));
-        _owned.Add(dispatch.StartWorker("payment", _paymentBox, HandlePaymentMessage));
-        _owned.Add(dispatch.StartTicker("pump-tick", _options.TickPeriod, _pumpBox, () => new PumpMessage.Tick(_options.TickPeriod)));
+        // The dispenser: here, behind a mailbox on the same strategy, or in another process behind a socket.
+        if (_options.Dispenser is { } where)
+        {
+            var socket = new SocketDispenserLink(where, _options.PumpId, Log);
+            socket.RemoteLog += l =>
+            {
+                lock (_dispenserLog)
+                {
+                    // A reconnect replays the dispenser's recent log; keep each line once.
+                    if (_dispenserLog.Count > 0 && _dispenserLog.Any(x => x.At == l.At && x.Message == l.Message)) return;
+                    _dispenserLog.Add(l);
+                    if (_dispenserLog.Count > 2000) _dispenserLog.RemoveAt(0);
+                }
+                DispenserLog?.Invoke(l);
+            };
+            socket.RemoteLedger += e =>
+            {
+                lock (_dispenserLedger)
+                {
+                    // A new dispenser run starts its ledger over; a reconnect to the same run replays entries we hold.
+                    var run = socket.RemoteRunId;
+                    if (run != _dispenserLedgerRun) { _dispenserLedgerRun = run; _dispenserLedger.Clear(); }
+                    if (_dispenserLedger.Count > 0 && e.Seq <= _dispenserLedger[^1].Seq) return;
+                    _dispenserLedger.Add(e);
+                }
+                DispenserLedger?.Invoke(e);
+            };
+            socket.ConnectionChanged += OnDispenserConnection;
+            _link = socket;
+        }
+        else
+        {
+            _local = new Dispenser(DispenserOptions.From(_options), key, Ledger, new OriginTaggedLog(Log, Origins.Dispenser), clock);
+            _link = new LocalDispenserLink(_local, dispatch, _options.TickPeriod, () => CurrentSaleId, Custody, RunId, CustodyPath);
+        }
+        _link.Event += e => _saleBox.Post(e);
+        _link.ViewChanged += v => DispenserViewChanged?.Invoke(v);
 
-        Log.Write("sim", "started with {Dispatch} dispatch, pump {PumpId}, hold {Hold}, run {RunId}", ("Dispatch", dispatch.Name), ("PumpId", _options.PumpId), ("Hold", _options.HoldAmount), ("RunId", RunId));
+        // Restore from the journal before any worker runs, then decide what to do about the sale that was open.
+        var snapshot = _options.Journal is { } jo ? StateJournal.Load(jo.StatePath) : null;
+        if (snapshot is not null)
+        {
+            Restore(snapshot);
+            // The restore set the sale counter; the placeholder sale above was numbered before it. Number the first real sale after it.
+            lock (_gate) _sale = NewSale();
+        }
+        LastRecovery = RecoveryPlan.Build(snapshot, clock.GetUtcNow(), _options.Journal?.Period ?? TimeSpan.FromSeconds(1));
+
+        _owned.Add(dispatch.StartWorker("sale", _saleBox, HandleSaleEvent));
+        _owned.Add(dispatch.StartWorker("payment", _paymentBox, HandlePaymentMessage));
+
+        Log.Write("sim", "started with {Dispatch} dispatch, pump {PumpId} via {Link}, hold {Hold}, run {RunId}", ("Dispatch", dispatch.Name), ("PumpId", _options.PumpId), ("Link", _link.Kind), ("Hold", _options.HoldAmount), ("RunId", RunId));
 
         ApplyRecovery(LastRecovery, snapshot);
 
@@ -162,12 +201,61 @@ public sealed class Simulation : IDisposable
     private static bool IsEvidence(LogEvent e) => e.Category.Value is "ledger" or "sale" or "payment" or "admin" or "recovery" or "attack" or "station" or "tank";
 
     /// <summary>
-    /// The custody file, as a stream. Every complete line the TesseraSeal sink
-    /// writes is published here byte for byte, so a station server, a message
-    /// bus, or a WebSocket client can hold the same chain and verify it with
-    /// the same verifier. Null when the journal is off.
+    /// The station's own custody file, as a stream. Every complete line the
+    /// TesseraSeal sink writes is published here byte for byte. In-process the
+    /// dispenser writes into this same chain; over a socket the dispenser has
+    /// its own, reached through <see cref="SubscribeDispenserCustody"/>. Null
+    /// when the journal is off.
     /// </summary>
     public CustodyStream? Custody { get; private set; }
+
+    /// <summary>The link to the pump: in-process mailbox or socket. Read-only facts about it for the host contract.</summary>
+    public IDispenserLink Link => _link;
+
+    /// <summary>The pump as the station sees it. Works on both sides of the seam.</summary>
+    public DispenserView View => _link.View;
+
+    /// <summary>True when the pump is in this process and <see cref="Pump"/>, <see cref="Meter"/> and friends can be touched directly.</summary>
+    public bool DispenserIsLocal => _local is not null;
+
+    public event Action<DispenserView>? DispenserViewChanged;
+    /// <summary>Log lines from a dispenser in another process. In-process the shared log carries them with an Origin property.</summary>
+    public event Action<LogLine>? DispenserLog;
+    /// <summary>Ledger entries from a dispenser in another process. In-process the shared ledger carries them.</summary>
+    public event Action<LedgerEntry>? DispenserLedger;
+
+    public IReadOnlyList<LogLine> DispenserLogSnapshot() { lock (_dispenserLog) return _dispenserLog.ToArray(); }
+    public IReadOnlyList<LedgerEntry> DispenserLedgerSnapshot() { lock (_dispenserLedger) return _dispenserLedger.ToArray(); }
+
+    /// <summary>
+    /// The dispenser's chain, from the header on, then live, with the run id
+    /// the lines belong to. In-process that is this run's own file; over a
+    /// socket it is what the dispenser sent, byte for byte.
+    /// </summary>
+    public IDisposable SubscribeDispenserCustody(Action<string, string> onLine) => _link.SubscribeCustody(onLine);
+    public long DispenserCustodyLines => _link.CustodyLines;
+
+    /// <summary>
+    /// The link came up or went down. Down mid-sale is a fault the station
+    /// owns: close the sale for what was recorded, name the part, send the
+    /// driver to the attendant. Up means a dispenser is listening; the first
+    /// thing it hears is Stop, so a valve left open by a station restart shuts.
+    /// </summary>
+    private void OnDispenserConnection(bool up)
+    {
+        var code = DiagnosticCodes.LinkDispenserLost;
+        if (up)
+        {
+            Ledger.Append("link.up", $"dispenser {_link.RemoteRunId} pid {_link.RemotePid}");
+            _link.Post(new PumpMessage.Stop("station connected"), CurrentSaleId);
+            return;
+        }
+        var s = Snapshot();
+        Ledger.Append("link.down", code.Format($"sale {s.SaleId} {s.State} {s.Volume} {s.Money}"));
+        Log.Error("station", "{Code} dispenser link lost during {State}", ("Code", code.Code), ("State", s.State));
+        if (s.State is SaleState.Authorizing or SaleState.ReadyToPump or SaleState.Fueling)
+            _saleBox.Post(new SaleEvent.Fault(s.SaleId, "dispenser link lost", code.Code));
+    }
 
     public string RunId { get; }
     public string? CustodyPath { get; }
@@ -197,8 +285,12 @@ public sealed class Simulation : IDisposable
 
     private void Restore(JournalSnapshot s)
     {
-        Totalizer.Restore(new Volume(s.TotalizerMilliGallons));
-        Nonces.Import(s.Nonces);
+        // A dispenser in another process keeps its own counter and nonces across its own restarts.
+        if (_local is { } d)
+        {
+            d.Totalizer.Restore(new Volume(s.TotalizerMilliGallons));
+            d.Nonces.Import(s.Nonces);
+        }
         Issuer.Import(s.Issuer);
         Site.Restore(new Money(s.CreditHoldCents), new Money(s.DebitHoldCents), s.FailedPins, s.LockedUntil);
         Drawer.Import(
@@ -218,7 +310,7 @@ public sealed class Simulation : IDisposable
     private void ApplyRecovery(RecoveryOutcome r, JournalSnapshot? snapshot)
     {
         if (snapshot is null) return;
-        Ledger.Append("recovery.restart", $"run {RunId} started from journal of {r.PreviousRunId}, saved {r.SnapshotAge.TotalSeconds:0.0} s before, totalizer {Totalizer.Total}");
+        Ledger.Append("recovery.restart", $"run {RunId} started from journal of {r.PreviousRunId}, saved {r.SnapshotAge.TotalSeconds:0.0} s before, totalizer {new Volume(View.TotalizerMilliGallons)}");
         switch (r.Kind)
         {
             case RecoveryKind.ClosedOut:
@@ -248,17 +340,18 @@ public sealed class Simulation : IDisposable
         SaleSnapshot s;
         int counter;
         lock (_gate) { s = _sale.Snapshot(_saleDeadline); counter = _saleCounter; }
+        var view = View;
         return new JournalSnapshot(
             JournalSnapshot.CurrentVersion, _clock.GetUtcNow(), RunId, _options.PumpId, counter,
             new JournalSale(s.SaleId, s.State.ToString(), s.Tender.ToString(), s.Grade.ToString(), s.GradeSelected, s.CardName,
                 s.Ceiling.Cents, s.Volume.MilliGallons, s.Money.Cents, s.Flow.MilliGallonsPerSecond, s.Hold.ToString(), s.CashPrepaid.Cents),
-            Pump.Phase.ToString(), Pump.SelectedGrade?.ToString(),
+            view.Phase, view.SelectedGrade?.ToString(),
             Gateway.Pending.Select(p => new JournalPending(p.SaleId, p.Kind.ToString(), p.Final.Cents)).ToList(),
             Gateway.Tenders.ToDictionary(kv => kv.Key, kv => kv.Value.ToString()),
             Drawer.Open.ToDictionary(kv => kv.Key, kv => kv.Value.Cents),
             Drawer.ChangeDue.ToDictionary(kv => kv.Key, kv => kv.Value.Cents),
             Site.CreditHold.Cents, Site.DebitHold.Cents, Site.FailedPins, Site.LockedUntil,
-            Totalizer.Total.MilliGallons, Nonces.Export().ToList(), Issuer.Export(), stopReason);
+            view.TotalizerMilliGallons, _local?.Nonces.Export().ToList() ?? [], Issuer.Export(), stopReason);
     }
 
     /// <summary>Write the snapshot. Called by the one-second timer and on every sale change, serialized so two never interleave.</summary>
@@ -275,23 +368,27 @@ public sealed class Simulation : IDisposable
     private readonly bool _ownsLog;
     public IEventLog Log { get; }
     public EventLedger Ledger { get; }
-    public Totalizer Totalizer { get; }
     public IssuerSimulator Issuer { get; }
     public NetworkFaultPolicy Network { get; }
     public PaymentGateway Gateway { get; }
     public SiteLimits Site { get; }
     public CashDrawer Drawer { get; }
-    public PumpAuthority Authority { get; }
-    public PumpController Pump { get; }
-    public Meter Meter { get; }
-    public NonceStore Nonces { get; }
     public HmacAuthorizationSigner Signer { get; }
     public string StrategyName => _dispatch.Name;
     public SimulationOptions Options => _options;
     public TimeProvider Clock => _clock;
 
+    // The pump's parts, reachable only while the dispenser is in this process. Over a socket they are another
+    // process's memory, and View is the whole truth the station has.
+    private Dispenser Local => _local ?? throw new InvalidOperationException($"the dispenser is remote ({_link.Kind}); read View instead");
+    public PumpAuthority Authority => Local.Authority;
+    public PumpController Pump => Local.Pump;
+    public Meter Meter => Local.Meter;
+    public NonceStore Nonces => Local.Nonces;
+    public Totalizer Totalizer => Local.Totalizer;
+
     /// <summary>Counters for a harness or a debugger: mailbox backlogs, host calls in flight, host calls parked on the clock.</summary>
-    public string Counters => $"sale={_saleBox.Count} pump={_pumpBox.Count} payment={_paymentBox.Count} inflight={Volatile.Read(ref _inflightPayments)} waiting={_networkSim.WaitingOnClock}";
+    public string Counters => $"sale={_saleBox.Count} pump={_link.Backlog} payment={_paymentBox.Count} inflight={Volatile.Read(ref _inflightPayments)} waiting={_networkSim.WaitingOnClock} link={_link.Kind}:{(_link.Connected ? "up" : "down")}";
 
     public event Action<SaleSnapshot>? SaleChanged;
 
@@ -311,7 +408,7 @@ public sealed class Simulation : IDisposable
     {
         get
         {
-            if (_saleBox.Count > 0 || _pumpBox.Count > 0) return false;
+            if (_saleBox.Count > 0 || _link.Backlog > 0) return false;
             var inflight = Volatile.Read(ref _inflightPayments);
             if (_paymentBox.Count == 0 && inflight == 0) return true;
             // Every in-flight call must be parked on the clock. One that is not is a continuation still landing.
@@ -353,13 +450,16 @@ public sealed class Simulation : IDisposable
         }
     }
 
-    public void SelectGrade(Grade grade) => _pumpBox.Post(new PumpMessage.SelectGrade(grade));
-    public void LiftNozzle() => _pumpBox.Post(new PumpMessage.Lift());
-    public void SeatNozzle() => _pumpBox.Post(new PumpMessage.Seat());
-    public void UnseatNozzle() => _pumpBox.Post(new PumpMessage.Unseat());
-    public void SqueezeTrigger() => _pumpBox.Post(new PumpMessage.Squeeze());
-    public void ReleaseTrigger() => _pumpBox.Post(new PumpMessage.Release());
-    public void HangNozzle() => _pumpBox.Post(new PumpMessage.Hang());
+    /// <summary>Every driver action at the pump goes down the link as a message, addressed to the current sale.</summary>
+    private void ToPump(PumpMessage m) => _link.Post(m, CurrentSaleId);
+
+    public void SelectGrade(Grade grade) => ToPump(new PumpMessage.SelectGrade(grade));
+    public void LiftNozzle() => ToPump(new PumpMessage.Lift());
+    public void SeatNozzle() => ToPump(new PumpMessage.Seat());
+    public void UnseatNozzle() => ToPump(new PumpMessage.Unseat());
+    public void SqueezeTrigger() => ToPump(new PumpMessage.Squeeze());
+    public void ReleaseTrigger() => ToPump(new PumpMessage.Release());
+    public void HangNozzle() => ToPump(new PumpMessage.Hang());
 
     /// <summary>The whole hand sequence a driver does at the pump: pick a grade, lift, seat, squeeze. For tests and scripted scenarios.</summary>
     public void StartFueling(Grade grade = Grade.Regular)
@@ -376,7 +476,7 @@ public sealed class Simulation : IDisposable
     public void ResetSale()
     {
         lock (_gate) ReplaceSale();
-        _pumpBox.Post(new PumpMessage.Stop("reset"));
+        ToPump(new PumpMessage.Stop("reset"));
         Publish();
     }
 
@@ -396,7 +496,7 @@ public sealed class Simulation : IDisposable
     {
         var token = LastToken;
         if (token is null) { Log.Write("attack", "replay: no token to replay yet"); return; }
-        _pumpBox.Post(new PumpMessage.Arm(CurrentSaleId, token, Snapshot().Grade));
+        ToPump(new PumpMessage.Arm(CurrentSaleId, token, Snapshot().Grade));
     }
 
     /// <summary>Take the last real token and raise its ceiling without re-signing. The HMAC should refuse it.</summary>
@@ -406,7 +506,7 @@ public sealed class Simulation : IDisposable
         if (token is null) { Log.Write("attack", "tamper: no token yet"); return; }
         var parsed = AuthorizationToken.Parse(token);
         var forged = (parsed with { CeilingCents = newCeiling.Cents }).Serialize();
-        _pumpBox.Post(new PumpMessage.Arm(CurrentSaleId, forged, Snapshot().Grade));
+        ToPump(new PumpMessage.Arm(CurrentSaleId, forged, Snapshot().Grade));
     }
 
     /// <summary>
@@ -425,10 +525,10 @@ public sealed class Simulation : IDisposable
     }
 
     /// <summary>A pulser reporting fuel that did not move. The controller should stop on the first bad tick.</summary>
-    public void AttackSpoofPulses(long pulses) => _pumpBox.Post(new PumpMessage.SpoofPulses(pulses));
+    public void AttackSpoofPulses(long pulses) => ToPump(new PumpMessage.SpoofPulses(pulses));
 
     /// <summary>Arm with no token at all. There is no code path that accepts this, which is the point.</summary>
-    public void AttackArmWithoutToken() => _pumpBox.Post(new PumpMessage.Arm(CurrentSaleId, "", Grade.Regular));
+    public void AttackArmWithoutToken() => ToPump(new PumpMessage.Arm(CurrentSaleId, "", Grade.Regular));
 
     // ----- Forecourt faults. Each is a message to the pump worker, as a sensor or the tank gauge would deliver it.
 
@@ -437,25 +537,25 @@ public sealed class Simulation : IDisposable
     {
         Log.Warn("tank", "{Code} product below the fuel-out level, supply to the pump stops", ("Code", DiagnosticCodes.TankFuelOut.Code));
         Ledger.Append("tank.fuelout", DiagnosticCodes.TankFuelOut.Format("fuel out, supply stopped"));
-        _pumpBox.Post(new PumpMessage.Supply(false));
+        ToPump(new PumpMessage.Supply(false));
     }
 
     public void TankRefilled()
     {
         Log.Write("tank", "{Code} cleared, supply restored", ("Code", DiagnosticCodes.TankFuelOut.Code));
         Ledger.Append("tank.refilled", DiagnosticCodes.TankFuelOut.Format("cleared, supply restored"));
-        _pumpBox.Post(new PumpMessage.Supply(true));
+        ToPump(new PumpMessage.Supply(true));
     }
 
     /// <summary>The pulser stops counting while fuel keeps moving. The controller catches it by the flow switch.</summary>
-    public void KillPulser() => _pumpBox.Post(new PumpMessage.PulserDead(true));
-    public void FixPulser() => _pumpBox.Post(new PumpMessage.PulserDead(false));
+    public void KillPulser() => ToPump(new PumpMessage.PulserDead(true));
+    public void FixPulser() => ToPump(new PumpMessage.PulserDead(false));
 
     /// <summary>A drive-off: the breakaway coupling separates and both halves seal.</summary>
-    public void DriveOff() => _pumpBox.Post(new PumpMessage.DriveOff());
+    public void DriveOff() => ToPump(new PumpMessage.DriveOff());
 
     /// <summary>The attendant reconnected the coupling.</summary>
-    public void ResetBreakaway() => _pumpBox.Post(new PumpMessage.ResetBreakaway());
+    public void ResetBreakaway() => ToPump(new PumpMessage.ResetBreakaway());
 
     /// <summary>
     /// The station emergency stop. It is not a message to the pump: it is the
@@ -472,6 +572,8 @@ public sealed class Simulation : IDisposable
         Ledger.Append("station.estop", code.Format($"pressed by {pressedBy}; sale {CurrentSaleId} {Snapshot().State} {Snapshot().Volume} {Snapshot().Money}"));
         Custody?.Pump();
         SaveJournal(stopReason: "ESTOP");
+        // The forecourt goes dark: a dispenser in another process is told the power is off and ends. In-process it ends with us.
+        _link.PowerOff();
         TearDown();
     }
 
@@ -568,10 +670,10 @@ public sealed class Simulation : IDisposable
                 _paymentBox.Post(new PaymentMessage.CashAuthorize(rc.SaleId, rc.Amount));
                 break;
             case SaleCommand.ArmPump ap:
-                _pumpBox.Post(new PumpMessage.Arm(ap.SaleId, ap.Token, ap.Grade));
+                _link.Post(new PumpMessage.Arm(ap.SaleId, ap.Token, ap.Grade), ap.SaleId);
                 break;
             case SaleCommand.CloseValve cv:
-                _pumpBox.Post(new PumpMessage.Close(cv.SaleId, "sale closed"));
+                _link.Post(new PumpMessage.Close(cv.SaleId, "sale closed"), cv.SaleId);
                 break;
             case SaleCommand.SendCompletion sc:
                 _paymentBox.Post(new PaymentMessage.Complete(sc.SaleId, sc.Final));
@@ -596,119 +698,7 @@ public sealed class Simulation : IDisposable
         }
     }
 
-    private void HandlePumpMessage(PumpMessage m)
-    {
-        var saleId = CurrentSaleId;
-        switch (m)
-        {
-            case PumpMessage.Arm arm:
-                var (ok, reason, armed) = Pump.Arm(arm.SaleId, arm.Token, arm.Grade);
-                if (ok) { Log.Write("pump", "armed {Ceiling} max {MaxVolume} ({ClampNote})", ("Ceiling", armed!.Ceiling), ("MaxVolume", armed.MaxVolume), ("ClampNote", armed.ClampNote)); _saleBox.Post(new SaleEvent.PumpArmed(arm.SaleId, armed.Ceiling, armed.MaxVolume)); }
-                else { Log.Warn("pump", "REFUSED arm for {SaleId}: {Reason}", ("SaleId", arm.SaleId), ("Reason", reason)); _saleBox.Post(new SaleEvent.PumpRefused(arm.SaleId, reason)); }
-                break;
-
-            case PumpMessage.SelectGrade sg:
-                var (gradeOk, gradeWhy) = Pump.SelectGrade(sg.Grade);
-                if (gradeOk) _saleBox.Post(new SaleEvent.GradeSelected(saleId, sg.Grade));
-                else Log.Write("pump", "grade {Grade} refused: {Reason}", ("Grade", sg.Grade), ("Reason", gradeWhy));
-                break;
-
-            case PumpMessage.Lift:
-                if (Pump.LiftNozzle()) _saleBox.Post(new SaleEvent.NozzleLifted(saleId));
-                else Log.Write("pump", "nozzle lifted while {Phase}, nothing happens", ("Phase", Pump.Phase));
-                break;
-
-            case PumpMessage.Seat:
-                if (Pump.SeatNozzle()) _saleBox.Post(new SaleEvent.NozzleSeated(saleId));
-                break;
-
-            case PumpMessage.Unseat:
-                var paused = Pump.UnseatNozzle();
-                if (Pump.Armed is not null || paused) _saleBox.Post(new SaleEvent.NozzleUnseated(saleId));
-                if (paused) _saleBox.Post(new SaleEvent.FlowPaused(saleId, "nozzle removed from fill point"));
-                break;
-
-            case PumpMessage.Squeeze:
-                var (flowOk, flowWhy, firstPour) = Pump.SqueezeTrigger();
-                if (!flowOk) Log.Write("pump", "trigger ignored: {Reason}", ("Reason", flowWhy));
-                else _saleBox.Post(firstPour ? new SaleEvent.FlowStarted(saleId) : new SaleEvent.FlowResumed(saleId));
-                break;
-
-            case PumpMessage.Release:
-                if (Pump.ReleaseTrigger()) _saleBox.Post(new SaleEvent.FlowPaused(saleId, "trigger released"));
-                break;
-
-            case PumpMessage.Hang:
-                var armedBefore = Pump.Armed is not null;
-                var ended = Pump.HangNozzle();
-                // Ends the delivery after a pour; before a pour the sale machine just notes it.
-                if (ended || armedBefore) _saleBox.Post(new SaleEvent.NozzleHung(saleId));
-                break;
-
-            case PumpMessage.Close close:
-                Pump.CloseValve(close.Reason);
-                break;
-
-            case PumpMessage.Stop stop:
-                Pump.Disarm();
-                Log.Write("pump", "disarmed: {Reason}", ("Reason", stop.Reason));
-                break;
-
-            case PumpMessage.SpoofPulses sp:
-                Log.Warn("attack", "spoofing {Pulses} pulses", ("Pulses", sp.Pulses));
-                Meter.InjectPulses(sp.Pulses);
-                break;
-
-            case PumpMessage.Supply s:
-                _hydraulics.SupplyAvailable = s.Available;
-                break;
-
-            case PumpMessage.PulserDead pd:
-                Meter.PulserDead = pd.Dead;
-                Log.Warn("pump", "{Code} pulser {State}", ("Code", DiagnosticCodes.PumpMeterNoPulse.Code), ("State", pd.Dead ? "stopped counting" : "repaired"));
-                break;
-
-            case PumpMessage.DriveOff:
-                _hydraulics.BreakawaySeparated = true;
-                Log.Error("pump", "{Code} breakaway coupling separated", ("Code", DiagnosticCodes.PumpHoseBreakaway.Code));
-                if (Pump.Phase is not PumpPhase.Dispensing)
-                {
-                    // Not mid-pour: the sensor still records it, and the next arm is refused until the attendant resets.
-                    Ledger.Append("hose.breakaway", DiagnosticCodes.PumpHoseBreakaway.Format($"separated while {Pump.Phase}"));
-                    Pump.HangNozzle();
-                }
-                break;
-
-            case PumpMessage.ResetBreakaway:
-                Pump.ResetBreakaway();
-                Log.Write("pump", "{Code} cleared by the attendant", ("Code", DiagnosticCodes.PumpHoseBreakaway.Code));
-                break;
-
-            case PumpMessage.Tick tick:
-                var before = Pump.Phase;
-                var t = Pump.Tick(tick.Dt);
-                if (t.Fault is not null && before != PumpPhase.Faulted)
-                {
-                    var part = t.FaultCode is { } fc ? DiagnosticCodes.Find(fc)?.Part : null;
-                    Log.Error("pump", "FAULT {Code} {Fault}", ("Code", t.FaultCode), ("Part", part), ("Fault", t.Fault));
-                    _saleBox.Post(new SaleEvent.Fault(saleId, t.Fault, t.FaultCode));
-                }
-                else if (t.CeilingReached)
-                {
-                    _saleBox.Post(new SaleEvent.CeilingReached(saleId, t.Volume, t.Money));
-                }
-                else if ((before is PumpPhase.Dispensing or PumpPhase.Paused) && t.Stopped)
-                {
-                    // Stopped for a non-ceiling reason inside Tick (max duration). Report as hung so the sale completes.
-                    _saleBox.Post(new SaleEvent.NozzleHung(saleId));
-                }
-                else if (t.Phase == PumpPhase.Dispensing)
-                {
-                    _saleBox.Post(new SaleEvent.Progress(saleId, t.Volume, t.Money, t.Flow, t.TaperPhase));
-                }
-                break;
-        }
-    }
+    // The pump worker's handler lives in Dispenser.Handle. The link posts its events into _saleBox.
 
     private void HandlePaymentMessage(PaymentMessage m)
     {
@@ -825,6 +815,7 @@ public sealed class Simulation : IDisposable
         lock (_gate) _saleTimer?.Dispose();
         // The strategy owns the workers, mailboxes, and tickers. One Dispose, in reverse creation order.
         _dispatch.Dispose();
+        _link.Dispose();
         _cts.Dispose();
         if (_ownsLog && Log is IDisposable d) d.Dispose();
         _custody?.Dispose();

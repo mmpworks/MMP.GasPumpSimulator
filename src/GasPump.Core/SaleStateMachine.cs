@@ -452,6 +452,7 @@ public sealed class SaleStateMachine
             "PUMP.STP.NOFLOW" => new("Fuel supply stopped", Join("This pump has no fuel pressure.", delivered, holdLine, "Please use another pump."), DriverAction.UseAnotherPump),
             "PUMP.HOSE.BREAKAWAY" => new("Hose breakaway", Join("The hose coupling separated and sealed.", delivered, holdLine, "Do not drive away. See the attendant."), DriverAction.SeeAttendant),
             "PUMP.MTR.NOPULSE" => new("Meter fault", Join("The meter stopped counting.", delivered, holdLine, "See the attendant before you leave."), DriverAction.SeeAttendant),
+            "LINK.DISPENSER.LOST" => new("Pump offline", Join("The station lost contact with this pump.", delivered, holdLine, "See the attendant before you leave."), DriverAction.SeeAttendant),
             _ => new("Pump out of service", Join(Sentence(EndDetail), holdLine, "Please use another pump."), DriverAction.UseAnotherPump),
         };
     }

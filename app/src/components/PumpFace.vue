@@ -52,19 +52,13 @@ const holdText: Record<string, string> = {
 
 <template>
   <v-card class="pane-card">
-    <v-card-title>Dispenser</v-card-title>
+    <v-card-title>Pump face</v-card-title>
     <v-card-text>
-      <!-- What the restart did about the sale it found open. Stays until the operator closes it. -->
-      <v-alert v-if="recovery && showRecovery" :type="recovery.underRecorded ? 'error' : 'warning'" class="mb-3" closable
-               :title="recovery.kind === 'ClosedOut' ? 'Pump restarted mid-sale: closed out from the journal' : recovery.kind === 'Reversed' ? 'Pump restarted: open sale reversed' : 'Pump restarted: completion sent again'"
+      <!-- What the station's restart did about the sale it found open. Stays until the operator closes it. -->
+      <v-alert v-if="recovery && showRecovery" :type="recovery.underRecorded ? 'error' : 'warning'" density="compact" class="mb-3" closable
+               :title="recovery.kind === 'ClosedOut' ? 'Station restarted mid-sale: closed out from the journal' : recovery.kind === 'Reversed' ? 'Station restarted: open sale reversed' : 'Station restarted: completion sent again'"
                @click:close="showRecovery = false">
         <div class="text-body-2">{{ recovery.note }}</div>
-        <div class="row-wrap mt-2">
-          <v-chip size="small">{{ recovery.saleId }} · {{ recovery.tender }} · {{ recovery.grade }}</v-chip>
-          <v-chip size="small">{{ recovery.gallons.toFixed(3) }} gal for {{ dollars(recovery.cents) }}</v-chip>
-          <v-chip v-if="recovery.underRecorded" size="small" color="error" variant="flat">up to {{ recovery.unrecordedUpToGallons.toFixed(3) }} gal unrecorded</v-chip>
-          <v-chip size="small" variant="text">journal was {{ recovery.snapshotAgeSeconds.toFixed(1) }} s old</v-chip>
-        </div>
       </v-alert>
       <v-alert v-if="sale" :type="noticeType" :title="sale.notice.headline" class="mb-3 notice">
         <div class="text-body-2">{{ sale.notice.detail }}</div>
@@ -109,13 +103,8 @@ const holdText: Record<string, string> = {
         <b>sale</b><span>{{ sale?.saleId }} {{ sale?.cardName ?? '' }}</span>
         <b>last</b><span>{{ sale?.lastMessage ?? '' }}</span>
         <b>fault</b><span :class="{ 'text-error': state?.pump.fault }">{{ state?.pump.fault ?? 'none' }}</span>
-        <b>bank owes</b>
-        <span :class="{ 'text-warning': state?.pending.length }">
-          <template v-if="state?.pending.length">{{ state.pending.map(p => `${p.kind} ${p.saleId}${p.cents ? ' ' + dollars(p.cents) : ''}`).join(', ') }} (queued)</template>
-          <template v-else>nothing queued</template>
-        </span>
-        <b>open holds</b><span :class="{ 'text-info': state?.openHolds.length }">{{ state?.openHolds.length ? state.openHolds.join(', ') : 'none at the bank' }}</span>
-        <b>totalizer</b><span>{{ state?.pump.totalizerGallons.toFixed(3) }} gal, sealed</span>
+        <b>totalizer</b><span>{{ state?.pump.totalizerGallons.toFixed(3) }} gal, sealed, owned by the dispenser</span>
+        <b>armed</b><span>{{ state?.pump.armed ? `${state.pump.armed.saleId} ceiling ${dollars(state.pump.armed.ceilingCents)}, max ${state.pump.armed.maxGallons.toFixed(1)} gal` : 'no authorization held' }}</span>
       </div>
     </v-card-text>
   </v-card>

@@ -33,11 +33,13 @@ public static class DiagnosticCodes
         "emergency shutoff pressed: power removed from every dispenser and every submersible pump; cashier reset required");
     public static readonly DiagnosticCode TankFuelOut = new("TANK.FUELOUT", "underground tank",
         "product below the fuel-out level: supply to the pumps stops");
+    public static readonly DiagnosticCode LinkDispenserLost = new("LINK.DISPENSER.LOST", "dispenser link",
+        "the station lost the dispenser mid-sale: the sale closes for the fuel recorded so far; the dispenser's own limits bound the rest");
 
     public static IReadOnlyList<DiagnosticCode> All { get; } =
     [
         PumpSupplyNoFlow, PumpMeterNoPulse, PumpMeterOverPulse, PumpMeterStray, PumpCeilingOverrun, PumpMaxTime,
-        PumpHoseBreakaway, StationEStop, TankFuelOut,
+        PumpHoseBreakaway, StationEStop, TankFuelOut, LinkDispenserLost,
     ];
 
     public static DiagnosticCode? Find(string code) => All.FirstOrDefault(c => c.Code == code);
