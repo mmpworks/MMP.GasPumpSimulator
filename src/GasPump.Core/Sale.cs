@@ -37,6 +37,13 @@ public enum HoldStatus
     ReleasePending,
 }
 
+/// <summary>
+/// How the driver pays. Credit and debit go to the bank for a hold, each
+/// under its own site ceiling. Cash goes to the cashier, and the cash amount
+/// is the ceiling: no bank, no hold, no automated threshold.
+/// </summary>
+public enum Tender { Credit, Debit, Cash }
+
 /// <summary>Why a sale ended. Drives the notice the driver reads and the next step it offers.</summary>
 public enum EndReason
 {
@@ -72,7 +79,9 @@ public sealed record DriverNotice(string Headline, string Detail, DriverAction A
 public abstract record SaleEvent(string SaleId)
 {
     /// <summary>Grade is null when the driver will pick it at the pump after approval, which is the normal path.</summary>
-    public sealed record CardPresented(string SaleId, string CardName, Grade? Grade = null) : SaleEvent(SaleId);
+    public sealed record CardPresented(string SaleId, string CardName, Grade? Grade = null, Tender Tender = Tender.Credit) : SaleEvent(SaleId);
+    /// <summary>The cashier took cash. Amount is the ceiling, to the cent.</summary>
+    public sealed record CashPaid(string SaleId, Money Amount, Grade? Grade = null) : SaleEvent(SaleId);
     public sealed record GradeSelected(string SaleId, Grade Grade) : SaleEvent(SaleId);
     public sealed record NozzleSeated(string SaleId) : SaleEvent(SaleId);
     public sealed record NozzleUnseated(string SaleId) : SaleEvent(SaleId);
@@ -103,7 +112,10 @@ public abstract record SaleEvent(string SaleId)
 /// <summary>What the state machine asks the outside world to do. It never does any of it itself.</summary>
 public abstract record SaleCommand(string SaleId)
 {
-    public sealed record RequestAuthorization(string SaleId, string CardName, Grade Grade, Money Hold) : SaleCommand(SaleId);
+    /// <summary>Ask the bank for a hold. How much is the site's call by tender, never the sale machine's.</summary>
+    public sealed record RequestAuthorization(string SaleId, string CardName, Grade Grade, Tender Tender) : SaleCommand(SaleId);
+    /// <summary>Ask the payment side for a token worth the cash taken.</summary>
+    public sealed record RequestCashAuthorization(string SaleId, Money Amount) : SaleCommand(SaleId);
     public sealed record ArmPump(string SaleId, string Token, Grade? Grade) : SaleCommand(SaleId);
     public sealed record CloseValve(string SaleId) : SaleCommand(SaleId);
     public sealed record SendCompletion(string SaleId, Money Final) : SaleCommand(SaleId);
@@ -130,5 +142,10 @@ public sealed record SaleSnapshot(
     bool GradeSelected,
     bool NozzleOut,
     bool NozzleSeated,
+    Tender Tender,
+    /// <summary>Cash taken at the cashier. Zero for card sales.</summary>
+    Money CashPrepaid,
+    /// <summary>Change the cashier owes after a cash sale settled or refunded.</summary>
+    Money ChangeDue,
     /// <summary>When the armed timer fires, on the simulation clock. Null when no timer is armed.</summary>
     DateTimeOffset? DeadlineAt);

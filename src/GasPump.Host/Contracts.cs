@@ -1,5 +1,6 @@
 using GasPump.Core;
 using GasPump.Dispatch;
+using GasPump.Payment;
 using GasPump.Security;
 
 namespace GasPump.Host;
@@ -32,6 +33,19 @@ public static class Contracts
             pendingCompletions = sim.Gateway.PendingCompletions.Select(p => new { p.SaleId, cents = p.Final.Cents }),
             pending = sim.Gateway.Pending.Select(p => new { p.SaleId, kind = p.Kind.ToString(), cents = p.Final.Cents }),
             openHolds = sim.Issuer.OpenHolds,
+            site = new
+            {
+                creditHoldCents = sim.Site.CreditHold.Cents,
+                debitHoldCents = sim.Site.DebitHold.Cents,
+                failedPins = sim.Site.FailedPins,
+                lockedUntil = sim.Site.LockedUntil,
+                maxPinFailures = SiteLimits.MaxPinFailures,
+            },
+            cash = new
+            {
+                open = sim.Drawer.Open.Select(kv => new { saleId = kv.Key, cents = kv.Value.Cents }),
+                changeDue = sim.Drawer.ChangeDue.Select(kv => new { saleId = kv.Key, cents = kv.Value.Cents }),
+            },
             now = sim.Clock.GetUtcNow(),
             limits = new
             {
@@ -64,6 +78,9 @@ public static class Contracts
         s.GradeSelected,
         s.NozzleOut,
         s.NozzleSeated,
+        tender = s.Tender.ToString(),
+        cashPrepaidCents = s.CashPrepaid.Cents,
+        changeDueCents = s.ChangeDue.Cents,
         s.DeadlineAt,
     };
 

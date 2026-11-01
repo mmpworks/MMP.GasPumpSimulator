@@ -68,7 +68,7 @@ const holdText: Record<string, string> = {
     <div class="status" style="margin-top: 10px">
       <span class="badge info">{{ sale?.state }}</span>
       <span class="badge" :class="phaseClass">{{ sale?.phase }}</span>
-      <span class="badge" :class="holdClass" title="where the driver's money is">{{ holdText[sale?.hold ?? 'None'] }}</span>
+      <span class="badge" :class="holdClass" title="where the driver's money is">{{ sale?.tender === 'Cash' ? 'cash' : sale?.tender?.toLowerCase() }}: {{ holdText[sale?.hold ?? 'None'] }}</span>
       <span class="badge" :class="state?.pump.phase === 'Faulted' ? 'bad' : ''">pump {{ state?.pump.phase }}</span>
       <span v-if="state?.pump.armed?.clamped" class="badge bad">CLAMPED: {{ state?.pump.armed?.clampNote }}</span>
     </div>

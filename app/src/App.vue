@@ -7,6 +7,7 @@ import NetworkPanel from './components/NetworkPanel.vue'
 import AttackPanel from './components/AttackPanel.vue'
 import LedgerPanel from './components/LedgerPanel.vue'
 import LogPanel from './components/LogPanel.vue'
+import AdminPanel from './components/AdminPanel.vue'
 
 onMounted(connect)
 </script>
@@ -25,5 +26,6 @@ onMounted(connect)
   <NetworkPanel class="panel" />
   <AttackPanel class="panel" />
   <LedgerPanel class="panel ledger" />
+  <AdminPanel class="panel" style="grid-column: 1 / -1" />
   <LogPanel class="panel log" style="grid-column: 1 / -1" />
 </template>

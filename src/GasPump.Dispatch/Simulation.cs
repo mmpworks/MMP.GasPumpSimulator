@@ -7,7 +7,11 @@ namespace GasPump.Dispatch;
 
 public sealed record SimulationOptions(
     string PumpId,
+    /// <summary>The site's starting credit hold ceiling. The admin panel can change it at run time.</summary>
     Money HoldAmount,
+    /// <summary>The site's starting debit hold ceiling. Debit holds are real money out of a checking account, so sites keep them low.</summary>
+    Money DebitHold,
+    string AdminPin,
     TimeSpan TickPeriod,
     FlowRate NominalFlow,
     HardLimits HardLimits,
@@ -19,6 +23,8 @@ public sealed record SimulationOptions(
     public static SimulationOptions Default => new(
         PumpId: "PUMP-07",
         HoldAmount: Money.FromDollars(75),
+        DebitHold: Money.FromDollars(50),
+        AdminPin: "1234",
         TickPeriod: TimeSpan.FromMilliseconds(100),
         NominalFlow: FlowRate.GallonsPerMinute(10),
         HardLimits: HardLimits.Default,
@@ -57,7 +63,7 @@ public sealed class Simulation : IDisposable
     private int _saleCounter;
     private int _inflightPayments;
 
-    /// <param name="log">Where the story is written. Default is a Herald.OSS pipeline with only the bridge back to this simulation; the host adds file and console sinks.</param>
+    /// <param name="log">Where the story goes. Default is a Herald.OSS pipeline with only the bridge back to this simulation; the host adds file and console sinks.</param>
     public Simulation(IDispatchStrategy dispatch, TimeProvider clock, SimulationOptions? options = null, IssuerSimulator? issuer = null, byte[]? hmacKey = null, IEventLog? log = null)
     {
         _dispatch = dispatch;
@@ -72,7 +78,16 @@ public sealed class Simulation : IDisposable
         var key = hmacKey ?? System.Security.Cryptography.RandomNumberGenerator.GetBytes(32);
         Signer = new HmacAuthorizationSigner(key);
         _networkSim = new NetworkSimulator(Network, clock);
-        Gateway = new PaymentGateway(Issuer, _networkSim, Signer, clock, _options.PumpId, _options.Gateway);
+        Site = new SiteLimits(clock, _options.HoldAmount, _options.DebitHold, _options.AdminPin);
+        Drawer = new CashDrawer();
+        Gateway = new PaymentGateway(Issuer, _networkSim, Signer, clock, _options.PumpId, _options.Gateway, Site, Drawer);
+        // Every admin attempt, good or bad, goes in the ledger. The back office is part of the audit trail.
+        Site.Changed += (kind, detail) =>
+        {
+            Ledger.Append(kind, detail);
+            if (kind == "admin.limits") Log.Write("admin", "{Detail}", ("Detail", detail));
+            else Log.Warn("admin", "{Kind}: {Detail}", ("Kind", kind), ("Detail", detail));
+        };
         Nonces = new NonceStore();
         Authority = new PumpAuthority(new HmacAuthorizationVerifier(key, _options.PumpId, Nonces, TimeSpan.FromSeconds(5)), _options.HardLimits, Ledger, clock);
         Meter = new Meter();
@@ -99,6 +114,8 @@ public sealed class Simulation : IDisposable
     public IssuerSimulator Issuer { get; }
     public NetworkFaultPolicy Network { get; }
     public PaymentGateway Gateway { get; }
+    public SiteLimits Site { get; }
+    public CashDrawer Drawer { get; }
     public PumpAuthority Authority { get; }
     public PumpController Pump { get; }
     public Meter Meter { get; }
@@ -140,16 +157,35 @@ public sealed class Simulation : IDisposable
     // ----- Driver-facing actions. Each one is a message, never a direct call into a worker's state.
 
     /// <summary>A grade given here is a preselection at the reader. The normal path leaves it null and the driver picks at the pump.</summary>
-    public string PresentCard(string cardName, Grade? grade = null)
+    public string PresentCard(string cardName, Grade? grade = null, Tender tender = Tender.Credit)
     {
-        string id;
+        if (tender == Tender.Cash) throw new ArgumentException("use PayCash for a cash sale", nameof(tender));
+        var id = BeginSale();
+        _saleBox.Post(new SaleEvent.CardPresented(id, cardName, grade, tender));
+        return id;
+    }
+
+    /// <summary>The driver paid the cashier. The amount is the ceiling, to the cent. No bank is called.</summary>
+    public string PayCash(Money amount, Grade? grade = null)
+    {
+        var id = BeginSale();
+        _saleBox.Post(new SaleEvent.CashPaid(id, amount, grade));
+        return id;
+    }
+
+    /// <summary>The cashier handed over the change or refund for the current sale.</summary>
+    public void CollectChange() => Drawer.ChangeCollected(CurrentSaleId);
+
+    /// <summary>The back office. Every attempt lands in the ledger through Site.Changed.</summary>
+    public (bool Ok, string Reason) AdminSetHold(string pin, Tender tender, Money amount) => Site.TrySet(pin, tender, amount);
+
+    private string BeginSale()
+    {
         lock (_gate)
         {
             if (_sale.State is not SaleState.Idle) ReplaceSale();
-            id = _sale.SaleId;
+            return _sale.SaleId;
         }
-        _saleBox.Post(new SaleEvent.CardPresented(id, cardName, grade));
-        return id;
     }
 
     public void SelectGrade(Grade grade) => _pumpBox.Post(new PumpMessage.SelectGrade(grade));
@@ -229,6 +265,25 @@ public sealed class Simulation : IDisposable
     /// <summary>Arm with no token at all. There is no code path that accepts this, which is the point.</summary>
     public void AttackArmWithoutToken() => _pumpBox.Post(new PumpMessage.Arm(CurrentSaleId, "", Grade.Regular));
 
+    /// <summary>
+    /// Guess the admin PIN from 0000 upward. The panel locks after three wrong
+    /// tries, and every try is in the ledger. Returns how many guesses ran.
+    /// </summary>
+    public int AttackBruteForceAdminPin(int guesses = 10)
+    {
+        Log.Warn("attack", "brute-forcing the admin PIN with {Guesses} guesses", ("Guesses", guesses));
+        int tried = 0;
+        for (int i = 0; i < guesses; i++)
+        {
+            tried++;
+            var (ok, reason) = Site.TrySet(i.ToString("0000"), Tender.Debit, Money.FromDollars(5000));
+            if (ok) { Log.Error("attack", "PIN {Pin} accepted, debit hold raised to $5000", ("Pin", i.ToString("0000"))); return tried; }
+            if (reason.Contains("locked", StringComparison.Ordinal)) break;
+        }
+        Log.Write("attack", "brute force stopped after {Tried} guesses: {State}", ("Tried", tried), ("State", Site.LockedUntil is null ? "panel open" : "panel locked"));
+        return tried;
+    }
+
     // ----- Workers. Each handler runs one message at a time on its own worker.
 
     private void HandleSaleEvent(SaleEvent e)
@@ -278,7 +333,10 @@ public sealed class Simulation : IDisposable
         {
             case SaleCommand.RequestAuthorization ra:
                 var card = TestCards.ByName.TryGetValue(ra.CardName, out var known) ? known : new CardData("0000000000000000", 1, 2000, CardKind.Credit);
-                _paymentBox.Post(new PaymentMessage.PreAuthorize(ra.SaleId, card, ra.Hold));
+                _paymentBox.Post(new PaymentMessage.PreAuthorize(ra.SaleId, card, ra.Tender));
+                break;
+            case SaleCommand.RequestCashAuthorization rc:
+                _paymentBox.Post(new PaymentMessage.CashAuthorize(rc.SaleId, rc.Amount));
                 break;
             case SaleCommand.ArmPump ap:
                 _pumpBox.Post(new PumpMessage.Arm(ap.SaleId, ap.Token, ap.Grade));
@@ -420,11 +478,18 @@ public sealed class Simulation : IDisposable
             switch (m)
             {
                 case PaymentMessage.PreAuthorize pa:
-                    Log.Write("payment", "pre-auth {Hold} on {Last4}", ("Hold", pa.Hold), ("Last4", pa.Card.Last4));
-                    var result = await Gateway.PreAuthorizeAsync(pa.SaleId, pa.Card, pa.Hold, _cts.Token);
+                    Log.Write("payment", "pre-auth {Tender} {Hold} on {Last4}", ("Tender", pa.Tender), ("Hold", Site.HoldFor(pa.Tender)), ("Last4", pa.Card.Last4));
+                    var result = await Gateway.PreAuthorizeAsync(pa.SaleId, pa.Card, pa.Tender, _cts.Token);
                     if (result.Approved) { Log.Write("payment", "{ReasonCode} ceiling {Ceiling}", ("ReasonCode", result.ReasonCode), ("Ceiling", result.Ceiling)); _saleBox.Post(new SaleEvent.Approved(pa.SaleId, result.Ceiling, result.Token!)); }
                     else if (result.NetworkFailure) { Log.Warn("payment", "network: {Message}", ("Message", result.Message)); _saleBox.Post(new SaleEvent.AuthorizationTimedOut(pa.SaleId)); }
                     else { Log.Write("payment", "declined {ReasonCode}: {Message}", ("ReasonCode", result.ReasonCode), ("Message", result.Message)); _saleBox.Post(new SaleEvent.Declined(pa.SaleId, result.ReasonCode, result.Message)); }
+                    break;
+
+                case PaymentMessage.CashAuthorize ca:
+                    var cash = Gateway.CashAuthorize(ca.SaleId, ca.Amount);
+                    Log.Write("payment", "{Message}", ("Message", cash.Message));
+                    if (cash.Approved) _saleBox.Post(new SaleEvent.Approved(ca.SaleId, cash.Ceiling, cash.Token!));
+                    else _saleBox.Post(new SaleEvent.Declined(ca.SaleId, cash.ReasonCode, cash.Message));
                     break;
 
                 case PaymentMessage.Complete cp:
@@ -466,7 +531,7 @@ public sealed class Simulation : IDisposable
     private SaleStateMachine NewSale()
     {
         var id = $"S{Interlocked.Increment(ref _saleCounter):0000}";
-        return new SaleStateMachine(id, _options.HoldAmount, _options.Timeouts);
+        return new SaleStateMachine(id, _options.Timeouts);
     }
 
     private void Publish()

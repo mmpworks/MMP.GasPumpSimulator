@@ -290,6 +290,84 @@ public class SimulationTests
         Assert.Equal(SaleState.ReadyToPump, h.State.State);
     }
 
+    // ----- Tender: credit, debit, cash. The site's ceilings, the bank's answer, and the pump's hard limits, in that order.
+
+    [Theory]
+    [MemberData(nameof(SimHarness.Strategies), MemberType = typeof(SimHarness))]
+    public void Debit_sale_holds_the_lesser_of_the_site_ceiling_and_the_bank(string strategy)
+    {
+        using var h = new SimHarness(strategy);
+        var card = TestCards.Get("DebitGoodPin");
+        var before = h.Sim.Issuer.AvailableBalance(card.Pan);
+        h.Sim.PresentCard("DebitGoodPin", tender: Tender.Debit);
+        h.AdvanceUntilState(SaleState.ReadyToPump, TimeSpan.FromSeconds(5));
+        Assert.Equal(Money.FromDollars(50), h.State.Ceiling);          // site debit ceiling, balance was $900
+        Assert.Equal(before - Money.FromDollars(50), h.Sim.Issuer.AvailableBalance(card.Pan));
+        Assert.Equal(Tender.Debit, h.State.Tender);
+    }
+
+    [Theory]
+    [MemberData(nameof(SimHarness.Strategies), MemberType = typeof(SimHarness))]
+    public void Cash_sale_stops_on_the_cash_amount_and_owes_change_when_hung_early(string strategy)
+    {
+        using var h = new SimHarness(strategy);
+        h.Sim.Network.Mode = NetworkMode.Down;   // cash never needs the bank
+        h.Sim.PayCash(new Money(1_500));
+        h.AdvanceUntilState(SaleState.ReadyToPump, TimeSpan.FromSeconds(1));
+        Assert.Equal(new Money(1_500), h.State.Ceiling);
+        Assert.Empty(h.Sim.Issuer.OpenHolds);
+
+        h.Sim.StartFueling();
+        h.AdvanceUntilState(SaleState.Fueling, TimeSpan.FromSeconds(1));
+        h.Advance(TimeSpan.FromSeconds(5));
+        h.Sim.HangNozzle();
+        h.AdvanceUntilState(SaleState.Idle, TimeSpan.FromSeconds(2));
+        Assert.Equal(HoldStatus.Settled, h.State.Hold);
+        Assert.Equal(new Money(1_500) - h.State.Money, h.State.ChangeDue);
+        Assert.True(h.State.ChangeDue > Money.Zero);
+        Assert.Equal(h.State.ChangeDue, h.Sim.Drawer.ChangeDue[h.State.SaleId]);
+        Assert.Contains("change at the cashier", h.State.Notice.Detail);
+
+        // Pump it all and the sale lands on the cash amount to the cent.
+        h.Sim.PayCash(new Money(1_500));
+        h.AdvanceUntilState(SaleState.ReadyToPump, TimeSpan.FromSeconds(1));
+        h.Sim.StartFueling();
+        h.AdvanceUntil(() => h.State.State is SaleState.Idle, TimeSpan.FromMinutes(2));
+        Assert.Equal(1_500, h.State.Money.Cents);
+        Assert.Equal(Money.Zero, h.State.ChangeDue);
+    }
+
+    [Theory]
+    [MemberData(nameof(SimHarness.Strategies), MemberType = typeof(SimHarness))]
+    public void Admin_raises_the_debit_ceiling_to_5000_and_the_pump_still_clamps_at_its_hard_limit(string strategy)
+    {
+        using var h = new SimHarness(strategy);
+        var (ok, _) = h.Sim.AdminSetHold("1234", Tender.Debit, Money.FromDollars(5000));
+        Assert.True(ok);
+        Assert.Contains(h.Sim.Ledger.Snapshot(), e => e.Kind == "admin.limits" && e.Detail.Contains("$5000.00"));
+
+        // DebitGoodPin has $900, so the bank approves $900 of the $5000 ask. The pump clamps that to $500.
+        h.Sim.PresentCard("DebitGoodPin", tender: Tender.Debit);
+        h.AdvanceUntilState(SaleState.ReadyToPump, TimeSpan.FromSeconds(5));
+        h.Advance(TimeSpan.FromMilliseconds(300));
+        Assert.Equal(Money.FromDollars(500), h.State.Ceiling);
+        Assert.True(h.Sim.Pump.Armed!.Clamped);
+        Assert.Contains(h.Sim.Ledger.Snapshot(), e => e.Kind == "arm.ok" && e.Detail.Contains("clamped"));
+    }
+
+    [Theory]
+    [MemberData(nameof(SimHarness.Strategies), MemberType = typeof(SimHarness))]
+    public void Brute_forcing_the_admin_pin_locks_the_panel_and_changes_nothing(string strategy)
+    {
+        using var h = new SimHarness(strategy);
+        var tried = h.Sim.AttackBruteForceAdminPin(guesses: 50);
+        Assert.Equal(3, tried);
+        Assert.NotNull(h.Sim.Site.LockedUntil);
+        Assert.Equal(Money.FromDollars(50), h.Sim.Site.DebitHold);
+        Assert.Equal(1, h.Sim.Ledger.Snapshot().Count(e => e.Kind == "admin.locked"));
+        Assert.Equal(0, h.Sim.Ledger.Verify());
+    }
+
     // ----- Attacks
 
     [Theory]

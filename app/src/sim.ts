@@ -9,7 +9,9 @@ export interface Sale {
   ceilingCents: number; cents: number; gallons: number; gpm: number; phase: string; lastMessage: string | null
   hold: string; end: string; notice: Notice; deadlineAt: string | null
   gradeSelected: boolean; nozzleOut: boolean; nozzleSeated: boolean
+  tender: 'Credit' | 'Debit' | 'Cash'; cashPrepaidCents: number; changeDueCents: number
 }
+export interface Site { creditHoldCents: number; debitHoldCents: number; failedPins: number; lockedUntil: string | null; maxPinFailures: number }
 export interface Armed { saleId: string; ceilingCents: number; maxGallons: number; clamped: boolean; clampNote: string }
 export interface Pending { saleId: string; kind: 'Completion' | 'Reversal'; cents: number }
 export interface State {
@@ -22,6 +24,8 @@ export interface State {
   pendingCompletions: { saleId: string; cents: number }[]
   pending: Pending[]
   openHolds: string[]
+  site: Site
+  cash: { open: { saleId: string; cents: number }[]; changeDue: { saleId: string; cents: number }[] }
   now: string
   limits: { maxCents: number; maxGallons: number; maxMinutes: number; maxGpm: number }
   prices: Record<string, string>
@@ -36,6 +40,7 @@ export const log = reactive<LogLine[]>([])
 export const ledger = reactive<LedgerEntry[]>([])
 export const cards = ref<Card[]>([])
 export const connected = ref(false)
+export const logFile = ref<{ path: string; directory: string; format: string } | null>(null)
 export const flowTrace = reactive<number[]>([])
 
 // Host clock minus browser clock, so a countdown reads against the simulation's own time.
@@ -47,6 +52,7 @@ let socket: WebSocket | null = null
 
 export function connect() {
   fetch(`${HOST}/api/cards`).then(r => r.json()).then(c => (cards.value = c)).catch(() => {})
+  fetch(`${HOST}/api/logfile`).then(r => r.json()).then(f => (logFile.value = f)).catch(() => {})
   socket = new WebSocket(HOST.replace('http', 'ws') + '/ws')
   socket.onopen = () => (connected.value = true)
   socket.onclose = () => { connected.value = false; setTimeout(connect, 1000) }
@@ -81,7 +87,11 @@ async function post(path: string, body?: unknown) {
 }
 
 export const api = {
-  presentCard: (name: string) => post('/api/card', { name }),
+  presentCard: (name: string, tender: 'Credit' | 'Debit' = 'Credit') => post('/api/card', { name, tender }),
+  payCash: (cents: number) => post('/api/cash', { cents }),
+  changeCollected: () => post('/api/cash/collected'),
+  adminSetHold: async (pin: string, tender: 'Credit' | 'Debit', cents: number) =>
+    (await (await fetch(`${HOST}/api/admin/limits`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ pin, tender, cents }) })).json()) as { ok: boolean; reason: string },
   selectGrade: (grade: string) => post('/api/grade', { grade }),
   lift: () => post('/api/nozzle/lift'),
   seat: () => post('/api/nozzle/seat'),
@@ -95,6 +105,16 @@ export const api = {
   network: (mode?: string, latencyMs?: number, flapFailureRate?: number, lateResponseMs?: number) =>
     post('/api/network', { mode, latencyMs, flapFailureRate, lateResponseMs }),
   attack: (kind: string, body?: unknown) => post(`/api/attack/${kind}`, body ?? {}),
+  /** Save a copy of the host's log since start. Text for reading, JSON for tools. Lands in the browser's download folder. */
+  exportLog: async (format: 'text' | 'json') => {
+    const r = await fetch(`${HOST}/api/log/export?format=${format}`)
+    const blob = await r.blob()
+    const a = document.createElement('a')
+    a.href = URL.createObjectURL(blob)
+    a.download = `gaspump-log-${new Date().toISOString().replace(/[:.]/g, '-')}.${format === 'json' ? 'json' : 'txt'}`
+    a.click()
+    URL.revokeObjectURL(a.href)
+  },
   verifyLedger: async () => (await fetch(`${HOST}/api/ledger`)).json() as Promise<{ verify: number; totalizer: number }>,
 }
 

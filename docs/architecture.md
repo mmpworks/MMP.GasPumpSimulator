@@ -28,6 +28,12 @@ flowchart LR
     S -.->|SaleChanged| WS
     P -.->|ledger| WS
     WS -.->|JSON stream| W
+    subgraph Herald["Herald.OSS pipeline"]
+        H[HeraldEventLog] --> F[(NDJSON file)]
+        H --> C[console]
+    end
+    S & P & Y -.->|templates + properties| H
+    H -.->|bridge: rendered LogLine| WS
 ```
 
 Every arrow between workers is a bounded mailbox. Only the sale worker changes sale state. Only the pump worker touches the valve. Only the payment worker talks to the host. The timer that drives the pump posts a `Tick` message; it never runs pump code itself.
@@ -158,6 +164,30 @@ Verified in this order, and the order matters: format, signature, pump id, time 
 ## The ledger
 
 Each entry: `seq | at | kind | detail | prevHash | hash` where `hash = SHA-256(seq|at|kind|detail|prevHash)`. `Verify` walks the chain and returns the first broken sequence number or 0. The totalizer's running total is written on every valve close, so the books can be checked against the meter even if sale records were erased.
+
+## Three ceilings, in order
+
+A sale's ceiling passes three gates, and each one can only lower it.
+
+| Gate | Owner | Credit | Debit | Cash |
+|---|---|---|---|---|
+| 1. Site ceiling | `SiteLimits`, set from the admin panel behind a PIN | $75 default | $50 default | none: the cash amount is the ceiling |
+| 2. Bank's answer | `IssuerSimulator` | approved amount, may be partial | approved amount, may be partial | no bank call |
+| 3. Hard limit | `HardLimits` in the pump, fixed at construction | $500, 50 gal | $500, 50 gal | $500, 50 gal |
+
+The pump's ceiling is the lesser of gates 1 and 2, then clamped by gate 3. The admin panel can move gate 1 anywhere; it can never move gate 3. That is why the admin panel is on the attack surface: owning it buys an attacker nothing past $500.
+
+Cash settles at the till (`CashDrawer`): the driver prepays, the pump stops on that amount to the cent, and whatever was not pumped comes back as change. A cash sale abandoned before any pour refunds in full. No network, so a dead bank link never touches a cash sale.
+
+## Logging on Herald.OSS
+
+`HeraldEventLog` in `GasPump.Dispatch` implements the simulator's `IEventLog` over a Herald.OSS `QuickLogBuilder` pipeline. Each worker's source (sale, pump, payment, admin, attack, network, host) is a Herald category. Workers write templates with properties; Herald renders the message and keeps the properties. Three sinks:
+
+1. A bridge sink back into the simulation. It hands every rendered event to the UI stream and to the tests as a `LogLine`, so what the UI shows is what Herald wrote. The line is stamped from the simulation's own clock, so tests on a fake clock read simulated time.
+2. A console sink in the host.
+3. An NDJSON file sink in the host, one file per session, under `%LOCALAPPDATA%\MMP.GasPumpSimulator\logs` (or `GASPUMP_LOG_DIR`). Properties survive, so a session can be queried later.
+
+The plain `EventLog` in `GasPump.Core` stays as a dependency-free fallback that renders the same templates itself; `Simulation` takes any `IEventLog`.
 
 ## Timers, and what each one protects
 

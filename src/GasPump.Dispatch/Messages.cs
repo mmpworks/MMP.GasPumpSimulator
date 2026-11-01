@@ -30,7 +30,9 @@ public abstract record PumpMessage
 /// <summary>What the sale worker sends the payment worker.</summary>
 public abstract record PaymentMessage(string SaleId)
 {
-    public sealed record PreAuthorize(string SaleId, CardData Card, Money Hold) : PaymentMessage(SaleId);
+    public sealed record PreAuthorize(string SaleId, CardData Card, Tender Tender) : PaymentMessage(SaleId);
+    /// <summary>Cash taken at the cashier. The payment side signs a token for that amount and never calls the bank.</summary>
+    public sealed record CashAuthorize(string SaleId, Money Amount) : PaymentMessage(SaleId);
     public sealed record Complete(string SaleId, Money Final) : PaymentMessage(SaleId);
     public sealed record Reverse(string SaleId) : PaymentMessage(SaleId);
     public sealed record DrainPending(string SaleId) : PaymentMessage(SaleId);

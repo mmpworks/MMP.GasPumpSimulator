@@ -5,7 +5,7 @@ namespace GasPump.Tests;
 
 public class StateMachineTests
 {
-    private static SaleStateMachine Machine() => new("S1", Money.FromDollars(75));
+    private static SaleStateMachine Machine() => new("S1");
 
     /// <summary>Card, approval, and the driver's hand sequence up to the first pour.</summary>
     private static SaleStateMachine Fueling(Grade? preselected = null)
@@ -28,7 +28,7 @@ public class StateMachineTests
         var c1 = m.Apply(new SaleEvent.CardPresented("S1", "Good", Grade.Plus));
         Assert.Equal(SaleState.Authorizing, m.State);
         Assert.Equal(HoldStatus.Requested, m.Hold);
-        Assert.Contains(c1, c => c is SaleCommand.RequestAuthorization { Hold.Cents: 7500 });
+        Assert.Contains(c1, c => c is SaleCommand.RequestAuthorization { Tender: Tender.Credit });
         Assert.Contains(c1, c => c is SaleCommand.ArmTimer { State: SaleState.Authorizing });
 
         var c2 = m.Apply(new SaleEvent.Approved("S1", Money.FromDollars(30), "tok"));
@@ -270,6 +270,50 @@ public class StateMachineTests
         Assert.Equal(HoldStatus.Settled, m.Hold);
     }
 
+    // ----- Tender: cash is the ceiling, change comes back at the till.
+
+    [Fact]
+    public void Cash_sale_sets_the_ceiling_to_the_cent_and_owes_change_for_the_unpumped_part()
+    {
+        var m = Machine();
+        var c1 = m.Apply(new SaleEvent.CashPaid("S1", new Money(2_000)));
+        Assert.Equal(SaleState.Authorizing, m.State);
+        Assert.Equal(Tender.Cash, m.Tender);
+        Assert.Contains(c1, c => c is SaleCommand.RequestCashAuthorization { Amount.Cents: 2_000 });
+        Assert.Contains("Cash $20.00 received", m.Notice().Headline);
+
+        m.Apply(new SaleEvent.Approved("S1", new Money(2_000), "cash-token"));
+        Assert.Equal(SaleState.ReadyToPump, m.State);
+        Assert.Equal(new Money(2_000), m.Ceiling);
+        Assert.Contains("You prepaid $20.00 in cash", m.Notice().Detail);
+
+        m.Apply(new SaleEvent.GradeSelected("S1", Grade.Regular));
+        m.Apply(new SaleEvent.NozzleLifted("S1"));
+        m.Apply(new SaleEvent.NozzleSeated("S1"));
+        m.Apply(new SaleEvent.FlowStarted("S1"));
+        m.Apply(new SaleEvent.Progress("S1", Volume.FromGallons(2), new Money(700), FlowRate.GallonsPerMinute(10), "full"));
+        m.Apply(new SaleEvent.NozzleHung("S1"));
+        Assert.Equal(SaleState.Completing, m.State);
+        m.Apply(new SaleEvent.CompletionSent("S1", new Money(700)));
+        Assert.Equal(SaleState.Idle, m.State);
+        Assert.Equal(HoldStatus.Settled, m.Hold);
+        Assert.Equal(new Money(1_300), m.ChangeDue);
+    }
+
+    [Fact]
+    public void Cash_sale_abandoned_before_any_pour_refunds_the_whole_amount()
+    {
+        var m = Machine();
+        m.Apply(new SaleEvent.CashPaid("S1", new Money(2_000)));
+        m.Apply(new SaleEvent.Approved("S1", new Money(2_000), "cash-token"));
+        var c = m.Apply(new SaleEvent.Timeout("S1", SaleState.ReadyToPump));
+        Assert.Equal(SaleState.Cancelled, m.State);
+        Assert.Contains(c, x => x is SaleCommand.Reverse);
+        m.Apply(new SaleEvent.Reversed("S1"));
+        Assert.Equal(new Money(2_000), m.ChangeDue);
+        Assert.Contains("Collect your $20.00 refund at the cashier", m.Notice().Detail);
+    }
+
     [Fact]
     public void Terminal_screens_clear_to_idle_after_the_notice_timeout()
     {
@@ -279,6 +323,6 @@ public class StateMachineTests
         Assert.Contains(c, x => x is SaleCommand.ArmTimer { State: SaleState.Declined, After.TotalSeconds: 30 });
         m.Apply(new SaleEvent.Timeout("S1", SaleState.Declined));
         Assert.Equal(SaleState.Idle, m.State);
-        Assert.Equal("Insert or tap your card", m.Notice().Headline);
+        Assert.StartsWith("Insert or tap your card", m.Notice().Headline);
     }
 }

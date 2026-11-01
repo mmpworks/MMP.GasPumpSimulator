@@ -93,7 +93,7 @@ public class PaymentTests
     public async Task Gateway_approves_after_the_network_latency()
     {
         var (gw, _, clock, _) = Gateway();
-        var task = gw.PreAuthorizeAsync("S1", TestCards.Get("Good"), Hold, CancellationToken.None);
+        var task = gw.PreAuthorizeAsync("S1", TestCards.Get("Good"), Tender.Credit, CancellationToken.None);
         Assert.False(task.IsCompleted);
         clock.Advance(TimeSpan.FromMilliseconds(250));
         var r = await task;
@@ -107,7 +107,7 @@ public class PaymentTests
     {
         var (gw, net, clock, _) = Gateway();
         net.Mode = NetworkMode.Down;
-        var task = gw.PreAuthorizeAsync("S1", TestCards.Get("Good"), Hold, CancellationToken.None);
+        var task = gw.PreAuthorizeAsync("S1", TestCards.Get("Good"), Tender.Credit, CancellationToken.None);
         clock.Advance(TimeSpan.FromMilliseconds(50));
         var r = await task;
         Assert.False(r.Approved);
@@ -120,7 +120,7 @@ public class PaymentTests
     {
         var (gw, net, clock, _) = Gateway();
         net.Mode = NetworkMode.Timeout;
-        var task = gw.PreAuthorizeAsync("S1", TestCards.Get("Good"), Hold, CancellationToken.None);
+        var task = gw.PreAuthorizeAsync("S1", TestCards.Get("Good"), Tender.Credit, CancellationToken.None);
         clock.Advance(TimeSpan.FromSeconds(29));
         Assert.False(task.IsCompleted);
         clock.Advance(TimeSpan.FromSeconds(1));
@@ -133,7 +133,7 @@ public class PaymentTests
     {
         var (gw, net, clock, issuer) = Gateway();
         var card = TestCards.Get("Good");
-        var pre = gw.PreAuthorizeAsync("S1", card, Hold, CancellationToken.None);
+        var pre = gw.PreAuthorizeAsync("S1", card, Tender.Credit, CancellationToken.None);
         clock.Advance(TimeSpan.FromMilliseconds(250));
         await pre;
 
@@ -158,7 +158,7 @@ public class PaymentTests
         var (gw, net, clock, issuer) = Gateway();
         var card = TestCards.Get("Good");
         var before = issuer.AvailableBalance(card.Pan);
-        var pre = gw.PreAuthorizeAsync("S1", card, Hold, CancellationToken.None);
+        var pre = gw.PreAuthorizeAsync("S1", card, Tender.Credit, CancellationToken.None);
         clock.Advance(TimeSpan.FromMilliseconds(250));
         await pre;
 
@@ -203,7 +203,7 @@ public class PaymentTests
         var (gw, net, clock, issuer, wire) = GatewayWithWire();
         var card = TestCards.Get("Good");
         net.Mode = NetworkMode.Late;
-        var task = gw.PreAuthorizeAsync("S1", card, Hold, CancellationToken.None);
+        var task = gw.PreAuthorizeAsync("S1", card, Tender.Credit, CancellationToken.None);
         clock.Advance(TimeSpan.FromMilliseconds(250));
         // The issuer call and the second wait run on a pool continuation after Advance returns. Wait for the
         // second timer to be parked on the clock before moving the clock again, or the test races itself.
@@ -215,12 +215,111 @@ public class PaymentTests
         Assert.True(r.Approved);
     }
 
+    // ----- Tender ceilings: the site's call, then the bank's, then the pump's.
+
+    [Theory]
+    [InlineData("Good", Tender.Credit, 7500)]          // credit ceiling $75, balance $5000
+    [InlineData("DebitGoodPin", Tender.Debit, 5000)]   // debit ceiling $50, balance $900: the lesser is the site's $50
+    [InlineData("LowBalance", Tender.Credit, 1850)]    // bank approves $18.50 of $75
+    public async Task Ceiling_is_the_lesser_of_the_site_ceiling_and_the_banks_answer(string card, Tender tender, long cents)
+    {
+        var (gw, _, clock, _) = Gateway();
+        var task = gw.PreAuthorizeAsync("S1", TestCards.Get(card), tender, CancellationToken.None);
+        clock.Advance(TimeSpan.FromMilliseconds(250));
+        var r = await task;
+        Assert.True(r.Approved, r.Message);
+        Assert.Equal(new Money(cents), r.Ceiling);
+        Assert.Equal(new Money(cents), AuthorizationToken.Parse(r.Token!).Ceiling);
+    }
+
+    [Fact]
+    public async Task Debit_with_a_card_that_has_no_pin_is_a_pin_decline_at_the_bank()
+    {
+        var (gw, _, clock, issuer) = Gateway();
+        var task = gw.PreAuthorizeAsync("S1", TestCards.Get("Good"), Tender.Debit, CancellationToken.None);
+        clock.Advance(TimeSpan.FromMilliseconds(250));
+        var r = await task;
+        Assert.False(r.Approved);
+        Assert.Equal("InvalidPin", r.ReasonCode);
+        Assert.Empty(issuer.OpenHolds);
+    }
+
+    [Fact]
+    public async Task Admin_can_lower_the_debit_ceiling_and_the_next_sale_uses_it()
+    {
+        var (gw, _, clock, _) = Gateway();
+        var set = gw.Site.TrySet("1234", Tender.Debit, Money.FromDollars(30));
+        Assert.True(set.Ok, set.Reason);
+        var task = gw.PreAuthorizeAsync("S1", TestCards.Get("DebitGoodPin"), Tender.Debit, CancellationToken.None);
+        clock.Advance(TimeSpan.FromMilliseconds(250));
+        Assert.Equal(Money.FromDollars(30), (await task).Ceiling);
+    }
+
+    [Fact]
+    public void Admin_panel_refuses_a_wrong_pin_and_locks_after_three()
+    {
+        var clock = new FakeTimeProvider(Now);
+        var site = new SiteLimits(clock, Money.FromDollars(75), Money.FromDollars(50), "1234");
+        var events = new List<string>();
+        site.Changed += (kind, _) => events.Add(kind);
+
+        Assert.False(site.TrySet("0000", Tender.Debit, Money.FromDollars(5000)).Ok);
+        Assert.False(site.TrySet("0001", Tender.Debit, Money.FromDollars(5000)).Ok);
+        var third = site.TrySet("0002", Tender.Debit, Money.FromDollars(5000));
+        Assert.False(third.Ok);
+        Assert.Contains("locked", third.Reason);
+        Assert.NotNull(site.LockedUntil);
+        // The right PIN is refused while locked.
+        Assert.False(site.TrySet("1234", Tender.Debit, Money.FromDollars(30)).Ok);
+        Assert.Equal(Money.FromDollars(50), site.DebitHold);
+        Assert.Equal(["admin.refused", "admin.refused", "admin.locked", "admin.refused"], events);
+
+        clock.Advance(SiteLimits.Lockout + TimeSpan.FromSeconds(1));
+        Assert.Null(site.LockedUntil);
+        Assert.True(site.TrySet("1234", Tender.Debit, Money.FromDollars(30)).Ok);
+        Assert.Equal(Money.FromDollars(30), site.DebitHold);
+    }
+
+    [Fact]
+    public void Cash_has_no_ceiling_at_the_admin_panel_and_no_bank_call()
+    {
+        var (gw, net, _, issuer) = Gateway();
+        Assert.False(gw.Site.TrySet("1234", Tender.Cash, Money.FromDollars(10)).Ok);
+        net.Mode = NetworkMode.Down;   // the bank is unreachable and cash does not care
+        var r = gw.CashAuthorize("S1", new Money(2_037));
+        Assert.True(r.Approved);
+        Assert.Equal(new Money(2_037), r.Ceiling);
+        Assert.Equal("CashPrepaid", r.ReasonCode);
+        Assert.Empty(issuer.OpenHolds);
+        Assert.Equal(new Money(2_037), gw.Drawer.Open["S1"]);
+    }
+
+    [Fact]
+    public async Task Cash_sale_settles_at_the_till_with_change_and_refunds_in_full_when_nothing_pumped()
+    {
+        var (gw, net, _, _) = Gateway();
+        net.Mode = NetworkMode.Down;
+        gw.CashAuthorize("S1", Money.FromDollars(20));
+        var done = await gw.CompleteAsync("S1", new Money(1_234), CancellationToken.None);
+        Assert.True(done.Sent);
+        Assert.Equal(new Money(766), done.Change);
+        Assert.Equal(new Money(766), gw.Drawer.ChangeDue["S1"]);
+        Assert.Empty(gw.Pending);
+
+        gw.CashAuthorize("S2", Money.FromDollars(20));
+        var back = await gw.ReverseAsync("S2", CancellationToken.None);
+        Assert.True(back.Sent);
+        Assert.Equal(Money.FromDollars(20), back.Refund);
+        gw.Drawer.ChangeCollected("S2");
+        Assert.False(gw.Drawer.ChangeDue.ContainsKey("S2"));
+    }
+
     [Fact]
     public async Task Expired_card_never_touches_the_network()
     {
         var (gw, net, _, _) = Gateway();
         net.Mode = NetworkMode.Down;
-        var r = await gw.PreAuthorizeAsync("S1", TestCards.Get("Expired"), Hold, CancellationToken.None);
+        var r = await gw.PreAuthorizeAsync("S1", TestCards.Get("Expired"), Tender.Credit, CancellationToken.None);
         Assert.Equal("Expired", r.ReasonCode);
         Assert.False(r.NetworkFailure);
     }

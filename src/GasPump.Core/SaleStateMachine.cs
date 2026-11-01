@@ -33,12 +33,10 @@ public sealed record SaleTimeouts(
 public sealed class SaleStateMachine
 {
     private readonly SaleTimeouts _timeouts;
-    private readonly Money _hold;
 
-    public SaleStateMachine(string saleId, Money hold, SaleTimeouts? timeouts = null)
+    public SaleStateMachine(string saleId, SaleTimeouts? timeouts = null)
     {
         SaleId = saleId;
-        _hold = hold;
         _timeouts = timeouts ?? SaleTimeouts.Default;
         State = SaleState.Idle;
         Grade = Grade.Regular;
@@ -62,6 +60,9 @@ public sealed class SaleStateMachine
     public bool GradeSelected { get; private set; }
     public bool NozzleOut { get; private set; }
     public bool NozzleSeated { get; private set; }
+    public Tender Tender { get; private set; } = Tender.Credit;
+    public Money CashPrepaid { get; private set; }
+    public Money ChangeDue { get; private set; }
 
     /// <summary>True while the bank still owes an answer about the driver's money.</summary>
     public bool HoldUnsettled => Hold is HoldStatus.Requested or HoldStatus.Held or HoldStatus.ReleasePending or HoldStatus.SettlePending;
@@ -70,7 +71,7 @@ public sealed class SaleStateMachine
         s is SaleState.Declined or SaleState.Cancelled or SaleState.Faulted or SaleState.StoreAndForward;
 
     public SaleSnapshot Snapshot(DateTimeOffset? deadlineAt = null) =>
-        new(SaleId, State, CardName, Grade, Ceiling, Volume, Money, Flow, Phase, LastMessage, Hold, End, Notice(), GradeSelected, NozzleOut, NozzleSeated, deadlineAt);
+        new(SaleId, State, CardName, Grade, Ceiling, Volume, Money, Flow, Phase, LastMessage, Hold, End, Notice(), GradeSelected, NozzleOut, NozzleSeated, Tender, CashPrepaid, ChangeDue, deadlineAt);
 
     public IReadOnlyList<SaleCommand> Apply(SaleEvent e)
     {
@@ -117,9 +118,20 @@ public sealed class SaleStateMachine
                 CardName = cp.CardName;
                 Grade = cp.Grade ?? Grade.Regular;
                 GradeSelected = cp.Grade is not null;
+                Tender = cp.Tender;
                 Hold = HoldStatus.Requested;
-                commands.Add(new SaleCommand.RequestAuthorization(SaleId, cp.CardName, Grade, _hold));
-                return Transition(SaleState.Authorizing, commands, $"card {cp.CardName}, hold {_hold}", timeout: _timeouts.Authorization);
+                commands.Add(new SaleCommand.RequestAuthorization(SaleId, cp.CardName, Grade, cp.Tender));
+                return Transition(SaleState.Authorizing, commands, $"card {cp.CardName} as {cp.Tender}", timeout: _timeouts.Authorization);
+
+            case (SaleState.Idle, SaleEvent.CashPaid cash):
+                CardName = "cash";
+                Grade = cash.Grade ?? Grade.Regular;
+                GradeSelected = cash.Grade is not null;
+                Tender = Tender.Cash;
+                CashPrepaid = cash.Amount;
+                Hold = HoldStatus.Requested;
+                commands.Add(new SaleCommand.RequestCashAuthorization(SaleId, cash.Amount));
+                return Transition(SaleState.Authorizing, commands, $"cash {cash.Amount} taken at the cashier", timeout: _timeouts.Authorization);
 
             case (SaleState.Authorizing, SaleEvent.Approved a):
                 Ceiling = a.Ceiling;
@@ -277,6 +289,12 @@ public sealed class SaleStateMachine
                 commands.Add(new SaleCommand.Log(SaleId, $"late network failure arrived in {State}, ignored"));
                 return true;
 
+            case SaleEvent.Reversed when Tender == Tender.Cash:
+                Hold = HoldStatus.Released;
+                ChangeDue = CashPrepaid;
+                commands.Add(new SaleCommand.Log(SaleId, $"cash refund {CashPrepaid} due at the cashier"));
+                return true;
+
             case SaleEvent.Reversed:
                 Hold = HoldStatus.Released;
                 commands.Add(new SaleCommand.Log(SaleId, "hold released by the bank"));
@@ -289,11 +307,13 @@ public sealed class SaleStateMachine
 
             case SaleEvent.CompletionSent cs when State == SaleState.Completing:
                 Hold = HoldStatus.Settled;
-                Transition(SaleState.Idle, commands, $"completion sent for {cs.Final}");
+                SettleCash(cs.Final);
+                Transition(SaleState.Idle, commands, Tender == Tender.Cash ? $"cash sale {cs.Final}, change {ChangeDue}" : $"completion sent for {cs.Final}");
                 return true;
 
             case SaleEvent.CompletionSent cs:
                 Hold = HoldStatus.Settled;
+                SettleCash(cs.Final);
                 commands.Add(new SaleCommand.Log(SaleId, $"completion for {cs.Final} posted late, hold settled"));
                 return true;
 
@@ -308,6 +328,13 @@ public sealed class SaleStateMachine
                 return true;
         }
         return false;
+    }
+
+    /// <summary>A cash sale settles at the till: whatever was prepaid and not pumped comes back as change.</summary>
+    private void SettleCash(Money final)
+    {
+        if (Tender != Tender.Cash) return;
+        ChangeDue = CashPrepaid - Money.Min(final, CashPrepaid);
     }
 
     private IReadOnlyList<SaleCommand> Finish(List<SaleCommand> commands, string why, EndReason end)
@@ -352,7 +379,7 @@ public sealed class SaleStateMachine
     /// </summary>
     public DriverNotice Notice()
     {
-        var holdLine = Hold switch
+        var holdLine = Tender == Tender.Cash ? CashLine() : Hold switch
         {
             HoldStatus.Released => "Nothing was charged to your card.",
             HoldStatus.ReleasePending => "A temporary hold may show on your card. It releases automatically when our bank link returns.",
@@ -364,10 +391,15 @@ public sealed class SaleStateMachine
 
         switch (State)
         {
+            case SaleState.Idle when Hold == HoldStatus.Settled:
+                // The last sale's receipt stays on the screen until the next driver starts or the screen is reset.
+                return new($"Thank you: {Volume} for {Money}", Join(holdLine, "Insert or tap your card, or pay the cashier, for the next sale."), DriverAction.Leave);
             case SaleState.Idle:
-                return new("Insert or tap your card", "Select a grade after approval.", DriverAction.None);
+                return new("Insert or tap your card, or pay the cashier", "Select a grade after approval.", DriverAction.None);
+            case SaleState.Authorizing when Tender == Tender.Cash:
+                return new($"Cash {CashPrepaid} received", "Setting the pump to your amount.", DriverAction.Wait);
             case SaleState.Authorizing:
-                return new("Contacting your bank", $"Most approvals take a few seconds. We stop waiting after {_timeouts.Authorization.TotalSeconds:0} s.", DriverAction.Wait);
+                return new($"Contacting your bank ({Tender})", $"Most approvals take a few seconds. We stop waiting after {_timeouts.Authorization.TotalSeconds:0} s.", DriverAction.Wait);
             case SaleState.ReadyToPump:
             {
                 var leave = $"If you leave, the pump cancels after {_timeouts.NozzleLift.TotalSeconds:0} s and releases the hold.";
@@ -375,7 +407,7 @@ public sealed class SaleStateMachine
                     : !NozzleOut ? "Lift the nozzle."
                     : !NozzleSeated ? "Put the nozzle in your tank."
                     : "Squeeze the trigger to begin.";
-                return new($"Approved for up to {Ceiling}", Join(step, leave), DriverAction.LiftNozzle);
+                return new($"Approved for up to {Ceiling}", Join(step, Tender == Tender.Cash ? holdLine : "", leave), DriverAction.LiftNozzle);
             }
             case SaleState.Fueling when Phase == "paused":
                 return new($"Paused at {Money}", Join(NozzleSeated ? "Squeeze the trigger to continue." : "Put the nozzle back in the tank and squeeze to continue.", "Hang up the nozzle to finish."), DriverAction.HangToStop);
@@ -400,6 +432,16 @@ public sealed class SaleStateMachine
             _ => new(State.ToString(), holdLine, DriverAction.None),
         };
     }
+
+    /// <summary>Where the cash is. The till owes change after a short pump, or the whole amount after no pump.</summary>
+    private string CashLine() => Hold switch
+    {
+        HoldStatus.Requested or HoldStatus.Held => $"You prepaid {CashPrepaid} in cash.",
+        HoldStatus.Settled when ChangeDue > Money.Zero => $"You prepaid {CashPrepaid}. Collect {ChangeDue} change at the cashier.",
+        HoldStatus.Settled => $"Paid in full from your {CashPrepaid} cash.",
+        HoldStatus.Released => $"Collect your {CashPrepaid} refund at the cashier.",
+        _ => "",
+    };
 
     /// <summary>Capitalise a reason and end it with a period, or return empty for nothing.</summary>
     private static string Sentence(string? s) =>

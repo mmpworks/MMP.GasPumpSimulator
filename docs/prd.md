@@ -25,6 +25,8 @@ Kill condition: all true on one date, written here.
 1. `dotnet test` green. Count on 2026-10-31: 80 of 80, 0 failures in 15 consecutive full runs. Count on 2026-11-01 after the saga and interlock slice: 108 of 108. Sign-off date: ___.
 7. (2026-11-01) Under `NetworkMode.Late`, a sale ends Declined, the pump never arms, and the issuer shows no open hold, under both strategies. The driver's screen names the failure and the next step at every terminal state.
 8. (2026-11-01) No fuel moves until grade, lift, seat, and trigger are all present. Release pauses, squeeze resumes, hang after a pour completes the sale.
+9. (2026-11-01) A debit sale's ceiling is the lesser of the site's debit ceiling and the bank's answer. A cash sale's ceiling is the cash amount. The admin panel can raise a ceiling to $5000 and the pump still arms at $500. Three wrong PINs lock the panel. Count on 2026-11-01: 126 of 126.
+10. (2026-11-01) Every log line reaches a Herald.OSS NDJSON file with its properties, and the UI can save a text or JSON copy.
 2. The same end-to-end sale passes under both dispatch strategies, from one test with a theory over strategies.
 3. A $30 sale at $3.499 per gallon ends at 3000 cents, never 3001, under both strategies, with the taper visible in the flow-rate trace (full, then falling, then stop).
 4. Every attack in `docs/threat-model.md` has a test that fails without its control and passes with it.
@@ -64,6 +66,9 @@ Kill condition: all true on one date, written here.
 | 19 | Self-cancel | Approved with no pour for 120 s cancels and reverses. A finished screen clears to Idle after 30 s, except while the bank still owes an answer about the hold. | Steve: an abandoned authorization must cancel itself. |
 | 20 | Nozzle interlocks | Fuel flows only with grade selected, nozzle lifted, nozzle seated in a fill point, and trigger held. Release and squeeze any number of times. Grade locks at the first drop. Hang after any pour ends the delivery. Hang before any pour changes nothing. `Fueling` starts at the first pour, never at the lift. | Steve, 2026-11-01: grade and fill-point sensor before any pour; stop and start many times; harness return after a pour ends the delivery. |
 | 21 | Fault with fuel poured | Settle for the metered amount. Fault before fuel reverses. | The old shape left the hold on after a mid-sale fault. |
+| 22 | Logging (2026-11-01) | Herald.OSS 0.14.0 via `HeraldEventLog`: bridge sink to the UI and tests, console and NDJSON file sinks in the host, one file per session under `%LOCALAPPDATA%\MMP.GasPumpSimulator\logs` or `GASPUMP_LOG_DIR`. `IEventLog` gains template overloads with properties and Warn/Error. | Steve: add Herald.OSS; keep the log for later review. The package exposes `Information/Warning/Error`; the README's `Info` does not compile against 0.14.0 (doc defect, reported). |
+| 23 | Tender (2026-11-01) | Credit, Debit, Cash. `SiteLimits` holds the credit and debit ceilings; the bank is asked for the site ceiling and the pump gets the lesser of that and the approved amount. Cash: `CashDrawer`, the amount is the ceiling, no bank, change or refund at the till. | Steve: debit hold = lesser of a configurable threshold or the bank's answer; credit has its own, higher; cash is the amount paid, to the cent, with no automated threshold. |
+| 24 | Administrator (2026-11-01) | Back-office panel behind a PIN ("1234" default, `SimulationOptions.AdminPin`). Sets credit and debit ceilings. Three wrong PINs lock it for five minutes. Every attempt goes to the ledger. Attack buttons: brute-force the PIN; raise the debit ceiling to $5000 and watch the pump clamp. | Steve: an admin section we can attempt to hack. The pump's hard limits stay the authority. |
 
 ## Program design
 
@@ -93,7 +98,8 @@ Build order:
 
 1. Slice 1 (done 2026-10-31): Core, Payment, Security, Pump, Dispatch with both strategies, 80 tests. Host with WebSocket. Electron app with the pump face, card panel, fault toggles, attack buttons, ledger view, event log. Verified live: Electron spawned the host, the socket connected, a partial-approval sale fueled, a pulse spoof faulted the pump.
 2. Slice 1b (done 2026-11-01): saga compensation (late approval, queued reversal, issuer void), `NetworkMode.Late`, driver notice with countdown, notice timeout, nozzle interlocks (grade, seat, trigger, pause and resume), fault settles for fuel poured. 108 tests. App shows the notice banner, hold badge, bank-owes line, grade and nozzle and trigger controls, Late mode.
-3. Slice 2: AsyncProxy strategy once MMP.AsyncProxy is referenced. Scenario scripting. Receipt and completion timing rules.
+3. Slice 1c (done 2026-11-01): Herald.OSS logging with a per-session NDJSON file; tender choice (credit, debit, cash) with site ceilings; administrator panel with PIN, lockout, and two attacks; cash drawer with change and refunds. 126 tests.
+4. Slice 2: AsyncProxy strategy once MMP.AsyncProxy is referenced. Scenario scripting. Receipt and completion timing rules.
 
 ## Open items
 

@@ -11,16 +11,29 @@ A pay-at-the-pump fuel dispenser, simulated. Present a card, get a two-phase aut
 3. **The pump.** Hydraulics, meter, taper. With a $30 ceiling the flow is full to $24, falls in a straight line to an 8 percent creep, and the last slice is clamped so the money lands on 3000 cents and never 3001.
 4. **The nozzle.** Fuel flows only with a grade selected, the nozzle off the harness and seated in a tank or can, and the trigger held. Let go to pause, squeeze to resume, as often as you like. Once anything has poured, hanging the nozzle ends the sale. Hang before any pour and nothing changes; walk away and the pump cancels itself at 120 s.
 5. **Failover.** The sale is a saga. When the bank link runs late or dies, every hold is reversed or every completion queued, never lost. A late approval that arrives after the pump gave up is reversed, never armed. The pump's screen says what happened, where your money is, and what to do: try again, use another pump, use another card, see the attendant, or go. The screen clears for the next driver after 30 s, but not while the bank still owes an answer.
-6. **Concurrency.** Three workers, sale, pump, and payment, pass messages through bounded mailboxes and share no state. How they run is a Strategy: `ThreadedDispatch` is a thread per worker with blocking queues. `ChannelDispatch` is a Task per worker over bounded channels. The third slot is for MMP.AsyncProxy state machines. One end-to-end test runs the same sale under every strategy.
+6. **Tender.** Credit, debit, or cash. Credit asks the bank for the site's credit ceiling. Debit asks for the site's debit ceiling and the pump gets the lesser of that and the bank's answer, so a $50 debit ceiling against a $900 balance holds $50 and against $18.50 holds $18.50. Cash goes to the cashier, and the cash amount is the ceiling to the cent: no bank, no hold, change or a refund at the till.
+7. **Administrator.** A back-office panel sets the credit and debit ceilings behind an admin PIN. Three wrong PINs lock it for five minutes. Every attempt is in the ledger. Raise the debit ceiling to $5000 and the bank will approve what the card has, and the pump will still clamp it to its own $500 hard limit, because the site's ceilings are business limits and the pump's are safety limits.
+8. **Logging on Herald.OSS.** Every worker writes structured events through [Herald.OSS](https://github.com/mmpworks/Herald.OSS) 0.14.0. A bridge sink feeds the UI stream and the tests; the host adds a console sink and an NDJSON file per session so a run can be reviewed later with every property intact.
+9. **Concurrency.** Three workers, sale, pump, and payment, pass messages through bounded mailboxes and share no state. How they run is a Strategy: `ThreadedDispatch` is a thread per worker with blocking queues. `ChannelDispatch` is a Task per worker over bounded channels. The third slot is for MMP.AsyncProxy state machines. One end-to-end test runs the same sale under every strategy.
 
 ## Run it
 
 ```
-dotnet test                       # 108 tests, about 17 s, on a fake clock
+dotnet test                       # 126 tests, about 17 s, on a fake clock
 cd app && npm install && npm run build && npx electron .
 ```
 
 The Electron app starts the host for you on `localhost:5177`. Set `GASPUMP_STRATEGY=channel` to run the Task and Channel dispatch instead of threads. Set `GASPUMP_HOST=external` if you started the host yourself with `dotnet run --project src/GasPump.Host -- --strategy channel`.
+
+### The log file
+
+The host writes one Herald.OSS NDJSON file per session to `%LOCALAPPDATA%\MMP.GasPumpSimulator\logs\gaspump-<date>-<time>.ndjson`. Set `GASPUMP_LOG_DIR` to put it elsewhere. The event log panel shows the path, and its **Save .txt** and **Save .json** buttons download a copy of everything since the host started. `GET /api/logfile` returns the path; `GET /api/log/export?format=text|json` returns the copy.
+
+Each NDJSON line carries the time, level, category (the worker: sale, pump, payment, admin, attack, network), the rendered message, and the properties. To read a session back:
+
+```powershell
+Get-Content "$env:LOCALAPPDATA\MMP.GasPumpSimulator\logs\gaspump-*.ndjson" | ConvertFrom-Json | Where-Object category -eq 'admin' | Format-Table
+```
 
 If `npm install` leaves `node_modules/electron/dist` empty (the postinstall unzip failed silently on one Windows box here), unzip the file it downloaded to `%LOCALAPPDATA%\electron\Cache\...\electron-v33.2.1-win32-x64.zip` into that folder and write `electron.exe` into `node_modules/electron/path.txt`.
 
@@ -69,6 +82,10 @@ t+ 13s  Idle         pump=Stopped     $4.26  1.122 gal   nozzle hung, completion
 
 Pull the link **Down** instead and the reversal itself cannot get through. It goes into the same store-and-forward queue as completions, the screen says "A temporary hold may show on your card. It releases automatically when our bank link returns", and **Drain queued** sends it when the link is back. The tests `Late_approval_is_reversed_not_armed_and_the_card_ends_untouched` and `Bank_unreachable_after_timeout_queues_the_reversal_and_releases_when_the_link_returns` run both under each dispatch strategy.
 
+## The admin panel, attacked
+
+Two attacks live on the Administrator panel. **Brute-force the PIN** tries 0000, 0001, 0002 and stops: the third wrong PIN locks the panel for five minutes, the ledger shows `admin.refused`, `admin.refused`, `admin.locked`, and nothing changed. **Debit ceiling $5000 with this PIN** needs the real PIN, and then shows why the panel is business logic and the pump is the safety: the bank approves the card's $900, and the pump arms at $500 with `arm.ok ... clamped` in the ledger. The tests `Brute_forcing_the_admin_pin_locks_the_panel_and_changes_nothing` and `Admin_raises_the_debit_ceiling_to_5000_and_the_pump_still_clamps_at_its_hard_limit` run both under each dispatch strategy.
+
 ## The 600-gallon case
 
 In 2018 a Detroit station lost about 600 gallons in 90 minutes while the clerk could not stop the pump. The research behind this repo put the fix in one sentence: the reader protects the card, the controller protects the fuel. Two trust boundaries. This simulator builds the second one.
@@ -81,10 +98,10 @@ Press "Signed token: 600 gal, $2000" in the app, pick a grade, lift, put the noz
 
 ```
 src/GasPump.Core       units, pricing, the sale state machine (a table, no I/O)
-src/GasPump.Payment    cards, issuer, network, gateway, signed token
+src/GasPump.Payment    cards, issuer, network, gateway, signed token, site limits (admin), cash drawer
 src/GasPump.Security   hard limits, verifier, nonce store, pump authority, ledger, totalizer
 src/GasPump.Pump       hydraulics, meter, taper policy, pump controller
-src/GasPump.Dispatch   IDispatchStrategy, ThreadedDispatch, ChannelDispatch, Simulation
+src/GasPump.Dispatch   IDispatchStrategy, ThreadedDispatch, ChannelDispatch, Simulation, HeraldEventLog (Herald.OSS)
 src/GasPump.Host       minimal API + WebSocket hub
 app/                   Electron + Vite + Vue 3 + TypeScript
 tests/GasPump.Tests    xunit on a FakeTimeProvider
