@@ -67,7 +67,15 @@ public static class Contracts
         s.DeadlineAt,
     };
 
-    public static object Log(LogLine l) => new { type = "log", at = l.At, l.Source, l.Message };
+    public static object Log(LogLine l) => new
+    {
+        type = "log",
+        at = l.At,
+        l.Source,
+        l.Message,
+        severity = l.Severity.ToString(),
+        props = l.Props.ToDictionary(p => p.Key, p => p.Value?.ToString()),
+    };
 
     public static object Ledger(LedgerEntry e) => new { type = "ledger", e.Seq, e.At, e.Kind, e.Detail, hash = e.Hash[..12], prev = e.PrevHash[..12] };
 }

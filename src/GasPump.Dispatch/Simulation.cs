@@ -57,12 +57,14 @@ public sealed class Simulation : IDisposable
     private int _saleCounter;
     private int _inflightPayments;
 
-    public Simulation(IDispatchStrategy dispatch, TimeProvider clock, SimulationOptions? options = null, IssuerSimulator? issuer = null, byte[]? hmacKey = null)
+    /// <param name="log">Where the story is written. Default is a Herald.OSS pipeline with only the bridge back to this simulation; the host adds file and console sinks.</param>
+    public Simulation(IDispatchStrategy dispatch, TimeProvider clock, SimulationOptions? options = null, IssuerSimulator? issuer = null, byte[]? hmacKey = null, IEventLog? log = null)
     {
         _dispatch = dispatch;
         _clock = clock;
         _options = options ?? SimulationOptions.Default;
-        Log = new EventLog(clock);
+        _ownsLog = log is null;
+        Log = log ?? new HeraldEventLog(clock);
         Ledger = new EventLedger(clock);
         Totalizer = new Totalizer();
         Issuer = issuer ?? IssuerSimulator.WithTestCards();
@@ -87,10 +89,11 @@ public sealed class Simulation : IDisposable
         _owned.Add(dispatch.StartWorker("payment", _paymentBox, HandlePaymentMessage));
         _owned.Add(dispatch.StartTicker("pump-tick", _options.TickPeriod, _pumpBox, () => new PumpMessage.Tick(_options.TickPeriod)));
 
-        Log.Write("sim", $"started with {dispatch.Name} dispatch, pump {_options.PumpId}, hold {_options.HoldAmount}");
+        Log.Write("sim", "started with {Dispatch} dispatch, pump {PumpId}, hold {Hold}", ("Dispatch", dispatch.Name), ("PumpId", _options.PumpId), ("Hold", _options.HoldAmount));
     }
 
-    public EventLog Log { get; }
+    private readonly bool _ownsLog;
+    public IEventLog Log { get; }
     public EventLedger Ledger { get; }
     public Totalizer Totalizer { get; }
     public IssuerSimulator Issuer { get; }
@@ -251,20 +254,20 @@ public sealed class Simulation : IDisposable
         switch (e)
         {
             case SaleEvent.Approved a:
-                Log.Write("sale", $"LATE approval {a.Ceiling} for finished sale {a.SaleId}; reversing the orphan hold (saga compensation)");
+                Log.Warn("sale", "LATE approval {Ceiling} for finished sale {SaleId}; reversing the orphan hold (saga compensation)", ("Ceiling", a.Ceiling), ("SaleId", a.SaleId));
                 _paymentBox.Post(new PaymentMessage.Reverse(a.SaleId));
                 break;
             case SaleEvent.Reversed:
-                Log.Write("sale", $"hold for earlier sale {e.SaleId} released");
+                Log.Write("sale", "hold for earlier sale {SaleId} released", ("SaleId", e.SaleId));
                 break;
             case SaleEvent.CompletionSent cs:
-                Log.Write("sale", $"completion {cs.Final} for earlier sale {e.SaleId} posted");
+                Log.Write("sale", "completion {Final} for earlier sale {SaleId} posted", ("Final", cs.Final), ("SaleId", e.SaleId));
                 break;
             case SaleEvent.ReversalQueued or SaleEvent.CompletionQueued or SaleEvent.Declined or SaleEvent.AuthorizationTimedOut:
-                Log.Write("sale", $"{e.GetType().Name} for earlier sale {e.SaleId} noted");
+                Log.Write("sale", "{Event} for earlier sale {SaleId} noted", ("Event", e.GetType().Name), ("SaleId", e.SaleId));
                 break;
             default:
-                Log.Write("sale", $"dropped {e.GetType().Name} for other sale {e.SaleId}");
+                Log.Write("sale", "dropped {Event} for other sale {SaleId}", ("Event", e.GetType().Name), ("SaleId", e.SaleId));
                 break;
         }
     }
@@ -313,19 +316,19 @@ public sealed class Simulation : IDisposable
         {
             case PumpMessage.Arm arm:
                 var (ok, reason, armed) = Pump.Arm(arm.SaleId, arm.Token, arm.Grade);
-                if (ok) { Log.Write("pump", $"armed {armed!.Ceiling} max {armed.MaxVolume} ({armed.ClampNote})"); _saleBox.Post(new SaleEvent.PumpArmed(arm.SaleId, armed.Ceiling, armed.MaxVolume)); }
-                else { Log.Write("pump", $"REFUSED arm for {arm.SaleId}: {reason}"); _saleBox.Post(new SaleEvent.PumpRefused(arm.SaleId, reason)); }
+                if (ok) { Log.Write("pump", "armed {Ceiling} max {MaxVolume} ({ClampNote})", ("Ceiling", armed!.Ceiling), ("MaxVolume", armed.MaxVolume), ("ClampNote", armed.ClampNote)); _saleBox.Post(new SaleEvent.PumpArmed(arm.SaleId, armed.Ceiling, armed.MaxVolume)); }
+                else { Log.Warn("pump", "REFUSED arm for {SaleId}: {Reason}", ("SaleId", arm.SaleId), ("Reason", reason)); _saleBox.Post(new SaleEvent.PumpRefused(arm.SaleId, reason)); }
                 break;
 
             case PumpMessage.SelectGrade sg:
                 var (gradeOk, gradeWhy) = Pump.SelectGrade(sg.Grade);
                 if (gradeOk) _saleBox.Post(new SaleEvent.GradeSelected(saleId, sg.Grade));
-                else Log.Write("pump", $"grade {sg.Grade} refused: {gradeWhy}");
+                else Log.Write("pump", "grade {Grade} refused: {Reason}", ("Grade", sg.Grade), ("Reason", gradeWhy));
                 break;
 
             case PumpMessage.Lift:
                 if (Pump.LiftNozzle()) _saleBox.Post(new SaleEvent.NozzleLifted(saleId));
-                else Log.Write("pump", $"nozzle lifted while {Pump.Phase}, nothing happens");
+                else Log.Write("pump", "nozzle lifted while {Phase}, nothing happens", ("Phase", Pump.Phase));
                 break;
 
             case PumpMessage.Seat:
@@ -340,7 +343,7 @@ public sealed class Simulation : IDisposable
 
             case PumpMessage.Squeeze:
                 var (flowOk, flowWhy, firstPour) = Pump.SqueezeTrigger();
-                if (!flowOk) Log.Write("pump", $"trigger ignored: {flowWhy}");
+                if (!flowOk) Log.Write("pump", "trigger ignored: {Reason}", ("Reason", flowWhy));
                 else _saleBox.Post(firstPour ? new SaleEvent.FlowStarted(saleId) : new SaleEvent.FlowResumed(saleId));
                 break;
 
@@ -361,11 +364,11 @@ public sealed class Simulation : IDisposable
 
             case PumpMessage.Stop stop:
                 Pump.Disarm();
-                Log.Write("pump", $"disarmed: {stop.Reason}");
+                Log.Write("pump", "disarmed: {Reason}", ("Reason", stop.Reason));
                 break;
 
             case PumpMessage.SpoofPulses sp:
-                Log.Write("attack", $"spoofing {sp.Pulses} pulses");
+                Log.Warn("attack", "spoofing {Pulses} pulses", ("Pulses", sp.Pulses));
                 Meter.InjectPulses(sp.Pulses);
                 break;
 
@@ -374,7 +377,7 @@ public sealed class Simulation : IDisposable
                 var t = Pump.Tick(tick.Dt);
                 if (t.Fault is not null && before != PumpPhase.Faulted)
                 {
-                    Log.Write("pump", $"FAULT {t.Fault}");
+                    Log.Error("pump", "FAULT {Fault}", ("Fault", t.Fault));
                     _saleBox.Post(new SaleEvent.Fault(saleId, t.Fault));
                 }
                 else if (t.CeilingReached)
@@ -417,11 +420,11 @@ public sealed class Simulation : IDisposable
             switch (m)
             {
                 case PaymentMessage.PreAuthorize pa:
-                    Log.Write("payment", $"pre-auth {pa.Hold} on {pa.Card.Last4}");
+                    Log.Write("payment", "pre-auth {Hold} on {Last4}", ("Hold", pa.Hold), ("Last4", pa.Card.Last4));
                     var result = await Gateway.PreAuthorizeAsync(pa.SaleId, pa.Card, pa.Hold, _cts.Token);
-                    if (result.Approved) { Log.Write("payment", $"{result.ReasonCode} ceiling {result.Ceiling}"); _saleBox.Post(new SaleEvent.Approved(pa.SaleId, result.Ceiling, result.Token!)); }
-                    else if (result.NetworkFailure) { Log.Write("payment", $"network: {result.Message}"); _saleBox.Post(new SaleEvent.AuthorizationTimedOut(pa.SaleId)); }
-                    else { Log.Write("payment", $"declined {result.ReasonCode}: {result.Message}"); _saleBox.Post(new SaleEvent.Declined(pa.SaleId, result.ReasonCode, result.Message)); }
+                    if (result.Approved) { Log.Write("payment", "{ReasonCode} ceiling {Ceiling}", ("ReasonCode", result.ReasonCode), ("Ceiling", result.Ceiling)); _saleBox.Post(new SaleEvent.Approved(pa.SaleId, result.Ceiling, result.Token!)); }
+                    else if (result.NetworkFailure) { Log.Warn("payment", "network: {Message}", ("Message", result.Message)); _saleBox.Post(new SaleEvent.AuthorizationTimedOut(pa.SaleId)); }
+                    else { Log.Write("payment", "declined {ReasonCode}: {Message}", ("ReasonCode", result.ReasonCode), ("Message", result.Message)); _saleBox.Post(new SaleEvent.Declined(pa.SaleId, result.ReasonCode, result.Message)); }
                     break;
 
                 case PaymentMessage.Complete cp:
@@ -438,9 +441,9 @@ public sealed class Simulation : IDisposable
                     break;
 
                 case PaymentMessage.DrainPending:
-                    Log.Write("payment", $"draining {Gateway.Pending.Count} queued advice(s)");
+                    Log.Write("payment", "draining {Queued} queued advice(s)", ("Queued", Gateway.Pending.Count));
                     var sent = await Gateway.DrainPendingAsync(_cts.Token);
-                    Log.Write("payment", $"drained {sent.Count} queued advice(s), {Gateway.Pending.Count} left");
+                    Log.Write("payment", "drained {Sent} queued advice(s), {Left} left", ("Sent", sent.Count), ("Left", Gateway.Pending.Count));
                     // Tell the sale where its money landed. The machine updates Hold; an orphan is logged.
                     foreach (var advice in sent)
                         _saleBox.Post(advice.Kind == PendingKind.Reversal
@@ -449,10 +452,10 @@ public sealed class Simulation : IDisposable
                     break;
             }
         }
-        catch (OperationCanceledException) { Log.Write("payment", $"cancelled while handling {m.GetType().Name}"); }
+        catch (OperationCanceledException) { Log.Write("payment", "cancelled while handling {Message}", ("Message", m.GetType().Name)); }
         catch (Exception ex)
         {
-            Log.Write("payment", $"ERROR {ex.GetType().Name}: {ex.Message}");
+            Log.Error("payment", "ERROR {Type}: {Message}", ("Type", ex.GetType().Name), ("Message", ex.Message));
         }
         finally
         {
@@ -480,5 +483,6 @@ public sealed class Simulation : IDisposable
         // The strategy owns the workers, mailboxes, and tickers. One Dispose, in reverse creation order.
         _dispatch.Dispose();
         _cts.Dispose();
+        if (_ownsLog && Log is IDisposable d) d.Dispose();
     }
 }

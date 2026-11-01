@@ -16,12 +16,12 @@ const clear = () => log.splice(0)
 <template>
   <div>
     <div class="controls" style="margin-bottom: 8px">
-      <h2 style="margin: 0; flex: 1">Event log <span class="muted">({{ shown.length }})</span></h2>
+      <h2 style="margin: 0; flex: 1">Event log <span class="muted">({{ shown.length }}, Herald.OSS, hover a line for its properties)</span></h2>
       <input v-model="filter" placeholder="filter: sale, pump, payment, attack, text" style="width: 260px" />
       <button @click="clear">Clear</button>
     </div>
     <div class="list">
-      <div v-for="(l, i) in shown" :key="shown.length - i" class="line cols">
+      <div v-for="(l, i) in shown" :key="shown.length - i" class="line cols" :class="'sev-' + l.severity" :title="Object.entries(l.props ?? {}).map(([k, v]) => k + ' = ' + v).join('\n')">
         <span class="muted">{{ time(l.at) }}</span>
         <span class="src" :class="l.source">{{ l.source }}</span>
         <span>{{ l.message }}</span>

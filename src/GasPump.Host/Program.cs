@@ -23,7 +23,12 @@ IDispatchStrategy dispatch = strategyName switch
     "channel" => new ChannelDispatch(clock),
     _ => new ThreadedDispatch(clock),
 };
-var sim = new Simulation(dispatch, clock, SimulationOptions.Default with { HoldAmount = Money.FromDollars(30) });
+// The simulator's log runs on Herald.OSS. The bridge back to the UI is built in; the host adds a file and the console.
+var logDir = Path.Combine(AppContext.BaseDirectory, "logs");
+Directory.CreateDirectory(logDir);
+var heraldLogPath = Path.Combine(logDir, "gaspump.log");
+var log = new HeraldEventLog(clock, b => b.WithFileSink(heraldLogPath).WithConsoleSink());
+var sim = new Simulation(dispatch, clock, SimulationOptions.Default with { HoldAmount = Money.FromDollars(30) }, log: log);
 var hub = new EventHub(sim);
 builder.Services.AddSingleton(sim);
 builder.Services.AddSingleton(hub);
@@ -87,8 +92,8 @@ app.Map("/ws", async (HttpContext ctx) =>
     await hub.ServeAsync(socket, json, ctx.RequestAborted);
 });
 
-app.Lifetime.ApplicationStopping.Register(() => sim.Dispose());
-sim.Log.Write("host", $"listening on http://localhost:5177 with {sim.StrategyName} dispatch");
+app.Lifetime.ApplicationStopping.Register(() => { sim.Dispose(); log.Dispose(); });
+sim.Log.Write("host", "listening on {Url} with {Dispatch} dispatch, Herald.OSS log at {LogPath}", ("Url", "http://localhost:5177"), ("Dispatch", sim.StrategyName), ("LogPath", heraldLogPath));
 app.Run();
 
 record CardRequest(string Name, Grade? Grade);

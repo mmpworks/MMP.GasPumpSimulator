@@ -40,6 +40,7 @@ select, input[type=number] { background: #0f1115; color: var(--text); border: 1p
 .list .line { white-space: pre-wrap; border-bottom: 1px solid #1a1f29; padding: 2px 0; }
 .list .line.cols { display: grid; grid-template-columns: 100px 72px 1fr; column-gap: 14px; align-items: baseline; }
 .log .list { max-height: 34vh; }
+.line.sev-Warn { color: var(--warn); } .line.sev-Error { color: var(--bad); }
 .ledger .list { max-height: 260px; }
 .src { color: var(--muted); display: inline-block; width: 72px; }
 input[type=text], input:not([type]) { background: #0f1115; color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px; font-size: 13px; }

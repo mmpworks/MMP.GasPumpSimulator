@@ -27,7 +27,7 @@ export interface State {
   prices: Record<string, string>
   ledgerOk: boolean
 }
-export interface LogLine { at: string; source: string; message: string }
+export interface LogLine { at: string; source: string; message: string; severity: 'Info' | 'Warn' | 'Error'; props: Record<string, string | null> }
 export interface LedgerEntry { seq: number; at: string; kind: string; detail: string; hash: string; prev: string }
 export interface Card { name: string; last4: string; kind: string; expiry: string }
 

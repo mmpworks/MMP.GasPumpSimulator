@@ -8,4 +8,8 @@
     <ProjectReference Include="..\GasPump.Security\GasPump.Security.csproj" />
     <ProjectReference Include="..\GasPump.Pump\GasPump.Pump.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <!-- The simulator's log runs on Herald.OSS. See HeraldEventLog.cs. -->
+    <PackageReference Include="Herald.OSS" Version="0.14.0" />
+  </ItemGroup>
 </Project>
