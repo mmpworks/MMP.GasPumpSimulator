@@ -47,6 +47,7 @@ public static class RecoveryPlan
         var state = Enum.Parse<SaleState>(s.State);
         var tender = Enum.Parse<Tender>(s.Tender);
         var grade = Enum.Parse<Grade>(s.Grade);
+        var hold = Enum.TryParse<HoldStatus>(s.Hold, out var h) ? h : HoldStatus.None;
         var volume = new Volume(s.VolumeMilliGallons);
         var money = new Money(s.MoneyCents);
         var age = now - snapshot.SavedAt;
@@ -72,6 +73,16 @@ public static class RecoveryPlan
             case SaleState.Completing:
                 return new(RecoveryKind.CompletionResent, snapshot.RunId, s.SaleId, tender, grade, volume, money, Volume.Zero, age,
                     $"{how} while settling {money}; completion sent again");
+            // The sale had ended but the bank still held the money: the compensation never left. Finish it.
+            case SaleState.Faulted or SaleState.Cancelled or SaleState.Declined when hold is HoldStatus.Requested or HoldStatus.Held && volume > Volume.Zero:
+                return new(RecoveryKind.CompletionResent, snapshot.RunId, s.SaleId, tender, grade, volume, money, Volume.Zero, age,
+                    $"{how} after the sale ended {state} with {money} still held for {volume} delivered; completion sent");
+            case SaleState.Faulted or SaleState.Cancelled or SaleState.Declined when hold is HoldStatus.Requested or HoldStatus.Held:
+                return new(RecoveryKind.Reversed, snapshot.RunId, s.SaleId, tender, grade, Volume.Zero, Money.Zero, Volume.Zero, age,
+                    $"{how} after the sale ended {state} with the hold still at the bank and no fuel delivered; {(tender == Tender.Cash ? "cash refunded" : "hold reversed")}");
+            case SaleState.Faulted or SaleState.Cancelled or SaleState.Declined or SaleState.StoreAndForward when hold is HoldStatus.SettlePending or HoldStatus.ReleasePending:
+                return new(RecoveryKind.CleanStart, snapshot.RunId, null, tender, grade, Volume.Zero, Money.Zero, Volume.Zero, age,
+                    $"previous run ended in {state} with advice queued for the bank; the queue drains on this run");
             default:
                 return new(RecoveryKind.CleanStart, snapshot.RunId, null, tender, grade, Volume.Zero, Money.Zero, Volume.Zero, age,
                     $"previous run ended in {state}; nothing to close");

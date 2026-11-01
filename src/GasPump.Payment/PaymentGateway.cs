@@ -65,10 +65,30 @@ public sealed class PaymentGateway
     public SiteLimits Site { get; }
     public CashDrawer Drawer { get; }
 
-    /// <summary>Everything still owed to the bank, oldest first. Reversals and completions share one queue so order is kept.</summary>
+    /// <summary>
+    /// Everything still owed to the bank, oldest first. Reversals and
+    /// completions share one queue so order is kept. An advice is written here
+    /// BEFORE its first attempt on the wire and removed only when the bank has
+    /// it, so the queue is the saga's compensation log: a crash at any point
+    /// between the decision and the bank's answer leaves the intent on disk
+    /// for the next start to finish.
+    /// </summary>
     public IReadOnlyList<PendingAdvice> Pending
     {
         get { lock (_gate) return _pending.ToArray(); }
+    }
+
+    /// <summary>Raised after every change to <see cref="Pending"/>. The station journals on it, so the intent reaches disk before the wire.</summary>
+    public event Action? PendingChanged;
+
+    /// <summary>
+    /// Record what the bank is owed before anything is sent. Idempotent per
+    /// sale and kind. Cash owes the bank nothing and is settled at the till.
+    /// </summary>
+    public void Intend(PendingAdvice advice)
+    {
+        if (TenderOf(advice.SaleId) == Tender.Cash) return;
+        if (Enqueue(advice)) PendingChanged?.Invoke();
     }
 
     public IReadOnlyList<(string SaleId, Money Final)> PendingCompletions =>
@@ -147,11 +167,13 @@ public sealed class PaymentGateway
             var change = Drawer.Settle(saleId, final);
             return new CompletionResult(true, false, change > Money.Zero ? $"cash sale {final}, change due {change}" : $"cash sale {final}, paid in full", change);
         }
-        await DrainPendingAsync(ct);
-        var result = await _network.SendAsync(() => { _issuer.Complete(saleId, final); return true; }, _options.HostTimeout, ct);
-        if (result.Delivered) return new CompletionResult(true, false, $"completion {final} sent");
-        Enqueue(new PendingAdvice(saleId, PendingKind.Completion, final));
-        return new CompletionResult(false, true, $"host {result.Outcome}, completion {final} queued");
+        // Intent first, then one send path for everything owed, oldest first. If an older advice fails, this one waits behind it.
+        var advice = new PendingAdvice(saleId, PendingKind.Completion, final);
+        Intend(advice);
+        var sent = await DrainPendingAsync(ct);
+        return sent.Contains(advice)
+            ? new CompletionResult(true, false, $"completion {final} sent")
+            : new CompletionResult(false, true, $"host {LastOutcome}, completion {final} queued");
     }
 
     /// <summary>
@@ -166,11 +188,17 @@ public sealed class PaymentGateway
             var refund = Drawer.Refund(saleId);
             return new ReversalResult(true, false, $"cash refund {refund} at the cashier", refund);
         }
-        var result = await _network.SendAsync(() => { _issuer.Reverse(saleId); return true; }, _options.HostTimeout, ct);
-        if (result.Delivered) return new ReversalResult(true, false, "hold reversed");
-        Enqueue(new PendingAdvice(saleId, PendingKind.Reversal, Money.Zero));
-        return new ReversalResult(false, true, $"host {result.Outcome}, reversal queued");
+        var advice = new PendingAdvice(saleId, PendingKind.Reversal, Money.Zero);
+        Intend(advice);
+        var sent = await DrainPendingAsync(ct);
+        return sent.Contains(advice)
+            ? new ReversalResult(true, false, "hold reversed")
+            : new ReversalResult(false, true, $"host {LastOutcome}, reversal queued");
     }
+
+    /// <summary>The outcome of the last attempt on the wire, for the message a queued advice carries.</summary>
+    private NetworkOutcome LastOutcome { get { lock (_gate) return _lastOutcome; } }
+    private NetworkOutcome _lastOutcome = NetworkOutcome.Delivered;
 
     /// <summary>Try every queued advice, oldest first. Stop at the first failure and keep the rest. Returns what was delivered.</summary>
     public async Task<IReadOnlyList<PendingAdvice>> DrainPendingAsync(CancellationToken ct)
@@ -187,19 +215,22 @@ public sealed class PaymentGateway
             var result = next.Kind == PendingKind.Completion
                 ? await _network.SendAsync(() => { _issuer.Complete(next.SaleId, next.Final); return true; }, _options.HostTimeout, ct)
                 : await _network.SendAsync(() => { _issuer.Reverse(next.SaleId); return true; }, _options.HostTimeout, ct);
+            lock (_gate) _lastOutcome = result.Outcome;
             if (!result.Delivered) return sent;
             lock (_gate) _pending.Remove(next);
             sent.Add(next);
+            PendingChanged?.Invoke();
         }
     }
 
-    private void Enqueue(PendingAdvice advice)
+    /// <summary>One advice per sale and kind. A retry that fails again must never double the queue. Returns true when it was new.</summary>
+    private bool Enqueue(PendingAdvice advice)
     {
         lock (_gate)
         {
-            // One advice per sale and kind. A retry that fails again must never double the queue.
-            if (_pending.Any(p => p.SaleId == advice.SaleId && p.Kind == advice.Kind)) return;
+            if (_pending.Any(p => p.SaleId == advice.SaleId && p.Kind == advice.Kind)) return false;
             _pending.Add(advice);
+            return true;
         }
     }
 

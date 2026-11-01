@@ -318,14 +318,77 @@ public class RecoveryTests : IDisposable
         h2.AdvanceUntilState(SaleState.ReadyToPump, TimeSpan.FromSeconds(5));
     }
 
+    [Theory]
+    [MemberData(nameof(SimHarness.Strategies), MemberType = typeof(SimHarness))]
+    public void A_crash_between_a_pre_pour_fault_and_its_reversal_leaves_no_hold_after_the_restart(string strategy)
+    {
+        var card = TestCards.Get("Good");
+        Money before;
+        string saleId;
+        using (var h = new SimHarness(strategy, Options("RUN-1")))
+        {
+            before = h.Sim.Issuer.AvailableBalance(card.Pan);
+            saleId = h.Sim.PresentCard("Good");
+            h.AdvanceUntilState(SaleState.ReadyToPump, TimeSpan.FromSeconds(5));
+            h.Sim.Network.Latency = TimeSpan.FromSeconds(2);      // the reversal will sit on the wire
+            h.Sim.TankRunsDry();
+            h.AdvanceUntilState(SaleState.Faulted, TimeSpan.FromSeconds(1));
+            Assert.Equal([saleId], h.Sim.Issuer.OpenHolds);        // still held: the bank has not answered
+            h.Sim.SimulatePowerLoss();                               // the crash, in the window Iolo named
+        }
+
+        var snapshot = StateJournal.Load(Path.Combine(_dir, "state.json"))!;
+        Assert.Contains(snapshot.Pending, p => p.SaleId == saleId && p.Kind == "Reversal");   // the intent reached disk first
+
+        using var h2 = new SimHarness(strategy, Options("RUN-2"));
+        h2.Advance(TimeSpan.FromSeconds(3));
+        Assert.Empty(h2.Sim.Issuer.OpenHolds);
+        Assert.Equal(before, h2.Sim.Issuer.AvailableBalance(card.Pan));
+        Assert.Empty(h2.Sim.Gateway.Pending);
+    }
+
+    [Theory]
+    [MemberData(nameof(SimHarness.Strategies), MemberType = typeof(SimHarness))]
+    public void A_crash_right_after_a_second_card_superseded_the_first_leaves_neither_hold(string strategy)
+    {
+        var good = TestCards.Get("Good");
+        var debit = TestCards.Get("DebitGoodPin");
+        Money goodBefore, debitBefore;
+        using (var h = new SimHarness(strategy, Options("RUN-1")))
+        {
+            goodBefore = h.Sim.Issuer.AvailableBalance(good.Pan);
+            debitBefore = h.Sim.Issuer.AvailableBalance(debit.Pan);
+            h.Sim.PresentCard("Good");
+            h.AdvanceUntilState(SaleState.ReadyToPump, TimeSpan.FromSeconds(5));
+            h.Sim.Network.Latency = TimeSpan.FromSeconds(2);
+            Assert.True(h.Sim.TryPresentCard("DebitGoodPin", tender: Tender.Debit).Ok);   // first reversed on the wire, second authorizing on the wire
+            h.Advance(TimeSpan.FromMilliseconds(200));
+            h.Sim.SimulatePowerLoss();
+        }
+
+        using var h2 = new SimHarness(strategy, Options("RUN-2"));
+        h2.Advance(TimeSpan.FromSeconds(5));
+        Assert.Empty(h2.Sim.Issuer.OpenHolds);
+        Assert.Equal(goodBefore, h2.Sim.Issuer.AvailableBalance(good.Pan));
+        Assert.Equal(debitBefore, h2.Sim.Issuer.AvailableBalance(debit.Pan));
+        Assert.Empty(h2.Sim.Gateway.Pending);
+    }
+
     [Fact]
     public void Recovery_plan_table()
     {
         var now = SimHarness.Start.AddSeconds(3);
-        static JournalSnapshot Snap(string state, long volume, long money, long flow, string tender = "Credit") => new(
+        static JournalSnapshot Snap(string state, long volume, long money, long flow, string tender = "Credit", string hold = "Held") => new(
             1, SimHarness.Start, "RUN-0", "PUMP-07", 3,
-            new JournalSale("S0003", state, tender, "Regular", true, "Good", 3000, volume, money, flow, "Held", tender == "Cash" ? 2000 : 0),
+            new JournalSale("S0003", state, tender, "Regular", true, "Good", 3000, volume, money, flow, hold, tender == "Cash" ? 2000 : 0),
             "Dispensing", "Regular", [], new() { ["S0003"] = tender }, new(), new(), 3000, 5000, 0, null, 0, [], new([], [], []));
+
+        // A sale that ended with the bank still holding the money: the compensation is finished on the restart.
+        Assert.Equal(RecoveryKind.Reversed, RecoveryPlan.Build(Snap("Faulted", 0, 0, 0), now, TimeSpan.FromSeconds(1)).Kind);
+        Assert.Equal(RecoveryKind.Reversed, RecoveryPlan.Build(Snap("Cancelled", 0, 0, 0, hold: "Requested"), now, TimeSpan.FromSeconds(1)).Kind);
+        Assert.Equal(RecoveryKind.CompletionResent, RecoveryPlan.Build(Snap("Faulted", 1_500, 525, 0), now, TimeSpan.FromSeconds(1)).Kind);
+        Assert.Equal(RecoveryKind.CleanStart, RecoveryPlan.Build(Snap("Faulted", 0, 0, 0, hold: "Released"), now, TimeSpan.FromSeconds(1)).Kind);
+        Assert.Equal(RecoveryKind.CleanStart, RecoveryPlan.Build(Snap("StoreAndForward", 1_500, 525, 0, hold: "SettlePending"), now, TimeSpan.FromSeconds(1)).Kind);
 
         Assert.Equal(RecoveryKind.CleanStart, RecoveryPlan.Build(null, now, TimeSpan.FromSeconds(1)).Kind);
         Assert.Equal(RecoveryKind.CleanStart, RecoveryPlan.Build(Snap("Idle", 0, 0, 0), now, TimeSpan.FromSeconds(1)).Kind);

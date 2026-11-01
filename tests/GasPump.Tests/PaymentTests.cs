@@ -153,6 +153,43 @@ public class PaymentTests
     }
 
     [Fact]
+    public async Task A_reversal_is_in_the_compensation_log_before_the_wire_answers_and_gone_once_it_has()
+    {
+        var (gw, net, clock, issuer) = Gateway();
+        var card = TestCards.Get("Good");
+        var before = issuer.AvailableBalance(card.Pan);
+        var pre = gw.PreAuthorizeAsync("S1", card, Tender.Credit, CancellationToken.None);
+        clock.Advance(TimeSpan.FromMilliseconds(250));
+        await pre;
+
+        var changes = 0;
+        gw.PendingChanged += () => changes++;
+        net.Latency = TimeSpan.FromSeconds(2);
+        var reverse = gw.ReverseAsync("S1", CancellationToken.None);
+        Assert.False(reverse.IsCompleted);
+        // The bank has not answered. The intent is already on the log, which is what a crash here would find.
+        Assert.Single(gw.PendingReversals);
+        Assert.Equal(1, changes);
+        Assert.Equal(before - Hold, issuer.AvailableBalance(card.Pan));
+
+        clock.Advance(TimeSpan.FromSeconds(2));
+        var r = await reverse;
+        Assert.True(r.Sent);
+        Assert.Empty(gw.Pending);
+        Assert.Equal(2, changes);
+        Assert.Equal(before, issuer.AvailableBalance(card.Pan));
+
+        // Intending the same advice twice, or for a cash sale, changes nothing.
+        gw.Intend(new PendingAdvice("S1", PendingKind.Reversal, Money.Zero));
+        gw.Intend(new PendingAdvice("S1", PendingKind.Reversal, Money.Zero));
+        Assert.Single(gw.Pending);
+        Assert.Equal(3, changes);
+        gw.CashAuthorize("C1", Money.FromDollars(10));
+        gw.Intend(new PendingAdvice("C1", PendingKind.Reversal, Money.Zero));
+        Assert.Single(gw.Pending);
+    }
+
+    [Fact]
     public async Task Reversal_that_cannot_reach_the_host_is_queued_once_and_drains_before_completions()
     {
         var (gw, net, clock, issuer) = Gateway();

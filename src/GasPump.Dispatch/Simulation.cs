@@ -110,6 +110,8 @@ public sealed class Simulation : IDisposable
         Site = new SiteLimits(clock, _options.HoldAmount, _options.DebitHold, _options.AdminPin);
         Drawer = new CashDrawer();
         Gateway = new PaymentGateway(Issuer, _networkSim, Signer, clock, _options.PumpId, _options.Gateway, Site, Drawer);
+        // The compensation log reaches disk the moment it changes, so an intent is journaled before the wire is tried.
+        Gateway.PendingChanged += () => SaveJournal();
         // Every admin attempt, good or bad, goes in the ledger. The back office is part of the audit trail.
         Site.Changed += (kind, detail) =>
         {
@@ -791,10 +793,14 @@ public sealed class Simulation : IDisposable
             case SaleCommand.CloseValve cv:
                 _link.Post(new PumpMessage.Close(cv.SaleId, "sale closed"), cv.SaleId);
                 break;
+            // Money owed to the bank is written to the compensation log here, on the deciding thread, before the
+            // payment worker ever sees the message. A crash between this line and the bank's answer is recoverable.
             case SaleCommand.SendCompletion sc:
+                Gateway.Intend(new PendingAdvice(sc.SaleId, PendingKind.Completion, sc.Final));
                 _paymentBox.Post(new PaymentMessage.Complete(sc.SaleId, sc.Final));
                 break;
             case SaleCommand.Reverse rv:
+                Gateway.Intend(new PendingAdvice(rv.SaleId, PendingKind.Reversal, Money.Zero));
                 _paymentBox.Post(new PaymentMessage.Reverse(rv.SaleId));
                 break;
             case SaleCommand.ArmTimer at:

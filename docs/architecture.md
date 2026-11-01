@@ -316,6 +316,10 @@ A fault that needs a repair is a service condition. The condition holds the pump
 
 The sale machine never reads a pump object and the pump never reads a sale. Which codes need a repair, and which repair, is one column on the diagnostic table: `DiagnosticCode.ClearedBy`. `docs/diagnostics.md` states the rule.
 
+## The compensation log
+
+Every step toward "fuel for money" has a step back: a hold is reversed, a completion is sent. The gateway's pending queue is where those steps wait for the bank, and since decision 55 it is write-ahead. The sale worker records the intent on its own thread, in `Simulation.Execute`, before it posts the message to the payment worker; the station journals the queue the moment it changes; the payment worker's only job is to drain the queue, oldest first, and remove each advice when the bank has it. A crash anywhere in between leaves the intent on disk, and the next start drains it. The issuer's complete and reverse are idempotent, so a repeated advice is free.
+
 ## Two files: debug log and custody file
 
 | | Herald.OSS NDJSON | TesseraSeal custody file |
