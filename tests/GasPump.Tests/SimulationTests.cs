@@ -111,6 +111,10 @@ public class SimulationTests
     [InlineData("channel", "Stolen", "LostOrStolen")]
     [InlineData("channel", "InsufficientFunds", "InsufficientFunds")]
     [InlineData("channel", "DebitBadPin", "InvalidPin")]
+    [InlineData("asyncproxy", "Expired", "Expired")]
+    [InlineData("asyncproxy", "Stolen", "LostOrStolen")]
+    [InlineData("asyncproxy", "InsufficientFunds", "InsufficientFunds")]
+    [InlineData("asyncproxy", "DebitBadPin", "InvalidPin")]
     public void Declined_cards_end_declined_with_the_reason(string strategy, string card, string reason)
     {
         using var h = new SimHarness(strategy);

@@ -14,16 +14,18 @@ A pay-at-the-pump fuel dispenser, simulated. Present a card, get a two-phase aut
 6. **Tender.** Credit, debit, or cash. Credit asks the bank for the site's credit ceiling. Debit asks for the site's debit ceiling and the pump gets the lesser of that and the bank's answer, so a $50 debit ceiling against a $900 balance holds $50 and against $18.50 holds $18.50. Cash goes to the cashier, and the cash amount is the ceiling to the cent: no bank, no hold, change or a refund at the till.
 7. **Administrator.** A back-office panel sets the credit and debit ceilings behind an admin PIN. Three wrong PINs lock it for five minutes. Every attempt is in the ledger. Raise the debit ceiling to $5000 and the bank will approve what the card has, and the pump will still clamp it to its own $500 hard limit, because the site's ceilings are business limits and the pump's are safety limits.
 8. **Logging on Herald.OSS.** Every worker writes structured events through [Herald.OSS](https://github.com/mmpworks/Herald.OSS) 0.14.0. A bridge sink feeds the UI stream and the tests; the host adds a console sink and an NDJSON file per session so a run can be reviewed later with every property intact.
-9. **Concurrency.** Three workers, sale, pump, and payment, pass messages through bounded mailboxes and share no state. How they run is a Strategy: `ThreadedDispatch` is a thread per worker with blocking queues. `ChannelDispatch` is a Task per worker over bounded channels. The third slot is for MMP.AsyncProxy state machines. One end-to-end test runs the same sale under every strategy.
+9. **Concurrency.** Three workers, sale, pump, and payment, pass messages through bounded mailboxes and share no state. How they run is a Strategy: `ThreadedDispatch` is a thread per worker with blocking queues. `ChannelDispatch` is a Task per worker over bounded channels. `AsyncProxyDispatch` is the 2008 machine without the 2008 threads: each worker is an iterator-driven state machine from [MMP.AsyncProxy](https://github.com/mmpworks/MMP.AsyncProxy), its loop yields a future for the next message, and the loop resumes on a pool thread when one is posted. Every piece of it would compile for .NET 3.5. One end-to-end test runs the same sale under all three.
 
 ## Run it
 
 ```
-dotnet test                       # 126 tests, about 17 s, on a fake clock
+dotnet test                       # 149 tests, about 27 s, on a fake clock, every end-to-end theory under three dispatch strategies
 cd app && npm install && npm run build && npx electron .
 ```
 
-The Electron app starts the host for you on `localhost:5177`. Set `GASPUMP_STRATEGY=channel` to run the Task and Channel dispatch instead of threads. Set `GASPUMP_HOST=external` if you started the host yourself with `dotnet run --project src/GasPump.Host -- --strategy channel`.
+The Electron app starts the host for you on `localhost:5177`. Set `GASPUMP_STRATEGY=channel` or `GASPUMP_STRATEGY=asyncproxy` to run the Task-and-Channel or the AsyncProxy dispatch instead of threads. Set `GASPUMP_HOST=external` if you started the host yourself with `dotnet run --project src/GasPump.Host -- --strategy asyncproxy`.
+
+MMP.AsyncProxy is a sibling checkout, referenced by project from `..\MMP.AsyncProxy` until the package publishes. Point elsewhere with `-p:AsyncProxyProjectPath=<path to MMP.AsyncProxy.csproj>`.
 
 ### The log file
 
@@ -101,7 +103,7 @@ src/GasPump.Core       units, pricing, the sale state machine (a table, no I/O)
 src/GasPump.Payment    cards, issuer, network, gateway, signed token, site limits (admin), cash drawer
 src/GasPump.Security   hard limits, verifier, nonce store, pump authority, ledger, totalizer
 src/GasPump.Pump       hydraulics, meter, taper policy, pump controller
-src/GasPump.Dispatch   IDispatchStrategy, ThreadedDispatch, ChannelDispatch, Simulation, HeraldEventLog (Herald.OSS)
+src/GasPump.Dispatch   IDispatchStrategy, ThreadedDispatch, ChannelDispatch, AsyncProxyDispatch, Simulation, HeraldEventLog (Herald.OSS)
 src/GasPump.Host       minimal API + WebSocket hub
 app/                   Electron + Vite + Vue 3 + TypeScript
 tests/GasPump.Tests    xunit on a FakeTimeProvider

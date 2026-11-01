@@ -123,9 +123,9 @@ classDiagram
         payment worker continues on a callback
     }
     class AsyncProxyDispatch {
-        <<planned>>
-        iterator state machine per worker
-        promise per message
+        iterator state machine per worker (MMP.AsyncProxy)
+        promise-backed bounded mailbox
+        loop resumes on the pool when a message lands
     }
     IDispatchStrategy <|.. ThreadedDispatch
     IDispatchStrategy <|.. ChannelDispatch
@@ -139,7 +139,25 @@ Three rules every strategy keeps, from `IDispatchStrategy.cs`:
 2. Timers post messages. They never run code.
 3. Workers share no state. They pass messages.
 
-`PrefersBlockingIo` is the one place the strategies differ above the seam. The threaded strategy has a thread to spare, so the payment worker blocks on the host call, which is how a 2008 terminal did it. The channel strategy has no thread to spare, so the call continues on a callback and the result comes back as an event.
+`PrefersBlockingIo` is the one place the strategies differ above the seam. The threaded strategy has a thread to spare, so the payment worker blocks on the host call, which is how a 2008 terminal did it. The channel and AsyncProxy strategies have no thread to spare, so the call continues on a callback and the result comes back as an event.
+
+Under the threaded strategy that blocking shows up as head-of-line blocking: while the payment worker sits on a late bank call, the next sale's authorization waits behind it. The test `Late_approval_for_a_sale_the_driver_already_replaced_is_still_reversed` gives that case a 60 s budget for that reason; the other two strategies answer at once.
+
+### How the AsyncProxy worker waits
+
+```
+worker loop (a C# iterator, run by AsyncProxy.Run):
+    next = mailbox.DequeueAsync()        a future: complete now if an item is queued, pending otherwise
+    yield return Observe(next)           the await
+    handle(next.Result)                  on a pool thread, one message at a time
+    repeat
+
+mailbox.Post(item):
+    a consumer is waiting  -> complete its promise with the item (continuations run on the pool)
+    otherwise              -> enqueue, or wait if the box is full
+```
+
+A worker with nothing to do holds no thread, as under the channel strategy. The difference is the vocabulary: `Promise<T>`, `IFuture<T>`, and an iterator where `yield return` is `await`, all of which compile for .NET 3.5. Time still comes from the `TimeProvider`, so the same fake clock drives all three strategies in the tests.
 
 ## The taper
 

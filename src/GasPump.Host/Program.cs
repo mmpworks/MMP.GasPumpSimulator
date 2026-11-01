@@ -15,12 +15,13 @@ builder.Services.ConfigureHttpJsonOptions(o =>
     o.SerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.CamelCase;
 });
 
-// --strategy threaded|channel. Threaded is the default so the "old way" is what you see first.
+// --strategy threaded|channel|asyncproxy. Threaded is the default so the "old way" is what you see first.
 var strategyName = args.SkipWhile(a => a != "--strategy").Skip(1).FirstOrDefault() ?? "threaded";
 var clock = TimeProvider.System;
 IDispatchStrategy dispatch = strategyName switch
 {
     "channel" => new ChannelDispatch(clock),
+    "asyncproxy" => new AsyncProxyDispatch(clock),
     _ => new ThreadedDispatch(clock),
 };
 // The simulator's log runs on Herald.OSS. The bridge back to the UI is built in; the host adds a file and the console.

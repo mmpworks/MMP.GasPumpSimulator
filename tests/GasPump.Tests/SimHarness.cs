@@ -23,6 +23,7 @@ public sealed class SimHarness : IDisposable
         {
             "threaded" => new ThreadedDispatch(Clock),
             "channel" => new ChannelDispatch(Clock),
+            "asyncproxy" => new AsyncProxyDispatch(Clock),
             _ => throw new ArgumentException(strategy),
         };
         Sim = new Simulation(dispatch, Clock, Options, issuer);
@@ -34,7 +35,7 @@ public sealed class SimHarness : IDisposable
     public SimulationOptions Options { get; }
     public List<SaleSnapshot> Snapshots { get; } = [];
 
-    public static IEnumerable<object[]> Strategies => [["threaded"], ["channel"]];
+    public static IEnumerable<object[]> Strategies => [["threaded"], ["channel"], ["asyncproxy"]];
 
     public SaleSnapshot State => Sim.Snapshot();
 
