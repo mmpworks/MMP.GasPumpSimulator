@@ -105,6 +105,7 @@ Build order:
 
 ## Open items
 
+0. **Durable store-and-forward (2026-11-01).** The pending completions and reversals live in memory in `PaymentGateway`. A host restart during an outage loses them, which is the one failure the simulator does not survive today. Real EPS journals them to disk before acknowledging the sale. Next slice: journal `PendingAdvice` and the open cash drawer to a file under the log directory, replay on start. The ledger has the same gap. Both are AIF journals before an irreversible action.
 1. **Harness quiet detection (2026-10-31).** The test harness advances a fake clock when the simulation is quiet. One run in roughly ten, under the channel strategy, a 250 ms network wait completed only at the end of a 1 s advance. Logged with counters; cause not found. A 1 ms real-time stability window on "quiet" made it 0 failures in 15 full runs. The window is a mitigation, and the cause is still open. Candidates: FakeTimeProvider timer creation racing an Advance on another thread, or a thread-pool continuation outrunning the counters. Revisit with a dedicated stress test.
 
 ## Prior art

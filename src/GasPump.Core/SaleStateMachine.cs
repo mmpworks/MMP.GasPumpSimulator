@@ -153,6 +153,13 @@ public sealed class SaleStateMachine
                 EndDetail = "the bank did not answer in time";
                 return Transition(SaleState.Declined, commands, "authorization timed out", reverse: true);
 
+            case (SaleState.Authorizing, SaleEvent.AuthorizationUnreachable u):
+                // The connection was refused. Nothing reached the bank, so there is no hold and nothing to reverse.
+                Hold = HoldStatus.None;
+                End = EndReason.BankDown;
+                EndDetail = u.Reason;
+                return Transition(SaleState.Declined, commands, $"bank link down: {u.Reason}, nothing sent");
+
             case (SaleState.ReadyToPump, SaleEvent.PumpArmed pa):
                 Ceiling = pa.Ceiling;
                 Phase = "armed";
@@ -285,7 +292,7 @@ public sealed class SaleStateMachine
                 commands.Add(new SaleCommand.Log(SaleId, $"late decline arrived in {State}, nothing held"));
                 return true;
 
-            case SaleEvent.AuthorizationTimedOut when State != SaleState.Authorizing:
+            case SaleEvent.AuthorizationTimedOut or SaleEvent.AuthorizationUnreachable when State != SaleState.Authorizing:
                 commands.Add(new SaleCommand.Log(SaleId, $"late network failure arrived in {State}, ignored"));
                 return true;
 
@@ -424,6 +431,7 @@ public sealed class SaleStateMachine
         {
             EndReason.CardDeclined => new("Card declined", Join(Sentence(EndDetail), holdLine, "Use a different card, or see the attendant."), DriverAction.UseAnotherCard),
             EndReason.BankSilent => new("Bank did not answer", Join("No fuel was dispensed.", holdLine, "Try again here, or use another pump."), DriverAction.TryAgain),
+            EndReason.BankDown => new("Bank link is down", "No fuel was dispensed. Nothing was sent to your bank and nothing was charged. Pay the cashier in cash, try again in a few minutes, or use another station.", DriverAction.TryAgain),
             EndReason.NoNozzleLift => new("Sale cancelled", Join("The nozzle was not lifted in time.", holdLine, "Start again when ready."), DriverAction.TryAgain),
             EndReason.DriverCancelled => new("Sale cancelled", Join(Sentence(EndDetail), holdLine, "Start again when ready."), DriverAction.TryAgain),
             EndReason.PumpFault => new("Pump out of service", Join(Sentence(EndDetail), holdLine, "Please use another pump."), DriverAction.UseAnotherPump),

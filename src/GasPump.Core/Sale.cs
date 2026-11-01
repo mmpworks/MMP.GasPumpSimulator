@@ -50,7 +50,10 @@ public enum EndReason
     None,
     Completed,
     CardDeclined,
+    /// <summary>The bank may have heard us and did not answer in time.</summary>
     BankSilent,
+    /// <summary>The link was down. The bank never heard us.</summary>
+    BankDown,
     DriverCancelled,
     NoNozzleLift,
     MaxFuelingTime,
@@ -92,7 +95,10 @@ public abstract record SaleEvent(string SaleId)
     public sealed record CardReadFailed(string SaleId, string Reason) : SaleEvent(SaleId);
     public sealed record Approved(string SaleId, Money Ceiling, string Token) : SaleEvent(SaleId);
     public sealed record Declined(string SaleId, string ReasonCode, string Message) : SaleEvent(SaleId);
+    /// <summary>The request left and nothing came back. The bank may have heard us, so the hold must be reversed to be sure.</summary>
     public sealed record AuthorizationTimedOut(string SaleId) : SaleEvent(SaleId);
+    /// <summary>The link refused the connection. The request never left, so no hold exists and nothing needs reversing.</summary>
+    public sealed record AuthorizationUnreachable(string SaleId, string Reason) : SaleEvent(SaleId);
     public sealed record PumpArmed(string SaleId, Money Ceiling, Volume MaxVolume) : SaleEvent(SaleId);
     public sealed record PumpRefused(string SaleId, string Reason) : SaleEvent(SaleId);
     public sealed record NozzleLifted(string SaleId) : SaleEvent(SaleId);

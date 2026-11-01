@@ -50,7 +50,7 @@ const holdText: Record<string, string> = {
   <v-card class="pane-card">
     <v-card-title>Dispenser</v-card-title>
     <v-card-text>
-      <v-alert v-if="sale" :type="noticeType" :title="sale.notice.headline" class="mb-3">
+      <v-alert v-if="sale" :type="noticeType" :title="sale.notice.headline" class="mb-3 notice">
         <div class="text-body-2">{{ sale.notice.detail }}</div>
         <div class="d-flex align-center ga-3 mt-2">
           <v-chip v-if="actionText[sale.notice.action]" :color="noticeType" variant="flat" size="small">{{ actionText[sale.notice.action] }}</v-chip>
@@ -72,6 +72,11 @@ const holdText: Record<string, string> = {
         <v-chip :color="holdColor">{{ sale?.tender?.toLowerCase() }}: {{ holdText[sale?.hold ?? 'None'] }}</v-chip>
         <v-chip :color="state?.pump.phase === 'Faulted' ? 'error' : undefined">pump {{ state?.pump.phase }}</v-chip>
         <v-chip v-if="state?.pump.armed?.clamped" color="error" variant="flat">CLAMPED: {{ state?.pump.armed?.clampNote }}</v-chip>
+        <!-- The pump needs the bank only at authorization and settlement. During a sale a dead link changes nothing on the hose. -->
+        <v-chip v-if="state && state.network.mode !== 'Up'" color="warning" prepend-icon="mdi-lan-disconnect"
+                :title="sale?.state === 'Fueling' ? 'fuel keeps flowing on the token; settlement will queue' : 'authorizations will fail until the link is back'">
+          bank link {{ state.network.mode.toLowerCase() }}
+        </v-chip>
       </div>
 
       <v-progress-linear :model-value="pct" color="success" height="10" rounded class="mb-1" />
@@ -80,22 +85,18 @@ const holdText: Record<string, string> = {
         <i v-for="(g, i) in flowTrace" :key="i" :style="{ height: (g / maxTrace) * 100 + '%' }"></i>
       </div>
 
-      <v-table density="compact">
-        <tbody>
-          <tr><td class="muted">sale</td><td>{{ sale?.saleId }} {{ sale?.cardName ?? '' }}</td></tr>
-          <tr><td class="muted">last</td><td>{{ sale?.lastMessage ?? '' }}</td></tr>
-          <tr><td class="muted">fault</td><td :class="{ 'text-error': state?.pump.fault }">{{ state?.pump.fault ?? 'none' }}</td></tr>
-          <tr>
-            <td class="muted">bank owes</td>
-            <td :class="{ 'text-warning': state?.pending.length }">
-              <template v-if="state?.pending.length">{{ state.pending.map(p => `${p.kind} ${p.saleId}${p.cents ? ' ' + dollars(p.cents) : ''}`).join(', ') }} (queued)</template>
-              <template v-else>nothing queued</template>
-            </td>
-          </tr>
-          <tr><td class="muted">open holds</td><td :class="{ 'text-info': state?.openHolds.length }">{{ state?.openHolds.length ? state.openHolds.join(', ') : 'none at the bank' }}</td></tr>
-          <tr><td class="muted">totalizer</td><td>{{ state?.pump.totalizerGallons.toFixed(3) }} gal (sealed, never resets)</td></tr>
-        </tbody>
-      </v-table>
+      <div class="kv">
+        <b>sale</b><span>{{ sale?.saleId }} {{ sale?.cardName ?? '' }}</span>
+        <b>last</b><span>{{ sale?.lastMessage ?? '' }}</span>
+        <b>fault</b><span :class="{ 'text-error': state?.pump.fault }">{{ state?.pump.fault ?? 'none' }}</span>
+        <b>bank owes</b>
+        <span :class="{ 'text-warning': state?.pending.length }">
+          <template v-if="state?.pending.length">{{ state.pending.map(p => `${p.kind} ${p.saleId}${p.cents ? ' ' + dollars(p.cents) : ''}`).join(', ') }} (queued)</template>
+          <template v-else>nothing queued</template>
+        </span>
+        <b>open holds</b><span :class="{ 'text-info': state?.openHolds.length }">{{ state?.openHolds.length ? state.openHolds.join(', ') : 'none at the bank' }}</span>
+        <b>totalizer</b><span>{{ state?.pump.totalizerGallons.toFixed(3) }} gal, sealed</span>
+      </div>
     </v-card-text>
   </v-card>
 </template>

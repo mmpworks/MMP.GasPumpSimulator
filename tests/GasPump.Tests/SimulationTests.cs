@@ -145,6 +145,63 @@ public class SimulationTests
 
     [Theory]
     [MemberData(nameof(SimHarness.Strategies), MemberType = typeof(SimHarness))]
+    public void Link_down_at_authorization_declines_at_once_with_nothing_queued(string strategy)
+    {
+        using var h = new SimHarness(strategy);
+        var card = TestCards.Get("Good");
+        var before = h.Sim.Issuer.AvailableBalance(card.Pan);
+        h.Sim.Network.Mode = NetworkMode.Down;
+        h.Sim.PresentCard("Good");
+        h.AdvanceUntilState(SaleState.Declined, TimeSpan.FromSeconds(2));
+        Assert.Equal(EndReason.BankDown, h.State.End);
+        Assert.Equal(HoldStatus.None, h.State.Hold);
+        Assert.Empty(h.Sim.Gateway.Pending);          // nothing to reverse, so nothing queued
+        Assert.Empty(h.Sim.Issuer.OpenHolds);
+        Assert.Equal(before, h.Sim.Issuer.AvailableBalance(card.Pan));
+        Assert.Equal("Bank link is down", h.State.Notice.Headline);
+    }
+
+    [Theory]
+    [MemberData(nameof(SimHarness.Strategies), MemberType = typeof(SimHarness))]
+    public void Link_goes_down_mid_fuel_and_the_sale_finishes_on_the_token_then_queues_the_completion(string strategy)
+    {
+        using var h = new SimHarness(strategy, ThirtyDollarHold);
+        var card = TestCards.Get("Good");
+        var before = h.Sim.Issuer.AvailableBalance(card.Pan);
+        h.Sim.PresentCard("Good");
+        h.AdvanceUntilState(SaleState.ReadyToPump, TimeSpan.FromSeconds(5));
+        h.Sim.StartFueling();
+        h.AdvanceUntilState(SaleState.Fueling, TimeSpan.FromSeconds(1));
+        h.Advance(TimeSpan.FromSeconds(5));
+        var atOutage = h.State.Volume;
+
+        // The link dies with fuel flowing. The pump needs nothing from the bank until completion.
+        h.Sim.Network.Mode = NetworkMode.Down;
+        h.Advance(TimeSpan.FromSeconds(10));
+        Assert.Equal(SaleState.Fueling, h.State.State);
+        Assert.True(h.State.Volume > atOutage, "fuel kept flowing through the outage");
+
+        h.Sim.ReleaseTrigger();
+        h.Advance(TimeSpan.FromSeconds(2));
+        h.Sim.SqueezeTrigger();                          // pause and resume still work with the bank gone
+        h.Advance(TimeSpan.FromSeconds(3));
+        h.Sim.HangNozzle();
+        h.AdvanceUntilState(SaleState.StoreAndForward, TimeSpan.FromSeconds(5));
+        Assert.Equal(HoldStatus.SettlePending, h.State.Hold);
+        Assert.Equal(DriverAction.Leave, h.State.Notice.Action);
+        Assert.Single(h.Sim.Gateway.PendingCompletions);
+        Assert.Equal(h.State.Volume, h.Sim.Totalizer.Total);
+        Assert.Equal(0, h.Sim.Ledger.Verify());
+
+        h.Sim.Network.Mode = NetworkMode.Up;
+        h.Sim.DrainPendingCompletions();
+        h.Advance(TimeSpan.FromSeconds(1));
+        Assert.Equal(HoldStatus.Settled, h.State.Hold);
+        Assert.Equal(before - h.State.Money, h.Sim.Issuer.AvailableBalance(card.Pan));
+    }
+
+    [Theory]
+    [MemberData(nameof(SimHarness.Strategies), MemberType = typeof(SimHarness))]
     public void Host_down_at_completion_queues_and_drains_when_it_returns(string strategy)
     {
         using var h = new SimHarness(strategy, ThirtyDollarHold);

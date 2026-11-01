@@ -30,15 +30,16 @@ body { background: var(--bg); overflow: hidden; }
 .face .row { display: flex; justify-content: space-between; align-items: baseline; padding: 6px 0; border-bottom: 1px dashed #1f2530; gap: 12px; }
 .face .row:last-child { border-bottom: 0; }
 .face .label { color: var(--muted); font-size: 11px; letter-spacing: .12em; white-space: nowrap; }
-.face .big { font-size: 42px; line-height: 1; color: var(--led); text-shadow: 0 0 12px rgba(255,176,0,.35); font-variant-numeric: tabular-nums; }
-.face .mid { font-size: 20px; color: var(--led); font-variant-numeric: tabular-nums; }
-.trace { display: flex; align-items: flex-end; gap: 1px; height: 56px; background: #0a0c10; border-radius: 6px; padding: 4px; }
+.face .big { font-size: 38px; line-height: 1; color: var(--led); text-shadow: 0 0 12px rgba(255,176,0,.35); font-variant-numeric: tabular-nums; }
+.face .mid { font-size: 19px; color: var(--led); font-variant-numeric: tabular-nums; }
+.face .row { padding: 5px 0; }
+.trace { display: flex; align-items: flex-end; gap: 1px; height: 48px; background: #0a0c10; border-radius: 6px; padding: 4px; }
 .trace > i { flex: 1; background: var(--accent); min-width: 1px; opacity: .85; }
 
 /* Monospace lists: log and ledger. */
 .mono-list { font-family: ui-monospace, Consolas, monospace; font-size: 12px; line-height: 1.5; overflow: auto; flex: 1 1 auto; min-height: 0; }
-.mono-list .line { display: grid; grid-template-columns: 100px 72px 1fr; column-gap: 14px; align-items: baseline; white-space: pre-wrap; border-bottom: 1px solid #1a1f29; padding: 2px 0; }
-.mono-list .line.ledger { grid-template-columns: 40px 1fr; }
+.mono-list .line { display: grid; grid-template-columns: 88px 62px minmax(0, 1fr); column-gap: 10px; align-items: baseline; white-space: pre-wrap; overflow-wrap: anywhere; border-bottom: 1px solid #1a1f29; padding: 2px 0; }
+.mono-list .line.ledger { grid-template-columns: 40px minmax(0, 1fr); }
 .mono-list .src { color: var(--muted); }
 .src.attack { color: var(--bad); } .src.pump { color: var(--accent); } .src.payment { color: var(--info); } .src.sale { color: #d2a8ff; } .src.admin { color: var(--warn); }
 .line.sev-Warn { color: var(--warn); } .line.sev-Error { color: var(--bad); }
@@ -46,6 +47,7 @@ body { background: var(--bg); overflow: hidden; }
 .kind-ok { color: var(--accent); } .kind-bad { color: var(--bad); }
 
 .ledger-root { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
+.notice .v-alert-title { font-size: 17px; line-height: 1.2; }
 .muted { color: var(--muted); font-size: 12px; }
 .row-wrap { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .step { font-size: 12px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin: 10px 0 6px; display: flex; gap: 8px; align-items: center; }

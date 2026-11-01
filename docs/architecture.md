@@ -91,6 +91,15 @@ A sale is a sequence of steps across two parties who cannot see each other's sta
 | 3 | Dispense fuel | None. Fuel does not come back. The sale settles for what moved. | |
 | 4 | Complete for the real amount | Queue the completion if the bank is unreachable | Gateway store-and-forward |
 
+Two outages that look alike from the driver's side and are handled apart:
+
+| Link state at authorization | What the pump knows | What it does | What the screen says |
+|---|---|---|---|
+| Refused (`Down`) | The request never left. No hold exists. | Decline at once. No reversal, nothing queued. | "Bank link is down. Nothing was sent to your bank and nothing was charged." |
+| Silent (`Timeout`, `Late`) | The bank may have heard us. | Decline at 30 s and reverse. A reversal that cannot get through is queued. | "Bank did not answer. A temporary hold may show on your card. It releases automatically." |
+
+A link that dies **during** a sale changes nothing on the hose. The pump armed from a signed token it already holds, and it needs the bank again only at completion. Pause and resume keep working. At the hang the completion queues, the hold shows `SettlePending`, the driver is told the charge will post when the link returns and may go, and the drain settles it later. The test `Link_goes_down_mid_fuel_and_the_sale_finishes_on_the_token_then_queues_the_completion` walks that under every dispatch strategy. The pump face shows a "bank link down" chip during an outage so the operator can see it; the driver's notice does not change until completion, because nothing the driver can do changes it.
+
 Three cases where the two parties disagree, and what the machine does:
 
 1. **The bank answers late.** The pump gave up at 30 s and told the driver "bank did not answer". The approval lands at 45 s on a `Declined` sale. The machine never arms from it. It issues a `Reverse` and logs the late approval. If the driver has already started a new sale, the late approval is for a sale id the machine no longer holds, so the simulation sends the reversal straight to the payment worker. Either way the hold comes off.

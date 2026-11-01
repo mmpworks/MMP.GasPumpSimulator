@@ -228,6 +228,22 @@ public class StateMachineTests
     }
 
     [Fact]
+    public void Refused_connection_declines_without_a_reversal_because_nothing_reached_the_bank()
+    {
+        var m = Machine();
+        m.Apply(new SaleEvent.CardPresented("S1", "Good", Grade.Regular));
+        var c = m.Apply(new SaleEvent.AuthorizationUnreachable("S1", "connection refused"));
+        Assert.Equal(SaleState.Declined, m.State);
+        Assert.Equal(EndReason.BankDown, m.End);
+        Assert.Equal(HoldStatus.None, m.Hold);
+        Assert.DoesNotContain(c, x => x is SaleCommand.Reverse);
+        var n = m.Notice();
+        Assert.Equal("Bank link is down", n.Headline);
+        Assert.Contains("nothing was charged", n.Detail);
+        Assert.DoesNotContain("may show", n.Detail);
+    }
+
+    [Fact]
     public void Late_approval_after_the_timeout_is_reversed_and_never_armed()
     {
         var m = Machine();

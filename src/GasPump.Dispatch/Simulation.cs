@@ -481,7 +481,13 @@ public sealed class Simulation : IDisposable
                     Log.Write("payment", "pre-auth {Tender} {Hold} on {Last4}", ("Tender", pa.Tender), ("Hold", Site.HoldFor(pa.Tender)), ("Last4", pa.Card.Last4));
                     var result = await Gateway.PreAuthorizeAsync(pa.SaleId, pa.Card, pa.Tender, _cts.Token);
                     if (result.Approved) { Log.Write("payment", "{ReasonCode} ceiling {Ceiling}", ("ReasonCode", result.ReasonCode), ("Ceiling", result.Ceiling)); _saleBox.Post(new SaleEvent.Approved(pa.SaleId, result.Ceiling, result.Token!)); }
-                    else if (result.NetworkFailure) { Log.Warn("payment", "network: {Message}", ("Message", result.Message)); _saleBox.Post(new SaleEvent.AuthorizationTimedOut(pa.SaleId)); }
+                    else if (result.NetworkFailure)
+                    {
+                        Log.Warn("payment", "network: {Message}", ("Message", result.Message));
+                        // Refused means the request never left: no hold, nothing to reverse. Timed out means the bank may have heard us.
+                        if (result.ReasonCode == nameof(NetworkOutcome.ConnectionRefused)) _saleBox.Post(new SaleEvent.AuthorizationUnreachable(pa.SaleId, "connection refused"));
+                        else _saleBox.Post(new SaleEvent.AuthorizationTimedOut(pa.SaleId));
+                    }
                     else { Log.Write("payment", "declined {ReasonCode}: {Message}", ("ReasonCode", result.ReasonCode), ("Message", result.Message)); _saleBox.Post(new SaleEvent.Declined(pa.SaleId, result.ReasonCode, result.Message)); }
                     break;
 

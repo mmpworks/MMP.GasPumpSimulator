@@ -16,18 +16,18 @@ const propsOf = (p: Record<string, string | null> | undefined) => Object.entries
 
 <template>
   <v-card class="pane-card fixed">
-    <v-card-title class="d-flex align-center ga-3">
+    <v-card-title class="d-flex align-center ga-2 flex-wrap">
       <span>Event log</span>
-      <span class="muted text-none" style="letter-spacing: 0; text-transform: none">{{ shown.length }} lines · Herald.OSS · hover a line for its properties</span>
+      <span class="muted" style="letter-spacing: 0; text-transform: none">{{ shown.length }} lines · Herald.OSS</span>
       <v-spacer />
-      <v-text-field v-model="filter" placeholder="filter: sale, pump, payment, attack, admin, text" prepend-inner-icon="mdi-magnify" clearable style="max-width: 360px" />
-      <v-btn prepend-icon="mdi-file-document-outline" title="plain text, since the host started" @click="api.exportLog('text')">Save .txt</v-btn>
-      <v-btn prepend-icon="mdi-code-json" title="JSON with properties, since the host started" @click="api.exportLog('json')">Save .json</v-btn>
-      <v-btn variant="text" prepend-icon="mdi-broom" @click="clear">Clear screen</v-btn>
+      <v-btn icon="mdi-file-document-outline" size="x-small" variant="text" title="save a plain-text copy since the host started" @click="api.exportLog('text')" />
+      <v-btn icon="mdi-code-json" size="x-small" variant="text" title="save a JSON copy with properties since the host started" @click="api.exportLog('json')" />
+      <v-btn icon="mdi-broom" size="x-small" variant="text" title="clear the screen; the host keeps its log" @click="clear" />
     </v-card-title>
     <v-card-text>
-      <div v-if="logFile" class="muted mb-2" :title="logFile.format">
-        Herald.OSS is also writing every line, with its properties, to <code>{{ logFile.path }}</code>
+      <v-text-field v-model="filter" placeholder="filter: sale, pump, payment, attack, admin, text" prepend-inner-icon="mdi-magnify" clearable class="mb-2 flex-grow-0" />
+      <div v-if="logFile" class="muted mb-2" :title="'Herald.OSS NDJSON file, with properties: ' + logFile.path">
+        hover a line for its properties · file: <code>{{ logFile.path.split(/[\\/]/).pop() }}</code>
       </div>
       <div class="mono-list">
         <div v-for="(l, i) in shown" :key="shown.length - i" class="line" :class="'sev-' + l.severity" :title="propsOf(l.props)">

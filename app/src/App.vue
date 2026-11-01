@@ -26,21 +26,21 @@ onMounted(connect)
 
     <v-main>
       <div class="pa-3 workspace">
-        <!-- Every gap is a splitter. Outer: top row over the log. Top row: dispenser | driver over attack | tabs. -->
-        <Splitpanes class="pump-theme" horizontal :push-other-panes="false">
-          <Pane :size="70" :min-size="30">
-            <Splitpanes class="pump-theme" :push-other-panes="false">
-              <Pane :size="36" :min-size="24"><PumpFace /></Pane>
-              <Pane :size="32" :min-size="24">
-                <Splitpanes class="pump-theme" horizontal :push-other-panes="false">
-                  <Pane :size="66" :min-size="30"><ControlPanel /></Pane>
-                  <Pane :size="34" :min-size="15"><AttackPanel /></Pane>
-                </Splitpanes>
-              </Pane>
-              <Pane :size="32" :min-size="24"><TabsPanel /></Pane>
+        <!-- Every gap is a splitter. Three columns: dispenser full height | driver over attack | tabs over the event log. -->
+        <Splitpanes class="pump-theme" :push-other-panes="false">
+          <Pane :size="30" :min-size="22"><PumpFace /></Pane>
+          <Pane :size="34" :min-size="24">
+            <Splitpanes class="pump-theme" horizontal :push-other-panes="false">
+              <Pane :size="64" :min-size="30"><ControlPanel /></Pane>
+              <Pane :size="36" :min-size="15"><AttackPanel /></Pane>
             </Splitpanes>
           </Pane>
-          <Pane :size="30" :min-size="10"><LogPanel /></Pane>
+          <Pane :size="36" :min-size="24">
+            <Splitpanes class="pump-theme" horizontal :push-other-panes="false">
+              <Pane :size="50" :min-size="20"><TabsPanel /></Pane>
+              <Pane :size="50" :min-size="15"><LogPanel /></Pane>
+            </Splitpanes>
+          </Pane>
         </Splitpanes>
       </div>
     </v-main>
