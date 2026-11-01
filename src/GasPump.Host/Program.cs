@@ -174,7 +174,11 @@ app.Map("/ws/custody", async (HttpContext ctx) =>
     catch (WebSocketException) { }
 });
 
-app.MapPost("/api/card", (CardRequest r) => Results.Json(new { saleId = Sim().PresentCard(r.Name, r.Grade, r.Tender ?? Tender.Credit) }, json));
+app.MapPost("/api/card", (CardRequest r) =>
+{
+    var (ok, saleId, reason) = Sim().TryPresentCard(r.Name, r.Grade, r.Tender ?? Tender.Credit, r.Source ?? CardSource.PumpInsert);
+    return ok ? Results.Json(new { saleId }, json) : Results.Conflict(new { saleId, error = reason });
+});
 app.MapPost("/api/cash", (CashRequest r) => Results.Json(new { saleId = Sim().PayCash(new Money(r.Cents), r.Grade) }, json));
 app.MapPost("/api/cash/collected", () => { Sim().CollectChange(); return Results.Ok(); });
 app.MapPost("/api/admin/limits", (AdminRequest r) =>
@@ -237,7 +241,7 @@ Sim().Log.Write("host", "station pid {Pid} listening on {Url} with {Dispatch} di
     ("Pid", Environment.ProcessId), ("Url", "http://localhost:5177"), ("Dispatch", Sim().StrategyName), ("Link", Sim().Link.Kind), ("Port", options.Dispenser is { } d ? $" port {d.Port}" : ""), ("LogPath", heraldLogPath), ("Custody", Sim().CustodyPath));
 app.Run();
 
-record CardRequest(string Name, Grade? Grade, Tender? Tender);
+record CardRequest(string Name, Grade? Grade, Tender? Tender, CardSource? Source);
 record EStopRequest(string? PressedBy);
 record CashRequest(long Cents, Grade? Grade);
 record AdminRequest(string? Pin, Tender Tender, long Cents);

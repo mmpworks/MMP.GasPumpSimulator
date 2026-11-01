@@ -2,17 +2,23 @@ namespace GasPump.Core;
 
 public sealed record SaleTimeouts(
     TimeSpan Authorization,
+    /// <summary>Approved to first lift, card read at the pump. The driver is at the hose; nobody else can cancel for them.</summary>
     TimeSpan NozzleLift,
     TimeSpan MaxFueling,
     TimeSpan Completion,
-    TimeSpan Notice)
+    TimeSpan Notice,
+    /// <summary>Approved to first lift, card or cash taken at the station. Longer, because the cashier holds the sale and can cancel it by hand.</summary>
+    TimeSpan NozzleLiftAtStation)
 {
     public static SaleTimeouts Default => new(
         Authorization: TimeSpan.FromSeconds(30),
         NozzleLift: TimeSpan.FromSeconds(120),
         MaxFueling: TimeSpan.FromMinutes(10),
         Completion: TimeSpan.FromSeconds(30),
-        Notice: TimeSpan.FromSeconds(30));
+        Notice: TimeSpan.FromSeconds(30),
+        NozzleLiftAtStation: TimeSpan.FromSeconds(300));
+
+    public TimeSpan LiftFor(CardSource source) => source == CardSource.Station ? NozzleLiftAtStation : NozzleLift;
 }
 
 /// <summary>
@@ -61,7 +67,12 @@ public sealed class SaleStateMachine
     public bool NozzleOut { get; private set; }
     public bool NozzleSeated { get; private set; }
     public Tender Tender { get; private set; } = Tender.Credit;
+    public CardSource Source { get; private set; } = CardSource.PumpInsert;
     public string? FaultCode { get; private set; }
+
+    /// <summary>True while the driver's money is held or requested and no fuel has moved: the sale a newer card may take over.</summary>
+    public bool IsOpenAndUntouched => State is SaleState.Authorizing or SaleState.ReadyToPump && !NozzleOut;
+    private TimeSpan LiftTimeout => _timeouts.LiftFor(Source);
     public Money CashPrepaid { get; private set; }
     public Money ChangeDue { get; private set; }
 
@@ -72,7 +83,7 @@ public sealed class SaleStateMachine
         s is SaleState.Declined or SaleState.Cancelled or SaleState.Faulted or SaleState.StoreAndForward;
 
     public SaleSnapshot Snapshot(DateTimeOffset? deadlineAt = null) =>
-        new(SaleId, State, CardName, Grade, Ceiling, Volume, Money, Flow, Phase, LastMessage, Hold, End, Notice(), GradeSelected, NozzleOut, NozzleSeated, Tender, FaultCode, CashPrepaid, ChangeDue, deadlineAt);
+        new(SaleId, State, CardName, Grade, Ceiling, Volume, Money, Flow, Phase, LastMessage, Hold, End, Notice(), GradeSelected, NozzleOut, NozzleSeated, Tender, Source, FaultCode, CashPrepaid, ChangeDue, deadlineAt);
 
     public IReadOnlyList<SaleCommand> Apply(SaleEvent e)
     {
@@ -121,15 +132,17 @@ public sealed class SaleStateMachine
                 Grade = cp.Grade ?? Grade.Regular;
                 GradeSelected = cp.Grade is not null;
                 Tender = cp.Tender;
+                Source = cp.Source;
                 Hold = HoldStatus.Requested;
                 commands.Add(new SaleCommand.RequestAuthorization(SaleId, cp.CardName, Grade, cp.Tender));
-                return Transition(SaleState.Authorizing, commands, $"card {cp.CardName} as {cp.Tender}", timeout: _timeouts.Authorization);
+                return Transition(SaleState.Authorizing, commands, $"card {cp.CardName} as {cp.Tender}, {SourceText(cp.Source)}", timeout: _timeouts.Authorization);
 
             case (SaleState.Idle, SaleEvent.CashPaid cash):
                 CardName = "cash";
                 Grade = cash.Grade ?? Grade.Regular;
                 GradeSelected = cash.Grade is not null;
                 Tender = Tender.Cash;
+                Source = CardSource.Station;
                 CashPrepaid = cash.Amount;
                 Hold = HoldStatus.Requested;
                 commands.Add(new SaleCommand.RequestCashAuthorization(SaleId, cash.Amount));
@@ -140,7 +153,7 @@ public sealed class SaleStateMachine
                 Token = a.Token;
                 Hold = HoldStatus.Held;
                 commands.Add(new SaleCommand.ArmPump(SaleId, a.Token, GradeSelected ? Grade : null));
-                return Transition(SaleState.ReadyToPump, commands, $"approved, ceiling {a.Ceiling}", timeout: _timeouts.NozzleLift);
+                return Transition(SaleState.ReadyToPump, commands, $"approved, ceiling {a.Ceiling}, {LiftTimeout.TotalSeconds:0} s to lift", timeout: LiftTimeout);
 
             case (SaleState.Authorizing, SaleEvent.Declined d):
                 Hold = HoldStatus.None;
@@ -207,7 +220,7 @@ public sealed class SaleStateMachine
 
             case (SaleState.ReadyToPump, SaleEvent.Timeout):
                 End = EndReason.NoNozzleLift;
-                EndDetail = $"fueling did not start within {_timeouts.NozzleLift.TotalSeconds:0} s";
+                EndDetail = $"fueling did not start within {LiftTimeout.TotalSeconds:0} s ({SourceText(Source)})";
                 return Transition(SaleState.Cancelled, commands, "no pour started, hold reversed", reverse: true);
 
             case (SaleState.Fueling, SaleEvent.Progress p):
@@ -411,7 +424,9 @@ public sealed class SaleStateMachine
                 return new($"Contacting your bank ({Tender})", $"Most approvals take a few seconds. We stop waiting after {_timeouts.Authorization.TotalSeconds:0} s.", DriverAction.Wait);
             case SaleState.ReadyToPump:
             {
-                var leave = $"If you leave, the pump cancels after {_timeouts.NozzleLift.TotalSeconds:0} s and releases the hold.";
+                var leave = Source == CardSource.Station
+                    ? $"If you leave, the cashier can cancel, or the pump cancels after {LiftTimeout.TotalSeconds:0} s and releases the hold."
+                    : $"If you leave, the pump cancels after {LiftTimeout.TotalSeconds:0} s and releases the hold. A new card at this pump cancels it at once.";
                 var step = !GradeSelected ? "Select a grade."
                     : !NozzleOut ? "Lift the nozzle."
                     : !NozzleSeated ? "Put the nozzle in your tank."
@@ -442,6 +457,13 @@ public sealed class SaleStateMachine
             _ => new(State.ToString(), holdLine, DriverAction.None),
         };
     }
+
+    public static string SourceText(CardSource s) => s switch
+    {
+        CardSource.PumpInsert => "inserted at the pump",
+        CardSource.PumpTap => "tapped at the pump",
+        _ => "at the station",
+    };
 
     /// <summary>A fault names its part so the driver hears the right next step: a dry tank wants another pump, a broken hose wants the attendant.</summary>
     private DriverNotice FaultNotice(string holdLine)

@@ -351,6 +351,102 @@ public class SimulationTests
         Assert.Equal(SaleState.ReadyToPump, h.State.State);
     }
 
+    // ----- A second card. The last driver left without lifting; the next one should never wait on their hold.
+
+    [Theory]
+    [MemberData(nameof(SimHarness.Strategies), MemberType = typeof(SimHarness))]
+    public void Second_card_before_the_nozzle_is_lifted_cancels_the_first_sale_reverses_its_hold_and_starts_over(string strategy)
+    {
+        using var h = new SimHarness(strategy);
+        var good = TestCards.Get("Good");
+        var debit = TestCards.Get("DebitGoodPin");
+        var goodBefore = h.Sim.Issuer.AvailableBalance(good.Pan);
+        var debitBefore = h.Sim.Issuer.AvailableBalance(debit.Pan);
+
+        var first = h.Sim.PresentCard("Good", source: CardSource.PumpTap);
+        h.AdvanceUntilState(SaleState.ReadyToPump, TimeSpan.FromSeconds(5));
+        Assert.Equal([first], h.Sim.Issuer.OpenHolds);
+
+        // Driver one drives off. Driver two taps a debit card at the same reader.
+        var (ok, second, _) = h.Sim.TryPresentCard("DebitGoodPin", tender: Tender.Debit, source: CardSource.PumpTap);
+        Assert.True(ok);
+        Assert.NotEqual(first, second);
+        h.AdvanceUntilState(SaleState.ReadyToPump, TimeSpan.FromSeconds(5));
+        h.Advance(TimeSpan.FromSeconds(1));
+
+        Assert.Equal(second, h.State.SaleId);
+        Assert.Equal(Tender.Debit, h.State.Tender);
+        Assert.Equal([second], h.Sim.Issuer.OpenHolds);                 // the first hold is gone from the bank
+        Assert.Equal(goodBefore, h.Sim.Issuer.AvailableBalance(good.Pan));
+        Assert.True(h.Sim.Issuer.AvailableBalance(debit.Pan) < debitBefore);
+        var ledger = h.Sim.Ledger.Snapshot();
+        Assert.Contains(ledger, e => e.Kind == "sale.superseded" && e.Detail.StartsWith(first));
+        Assert.Contains(ledger, e => e.Kind == "sale.close" && e.Detail.StartsWith(first) && e.Detail.Contains("Cancelled"));
+        Assert.Contains(ledger, e => e.Kind == "sale.open" && e.Detail.StartsWith(second));
+        Assert.Contains(h.Sim.Log.Snapshot(), l => l.Message.Contains($"hold for earlier sale {first} released"));
+    }
+
+    [Theory]
+    [MemberData(nameof(SimHarness.Strategies), MemberType = typeof(SimHarness))]
+    public void Second_card_while_the_nozzle_is_in_hand_is_refused_and_the_first_sale_keeps_going(string strategy)
+    {
+        using var h = new SimHarness(strategy);
+        var first = h.Sim.PresentCard("Good");
+        h.AdvanceUntilState(SaleState.ReadyToPump, TimeSpan.FromSeconds(5));
+        h.Sim.LiftNozzle();
+        h.Advance(TimeSpan.FromMilliseconds(300));
+
+        var (ok, id, reason) = h.Sim.TryPresentCard("DebitGoodPin", tender: Tender.Debit);
+        Assert.False(ok);
+        Assert.Equal(first, id);
+        Assert.Contains("pump in use", reason);
+        h.Advance(TimeSpan.FromMilliseconds(300));
+        Assert.Equal(first, h.State.SaleId);
+        Assert.Equal(SaleState.ReadyToPump, h.State.State);
+        Assert.Equal([first], h.Sim.Issuer.OpenHolds);
+
+        // Fueling is in use too, for anyone, by any route.
+        h.Sim.SelectGrade(Grade.Regular);
+        h.Sim.SeatNozzle();
+        h.Sim.SqueezeTrigger();
+        h.AdvanceUntilState(SaleState.Fueling, TimeSpan.FromSeconds(1));
+        Assert.False(h.Sim.TryPresentCard("Good", source: CardSource.Station).Ok);
+        Assert.Equal(first, h.Sim.PayCash(Money.FromDollars(10)));
+        Assert.Equal(SaleState.Fueling, h.State.State);
+    }
+
+    [Theory]
+    [MemberData(nameof(SimHarness.Strategies), MemberType = typeof(SimHarness))]
+    public void A_sale_set_at_the_station_waits_longer_for_the_lift_than_one_set_at_the_pump(string strategy)
+    {
+        using var h = new SimHarness(strategy);
+        h.Sim.PresentCard("Good", source: CardSource.PumpInsert);
+        h.AdvanceUntilState(SaleState.ReadyToPump, TimeSpan.FromSeconds(5));
+        Assert.Equal(CardSource.PumpInsert, h.State.Source);
+        Assert.Equal(h.Clock.GetUtcNow() + TimeSpan.FromSeconds(120), h.State.DeadlineAt);
+        h.Advance(TimeSpan.FromSeconds(121));
+        Assert.Equal(SaleState.Cancelled, h.State.State);
+        Assert.Equal(EndReason.NoNozzleLift, h.State.End);
+
+        h.Sim.ResetSale();
+        h.Sim.PresentCard("Good", source: CardSource.Station);
+        h.AdvanceUntilState(SaleState.ReadyToPump, TimeSpan.FromSeconds(5));
+        Assert.Equal(CardSource.Station, h.State.Source);
+        Assert.Equal(h.Clock.GetUtcNow() + TimeSpan.FromSeconds(300), h.State.DeadlineAt);
+        Assert.Contains("cashier can cancel", h.State.Notice.Detail);
+        h.Advance(TimeSpan.FromSeconds(150));
+        Assert.Equal(SaleState.ReadyToPump, h.State.State);            // still waiting: the cashier holds this one
+        h.Advance(TimeSpan.FromSeconds(151));
+        Assert.Equal(SaleState.Cancelled, h.State.State);
+
+        // Cash is always a station sale.
+        h.Sim.ResetSale();
+        h.Sim.PayCash(Money.FromDollars(10));
+        h.AdvanceUntilState(SaleState.ReadyToPump, TimeSpan.FromSeconds(5));
+        Assert.Equal(CardSource.Station, h.State.Source);
+        Assert.Equal(h.Clock.GetUtcNow() + TimeSpan.FromSeconds(300), h.State.DeadlineAt);
+    }
+
     // ----- Tender: credit, debit, cash. The site's ceilings, the bank's answer, and the pump's hard limits, in that order.
 
     [Theory]

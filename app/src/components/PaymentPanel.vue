@@ -8,12 +8,12 @@ import { api, cards, state, dollars } from '../sim'
 const tender = ref<'Credit' | 'Debit' | 'Cash'>('Credit')
 const card = ref('Good')
 const cashDollars = ref(20)
+const refused = ref<string | null>(null)
 const gallons = ref(600)
 const dollarsWanted = ref(2000)
 const sale = computed(() => state.value?.sale)
 const s = computed(() => sale.value?.state)
 const estop = computed(() => !!state.value?.station.estopActive)
-const canPresent = computed(() => !estop.value && (!s.value || ['Idle', 'Declined', 'Cancelled', 'Faulted', 'StoreAndForward'].includes(s.value)))
 const canCancel = computed(() => s.value === 'Authorizing' || s.value === 'ReadyToPump')
 const cardItems = computed(() => cards.value.map(c => ({ title: `${c.name} · ${c.kind} ····${c.last4} exp ${c.expiry}`, value: c.name })))
 const changeDue = computed(() => state.value?.cash.changeDue.find(c => c.saleId === sale.value?.saleId))
@@ -23,9 +23,11 @@ const holdText: Record<string, string> = {
   SettlePending: 'charge queued', ReleasePending: 'release queued',
 }
 
-function start() {
-  if (tender.value === 'Cash') api.payCash(Math.round(cashDollars.value * 100))
-  else api.presentCard(card.value, tender.value)
+async function start() {
+  refused.value = null
+  if (tender.value === 'Cash') { await api.payCash(Math.round(cashDollars.value * 100)); return }
+  const r = await api.presentCard(card.value, tender.value, 'Station')
+  if (!r.ok) refused.value = r.error ?? 'refused'
 }
 </script>
 
@@ -42,12 +44,14 @@ function start() {
       <div class="row-wrap mb-2">
         <v-select v-if="tender !== 'Cash'" v-model="card" :items="cardItems" label="card" style="min-width: 260px; max-width: 360px" />
         <v-text-field v-else v-model.number="cashDollars" type="number" label="cash to cashier, $" min="1" step="5" style="max-width: 160px" />
-        <v-btn color="primary" variant="flat" :disabled="!canPresent" @click="start">
-          {{ tender === 'Cash' ? `Pay cashier ${dollars(Math.round(cashDollars * 100))}` : 'Present card' }}
+        <v-btn color="primary" variant="flat" :disabled="estop" @click="start">
+          {{ tender === 'Cash' ? `Pay cashier ${dollars(Math.round(cashDollars * 100))}` : 'Card at the counter' }}
         </v-btn>
-        <v-btn :disabled="!canCancel" @click="api.cancel()">Cancel</v-btn>
+        <v-btn :disabled="!canCancel" @click="api.cancel()">Cashier cancels</v-btn>
         <v-btn variant="text" @click="api.reset()">New sale</v-btn>
+        <span v-if="refused" class="text-error" style="font-size: 12px">{{ refused }}</span>
       </div>
+      <p class="muted mb-2">A card or cash at the counter sets the pump with a {{ 300 }} s wait for the lift, because the cashier can cancel by hand. A card at the pump's own reader (left column) gets {{ 120 }} s.</p>
       <v-alert v-if="changeDue" type="warning" class="mb-2">
         <div class="d-flex align-center ga-3">
           <span>Cashier owes you {{ dollars(changeDue.cents) }}</span>

@@ -80,6 +80,7 @@ const holdText: Record<string, string> = {
         <v-chip color="info">{{ sale?.state }}</v-chip>
         <v-chip :color="phaseColor">{{ sale?.phase }}</v-chip>
         <v-chip :color="holdColor">{{ sale?.tender?.toLowerCase() }}: {{ holdText[sale?.hold ?? 'None'] }}</v-chip>
+        <v-chip v-if="sale && sale.state !== 'Idle'" variant="outlined">{{ sale.source === 'Station' ? 'set at the station' : sale.source === 'PumpTap' ? 'tapped at the pump' : 'inserted at the pump' }}</v-chip>
         <v-chip :color="state?.pump.phase === 'Faulted' ? 'error' : undefined">pump {{ state?.pump.phase }}</v-chip>
         <v-chip v-if="sale?.faultCode" color="error" variant="flat" :title="sale.faultPart ?? ''">{{ sale.faultCode }}</v-chip>
         <v-chip v-if="state?.pump.breakawayOpen" color="error">breakaway open</v-chip>

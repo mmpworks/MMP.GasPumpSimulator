@@ -419,18 +419,33 @@ public sealed class Simulation : IDisposable
     // ----- Driver-facing actions. Each one is a message, never a direct call into a worker's state.
 
     /// <summary>A grade given here is a preselection at the reader. The normal path leaves it null and the driver picks at the pump.</summary>
-    public string PresentCard(string cardName, Grade? grade = null, Tender tender = Tender.Credit)
+    public string PresentCard(string cardName, Grade? grade = null, Tender tender = Tender.Credit, CardSource source = CardSource.PumpInsert)
+    {
+        var (ok, id, reason) = TryPresentCard(cardName, grade, tender, source);
+        if (!ok) Log.Warn("sale", "card {Card} ignored: {Reason}", ("Card", cardName), ("Reason", reason));
+        return id;
+    }
+
+    /// <summary>
+    /// A card at the reader or the counter. If the sale on the screen is approved
+    /// and untouched (the last driver left without lifting the nozzle), this card
+    /// cancels it, reverses its hold, and starts over. If fuel is moving or the
+    /// nozzle is in someone's hand, the pump is in use and the card is refused.
+    /// </summary>
+    public (bool Ok, string SaleId, string Reason) TryPresentCard(string cardName, Grade? grade = null, Tender tender = Tender.Credit, CardSource source = CardSource.PumpInsert)
     {
         if (tender == Tender.Cash) throw new ArgumentException("use PayCash for a cash sale", nameof(tender));
-        var id = BeginSale();
-        _saleBox.Post(new SaleEvent.CardPresented(id, cardName, grade, tender));
-        return id;
+        var (ok, id, reason) = BeginSale($"new card {cardName} {SaleStateMachine.SourceText(source)}");
+        if (!ok) return (false, id, reason);
+        _saleBox.Post(new SaleEvent.CardPresented(id, cardName, grade, tender, source));
+        return (true, id, "");
     }
 
     /// <summary>The driver paid the cashier. The amount is the ceiling, to the cent. No bank is called.</summary>
     public string PayCash(Money amount, Grade? grade = null)
     {
-        var id = BeginSale();
+        var (ok, id, reason) = BeginSale($"cash {amount} at the station");
+        if (!ok) { Log.Warn("sale", "cash sale refused: {Reason}", ("Reason", reason)); return id; }
         _saleBox.Post(new SaleEvent.CashPaid(id, amount, grade));
         return id;
     }
@@ -441,13 +456,40 @@ public sealed class Simulation : IDisposable
     /// <summary>The back office. Every attempt lands in the ledger through Site.Changed.</summary>
     public (bool Ok, string Reason) AdminSetHold(string pin, Tender tender, Money amount) => Site.TrySet(pin, tender, amount);
 
-    private string BeginSale()
+    /// <summary>
+    /// Start a sale record for a new payment. Three cases for the sale already on
+    /// the screen: finished (replace it), approved but untouched (the last driver
+    /// drove off before lifting the nozzle: cancel it, reverse its hold, replace
+    /// it, all at once), or in someone's hands (refuse the new payment).
+    /// </summary>
+    private (bool Ok, string SaleId, string Reason) BeginSale(string why)
     {
+        IReadOnlyList<SaleCommand>? commands = null;
+        SaleSnapshot? closed = null;
+        SaleState wasIn = SaleState.Idle;
+        string oldId;
         lock (_gate)
         {
-            if (_sale.State is not SaleState.Idle) ReplaceSale();
-            return _sale.SaleId;
+            oldId = _sale.SaleId;
+            if (_sale.State is SaleState.Fueling or SaleState.Completing || (_sale.State == SaleState.ReadyToPump && _sale.NozzleOut))
+                return (false, oldId, $"pump in use by {oldId} ({_sale.State}, nozzle {(_sale.NozzleOut ? "out" : "on harness")})");
+            if (_sale.IsOpenAndUntouched)
+            {
+                wasIn = _sale.State;
+                commands = _sale.Apply(new SaleEvent.Cancel(oldId, $"superseded: {why}"));
+                closed = _sale.Snapshot();
+                ReplaceSale();
+            }
+            else if (_sale.State is not SaleState.Idle) ReplaceSale();
+            var id = _sale.SaleId;
+            if (closed is null) return (true, id, "");
         }
+        // Outside the lock, as the sale worker does: the reversal goes to the payment worker, the close goes to the ledger.
+        Ledger.Append("sale.superseded", $"{oldId} {wasIn} hold {closed.Hold} cancelled by {why}");
+        Log.Warn("sale", "{Old} superseded: {Why}; hold {Hold} being reversed", ("Old", oldId), ("Why", why), ("Hold", closed.Hold));
+        foreach (var c in commands!) Execute(c);
+        RecordSaleBoundary(new SaleEvent.Cancel(oldId, why), wasIn, closed.State, closed);
+        return (true, CurrentSaleId, "");
     }
 
     /// <summary>Every driver action at the pump goes down the link as a message, addressed to the current sale.</summary>

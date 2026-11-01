@@ -46,6 +46,14 @@ public enum HoldStatus
 /// </summary>
 public enum Tender { Credit, Debit, Cash }
 
+/// <summary>
+/// Where the card was read. At the pump, by insert or by tap, the driver is
+/// standing at the hose and nobody else can cancel for them, so the wait for
+/// a nozzle lift is short. At the station the cashier holds the sale and can
+/// cancel it by hand, so the wait is longer. Cash is always at the station.
+/// </summary>
+public enum CardSource { PumpInsert, PumpTap, Station }
+
 /// <summary>Why a sale ended. Drives the notice the driver reads and the next step it offers.</summary>
 public enum EndReason
 {
@@ -111,7 +119,7 @@ public sealed record DriverNotice(string Headline, string Detail, DriverAction A
 public abstract record SaleEvent(string SaleId)
 {
     /// <summary>Grade is null when the driver will pick it at the pump after approval, which is the normal path.</summary>
-    public sealed record CardPresented(string SaleId, string CardName, Grade? Grade = null, Tender Tender = Tender.Credit) : SaleEvent(SaleId);
+    public sealed record CardPresented(string SaleId, string CardName, Grade? Grade = null, Tender Tender = Tender.Credit, CardSource Source = CardSource.PumpInsert) : SaleEvent(SaleId);
     /// <summary>The cashier took cash. Amount is the ceiling, to the cent.</summary>
     public sealed record CashPaid(string SaleId, Money Amount, Grade? Grade = null) : SaleEvent(SaleId);
     public sealed record GradeSelected(string SaleId, Grade Grade) : SaleEvent(SaleId);
@@ -179,6 +187,8 @@ public sealed record SaleSnapshot(
     bool NozzleOut,
     bool NozzleSeated,
     Tender Tender,
+    /// <summary>Where the card was read, or Station for cash.</summary>
+    CardSource Source,
     /// <summary>The diagnostic code behind a fault, or null.</summary>
     string? FaultCode,
     /// <summary>Cash taken at the cashier. Zero for card sales.</summary>

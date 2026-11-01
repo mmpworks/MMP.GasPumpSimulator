@@ -122,6 +122,7 @@ public static class Contracts
         s.NozzleOut,
         s.NozzleSeated,
         tender = s.Tender.ToString(),
+        source = s.Source.ToString(),
         s.FaultCode,
         faultPart = s.FaultCode is { } fc ? DiagnosticCodes.Find(fc)?.Part : null,
         cashPrepaidCents = s.CashPrepaid.Cents,

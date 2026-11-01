@@ -14,8 +14,10 @@ export interface Sale {
   hold: string; end: string; notice: Notice; deadlineAt: string | null
   gradeSelected: boolean; nozzleOut: boolean; nozzleSeated: boolean
   tender: 'Credit' | 'Debit' | 'Cash'; cashPrepaidCents: number; changeDueCents: number
+  source: 'PumpInsert' | 'PumpTap' | 'Station'
   faultCode: string | null; faultPart: string | null
 }
+export type CardSource = 'PumpInsert' | 'PumpTap' | 'Station'
 export interface Station {
   pid: number; port: number; runId: string; custodyPath: string | null
   estopActive: boolean; estopAt: string | null
@@ -128,7 +130,12 @@ async function post(path: string, body?: unknown) {
 }
 
 export const api = {
-  presentCard: (name: string, tender: 'Credit' | 'Debit' = 'Credit') => post('/api/card', { name, tender }),
+  /** A card at the pump reader (insert or tap) or at the station counter. 409 means the pump is in use; the body says by whom. */
+  presentCard: async (name: string, tender: 'Credit' | 'Debit' = 'Credit', source: CardSource = 'PumpInsert') => {
+    const r = await fetch(`${HOST}/api/card`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name, tender, source }) })
+    const body = (await r.json()) as { saleId: string; error?: string }
+    return { ok: r.ok, ...body }
+  },
   payCash: (cents: number) => post('/api/cash', { cents }),
   changeCollected: () => post('/api/cash/collected'),
   adminSetHold: async (pin: string, tender: 'Credit' | 'Debit', cents: number) =>

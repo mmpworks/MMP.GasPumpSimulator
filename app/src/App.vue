@@ -34,7 +34,7 @@ const dispenserTitle = computed(() => {
     <v-main>
       <div class="pa-3 workspace">
         <!-- Two columns and the wire between them. Nothing on the left came from the station process; nothing on the right came from the dispenser process. -->
-        <Splitpanes class="pump-theme" :push-other-panes="false">
+        <Splitpanes class="pump-theme">
           <Pane :size="44" :min-size="26">
             <div class="side dispenser">
               <div class="side-head">
@@ -43,14 +43,15 @@ const dispenserTitle = computed(() => {
                 <span v-if="d && d.link === 'socket'" class="muted">{{ state?.pumpId }} · run {{ d.runId ?? '-' }} · chain {{ basename(d.custodyPath) || '-' }}</span>
                 <span v-else class="muted">{{ state?.pumpId }}</span>
               </div>
-              <Splitpanes class="pump-theme" horizontal :push-other-panes="false">
+              <Splitpanes class="pump-theme" horizontal>
                 <Pane :size="44" :min-size="24"><PumpFace /></Pane>
                 <Pane :size="30" :min-size="16"><DispenserControls /></Pane>
                 <Pane :size="26" :min-size="12"><RecordsPanel origin="dispenser" /></Pane>
               </Splitpanes>
             </div>
           </Pane>
-          <Pane :size="10" :min-size="7" :max-size="16"><LinkStrip /></Pane>
+          <!-- Panes push each other: a column that grew can shrink again, because the far column gives the width back. -->
+          <Pane :size="10" :min-size="6"><LinkStrip /></Pane>
           <Pane :size="46" :min-size="26">
             <div class="side station">
               <div class="side-head">
@@ -58,7 +59,7 @@ const dispenserTitle = computed(() => {
                 <span class="side-title">STATION · GasPump.Host.exe pid {{ st?.pid ?? '-' }}</span>
                 <span class="muted">http {{ st?.port ?? 5177 }} · journal run {{ st?.runId ?? '-' }} · chain {{ basename(st?.custodyPath) || '-' }}</span>
               </div>
-              <Splitpanes class="pump-theme" horizontal :push-other-panes="false">
+              <Splitpanes class="pump-theme" horizontal>
                 <Pane :size="36" :min-size="18"><PaymentPanel /></Pane>
                 <Pane :size="36" :min-size="16"><StationPanel /></Pane>
                 <Pane :size="28" :min-size="12"><RecordsPanel origin="station" /></Pane>
