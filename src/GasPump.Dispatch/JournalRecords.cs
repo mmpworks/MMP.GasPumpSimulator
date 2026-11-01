@@ -34,7 +34,9 @@ public sealed record JournalSnapshot(
     long CreditHoldCents, long DebitHoldCents, int FailedPins, DateTimeOffset? LockedUntil,
     long TotalizerMilliGallons, List<string> Nonces, IssuerState Issuer,
     /// <summary>Set only when the stop was deliberate and had time to say so: "ESTOP". A crash leaves it null.</summary>
-    string? StopReason = null)
+    string? StopReason = null,
+    /// <summary>The broken parts on an in-process dispenser, by diagnostic code. A restart repairs nothing.</summary>
+    List<string>? DispenserConditions = null)
 {
     public const int CurrentVersion = 1;
 }

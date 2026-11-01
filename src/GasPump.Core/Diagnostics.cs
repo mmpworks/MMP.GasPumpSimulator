@@ -9,6 +9,20 @@ namespace GasPump.Core;
 /// </summary>
 public enum ServiceAction { NextArm, AttendantReset, SupplyRestored, PulserRepaired, LinkRestored, CashierReset }
 
+/// <summary>The one sentence per service action. The driver's notice and the ledger's refusal line read from the same table.</summary>
+public static class ServiceActions
+{
+    public static string Describe(ServiceAction a) => a switch
+    {
+        ServiceAction.AttendantReset => "The attendant must reset it before the next sale.",
+        ServiceAction.SupplyRestored => "The fuel supply must be restored before the next sale.",
+        ServiceAction.PulserRepaired => "The meter must be repaired before the next sale.",
+        ServiceAction.LinkRestored => "The station is waiting for this pump to reconnect.",
+        ServiceAction.CashierReset => "The cashier must reset the station.",
+        _ => "The next sale starts clean.",
+    };
+}
+
 /// <summary>
 /// One code per thing that can fail, named by the part that failed. The code
 /// goes in the log line, the ledger entry, and the custody file, so a reader

@@ -290,6 +290,34 @@ public class RecoveryTests : IDisposable
         Assert.Contains(received, l => l.Contains("TANK.FUELOUT"));
     }
 
+    [Theory]
+    [MemberData(nameof(SimHarness.Strategies), MemberType = typeof(SimHarness))]
+    public void A_restart_does_not_repair_a_separated_hose(string strategy)
+    {
+        using (var h = new SimHarness(strategy, Options("RUN-1")))
+        {
+            h.Sim.DriveOff();
+            h.Advance(TimeSpan.FromMilliseconds(300));
+            Assert.False(h.Sim.View.Service.InService);
+            h.Advance(TimeSpan.FromSeconds(1));                 // one journal period, so the conditions are on disk
+            h.Sim.SimulatePowerLoss();
+        }
+
+        using var h2 = new SimHarness(strategy, Options("RUN-2"));
+        h2.Advance(TimeSpan.FromMilliseconds(300));
+        Assert.True(h2.Sim.View.Service.Holds("PUMP.HOSE.BREAKAWAY"));
+        Assert.Equal("Out of service: hose breakaway coupling", h2.State.Notice.Headline);
+        var (ok, _, reason) = h2.Sim.TryPresentCard("Good");
+        Assert.False(ok);
+        Assert.Contains("PUMP.HOSE.BREAKAWAY", reason);
+
+        h2.Sim.ResetBreakaway();
+        h2.Advance(TimeSpan.FromMilliseconds(300));
+        Assert.True(h2.Sim.View.Service.InService);
+        Assert.True(h2.Sim.TryPresentCard("Good").Ok);
+        h2.AdvanceUntilState(SaleState.ReadyToPump, TimeSpan.FromSeconds(5));
+    }
+
     [Fact]
     public void Recovery_plan_table()
     {

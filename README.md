@@ -26,8 +26,8 @@ A pay-at-the-pump fuel dispenser, simulated. Present a card, get a two-phase aut
 ## Run it
 
 ```
-dotnet test                       # 233 tests, about 70 s: 230 on a fake clock under three dispatch strategies, 3 over a real TCP socket
-cd app && npm run e2e             # 8 Playwright specs against the two live processes: sales, faults and repairs, the layout; about 2 min
+dotnet test                       # 256 tests, about 80 s: fake clock under three dispatch strategies, plus 6 over a real TCP socket and 4 wire round-trips
+cd app && npm run e2e             # 9 Playwright specs against the two live processes: sales, faults and repairs, the E-stop, the layout; about 2 min
 dotnet run --project src/GasPump.Host -- --strategy threaded                 # station; spawns the dispenser on port 5178
 dotnet run --project src/GasPump.Host -- --dispenser inproc                  # the old single process
 dotnet run --project src/GasPump.Dispenser -- --port 5178                    # a dispenser by hand, in its own terminal; the station adopts it

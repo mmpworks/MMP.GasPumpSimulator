@@ -115,6 +115,8 @@ public sealed class DispenserServer : IDisposable
     {
         if (env.SaleId is not null) _lastSaleId = env.SaleId;
         var events = Dispenser.Handle(env.M, env.SaleId ?? _lastSaleId);
+        // A part broke or was fixed without a ledger entry (supply, pulser): the state file must still know.
+        if (env.M is PumpMessage.Supply or PumpMessage.PulserDead or PumpMessage.DriveOff or PumpMessage.ResetBreakaway) SaveState();
         foreach (var e in events) Send(new LinkFrame(LinkFrame.TagEvent, E: e));
         var view = Dispenser.View(RunId, Environment.ProcessId, CustodyPath);
         // Every non-tick message and every tick that changed something. An idle tick sends nothing.
@@ -226,7 +228,8 @@ public sealed class DispenserServer : IDisposable
 
     // ----- The small state the dispenser owns across its own restarts: the sealed counter and the burned nonces.
 
-    private sealed record DispenserState(long TotalizerMilliGallons, List<string> Nonces);
+    /// <summary>Conditions is the broken parts: a restart of the software repairs nothing on the island.</summary>
+    private sealed record DispenserState(long TotalizerMilliGallons, List<string> Nonces, List<string>? Conditions = null);
 
     private void RestoreState()
     {
@@ -237,6 +240,11 @@ public sealed class DispenserServer : IDisposable
             if (s is null) return;
             Dispenser.Totalizer.Restore(new Volume(s.TotalizerMilliGallons));
             Dispenser.Nonces.Import(s.Nonces);
+            if (s.Conditions is { Count: > 0 } c)
+            {
+                Dispenser.RestoreConditions(c);
+                Log.Warn("dispenser", "restarted with parts still broken: {Service}", ("Service", Dispenser.Pump.Service.ToString()));
+            }
         }
         catch (JsonException ex) { Log.Error("dispenser", "state file unreadable: {Message}", ("Message", ex.Message)); }
     }
@@ -244,7 +252,7 @@ public sealed class DispenserServer : IDisposable
     private void SaveState()
     {
         if (_statePath is null) return;
-        var s = new DispenserState(Dispenser.Totalizer.Total.MilliGallons, Dispenser.Nonces.Export().ToList());
+        var s = new DispenserState(Dispenser.Totalizer.Total.MilliGallons, Dispenser.Nonces.Export().ToList(), Dispenser.ConditionCodes.ToList());
         var tmp = _statePath + ".tmp";
         try
         {

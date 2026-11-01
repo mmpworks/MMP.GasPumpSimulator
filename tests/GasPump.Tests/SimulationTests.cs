@@ -351,6 +351,85 @@ public class SimulationTests
         Assert.Equal(SaleState.ReadyToPump, h.State.State);
     }
 
+    // ----- Faults and repairs in the states the reviewers named.
+
+    [Theory]
+    [MemberData(nameof(SimHarness.Strategies), MemberType = typeof(SimHarness))]
+    public void Drive_off_with_the_trigger_released_faults_the_sale_at_once_and_settles_for_the_fuel(string strategy)
+    {
+        using var h = new SimHarness(strategy, ThirtyDollarHold);
+        var card = TestCards.Get("Good");
+        var before = h.Sim.Issuer.AvailableBalance(card.Pan);
+        h.Sim.PresentCard("Good");
+        h.AdvanceUntilState(SaleState.ReadyToPump, TimeSpan.FromSeconds(5));
+        h.Sim.StartFueling();
+        h.AdvanceUntilState(SaleState.Fueling, TimeSpan.FromSeconds(1));
+        h.Advance(TimeSpan.FromSeconds(2));
+        h.Sim.ReleaseTrigger();                               // the realistic drive-off: nozzle in the car, trigger let go
+        h.Advance(TimeSpan.FromMilliseconds(300));
+        Assert.Equal("paused", h.State.Phase);
+        var delivered = h.State.Money;
+
+        h.Sim.DriveOff();
+        h.AdvanceUntilState(SaleState.Faulted, TimeSpan.FromSeconds(1));   // one second, never the ten-minute fueling limit
+        Assert.Equal("PUMP.HOSE.BREAKAWAY", h.State.FaultCode);
+        Assert.Equal(delivered, h.State.Money);
+        h.AdvanceUntil(() => h.State.Hold == HoldStatus.Settled, TimeSpan.FromSeconds(5));
+        Assert.Equal(before - delivered, h.Sim.Issuer.AvailableBalance(card.Pan));
+        Assert.Equal(PumpPhase.Faulted, h.Sim.Pump.Phase);
+
+        h.Sim.ResetBreakaway();
+        h.AdvanceUntilState(SaleState.Idle, TimeSpan.FromSeconds(1));
+        Assert.Equal("Pump back in service", h.State.Notice.Headline);
+    }
+
+    [Theory]
+    [MemberData(nameof(SimHarness.Strategies), MemberType = typeof(SimHarness))]
+    public void Tank_dry_while_the_bank_is_still_deciding_faults_the_sale_and_the_late_approval_leaves_no_hold(string strategy)
+    {
+        using var h = new SimHarness(strategy, ThirtyDollarHold);
+        var card = TestCards.Get("Good");
+        var before = h.Sim.Issuer.AvailableBalance(card.Pan);
+        h.Sim.Network.Latency = TimeSpan.FromSeconds(2);
+        h.Sim.PresentCard("Good");
+        h.Advance(TimeSpan.FromMilliseconds(300));
+        Assert.Equal(SaleState.Authorizing, h.State.State);
+        Assert.Equal(HoldStatus.Requested, h.State.Hold);
+
+        h.Sim.TankRunsDry();
+        h.AdvanceUntilState(SaleState.Faulted, TimeSpan.FromSeconds(1));
+        Assert.Equal("PUMP.STP.NOFLOW", h.State.FaultCode);
+
+        // The bank answers later. Whatever it says, nothing stays held.
+        h.Advance(TimeSpan.FromSeconds(4));
+        Assert.Empty(h.Sim.Issuer.OpenHolds);
+        Assert.Equal(before, h.Sim.Issuer.AvailableBalance(card.Pan));
+        Assert.False(h.State.State == SaleState.ReadyToPump);
+
+        h.Sim.TankRefilled();
+        h.AdvanceUntil(() => h.State.State == SaleState.Idle, TimeSpan.FromSeconds(2));
+        Assert.Equal("Pump back in service", h.State.Notice.Headline);
+    }
+
+    [Theory]
+    [MemberData(nameof(SimHarness.Strategies), MemberType = typeof(SimHarness))]
+    public void A_per_sale_fault_never_claims_the_pump_was_out_of_service(string strategy)
+    {
+        using var h = new SimHarness(strategy, ThirtyDollarHold);
+        h.Sim.PresentCard("Good");
+        h.AdvanceUntilState(SaleState.ReadyToPump, TimeSpan.FromSeconds(5));
+        h.Sim.StartFueling();
+        h.AdvanceUntilState(SaleState.Fueling, TimeSpan.FromSeconds(1));
+        h.Advance(TimeSpan.FromSeconds(1));
+        h.Sim.AttackSpoofPulses(2000);
+        h.AdvanceUntilState(SaleState.Faulted, TimeSpan.FromSeconds(1));
+        Assert.Equal("PUMP.MTR.OVERPULSE", h.State.FaultCode);
+        Assert.True(h.Sim.View.Service.InService);              // a spoofed pulser is a per-sale fault, never an outage
+
+        h.AdvanceUntilState(SaleState.Idle, TimeSpan.FromSeconds(40));
+        Assert.NotEqual("Pump back in service", h.State.Notice.Headline);
+    }
+
     // ----- A second card. The last driver left without lifting; the next one should never wait on their hold.
 
     [Theory]

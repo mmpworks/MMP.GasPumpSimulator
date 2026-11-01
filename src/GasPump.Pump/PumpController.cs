@@ -87,7 +87,7 @@ public sealed class PumpController(
             return (false, "AlreadyDispensing", null);
         if (Conditions().FirstOrDefault() is { } blocking)
         {
-            ledger.Append("arm.refused", blocking.Format($"{saleId} pump out of service: {blocking.Part}; {blocking.ClearedBy} required"));
+            ledger.Append("arm.refused", blocking.Format($"{saleId} pump out of service: {blocking.Part}. {ServiceActions.Describe(blocking.ClearedBy)}"));
             return (false, blocking.Code, null);
         }
 

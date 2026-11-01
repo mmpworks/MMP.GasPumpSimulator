@@ -132,6 +132,75 @@ public sealed class LinkTests : IDisposable
         Assert.Contains(station.Ledger.Snapshot(), e => e.Kind == "link.down" && e.Detail.Contains("[LINK.DISPENSER.LOST]"));
     }
 
+    [Fact]
+    public void A_dispenser_that_restarts_with_a_separated_hose_still_reports_it_and_a_new_station_refuses_cards_until_the_reset()
+    {
+        var dispenser = NewDispenser();
+        var port = dispenser.Port;
+        Simulation station = NewStation(port, "STN-1");
+        WaitFor(() => station.Link.Connected && station.View.Phase != "Offline", TimeSpan.FromSeconds(5), () => "station never connected\n" + Tail(station));
+        station.DriveOff();
+        WaitFor(() => station.View.Service.Holds("PUMP.HOSE.BREAKAWAY"), TimeSpan.FromSeconds(3), () => "breakaway never reached the station\n" + Tail(station));
+
+        // The dispenser process crashes and comes back on its own state file. The hose is still apart.
+        dispenser.Dispose();
+        WaitFor(() => !station.Link.Connected, TimeSpan.FromSeconds(3), () => "link never dropped");
+        dispenser = NewDispenserOnSamePort(port);
+        WaitFor(() => station.Link.Connected && station.View.Phase != "Offline", TimeSpan.FromSeconds(8), () => "station never reconnected\n" + Tail(station));
+        Assert.True(dispenser.Dispenser.Pump.Service.Holds("PUMP.HOSE.BREAKAWAY"));
+        WaitFor(() => station.View.Service.Holds("PUMP.HOSE.BREAKAWAY") && !station.View.Service.Holds("LINK.DISPENSER.LOST"), TimeSpan.FromSeconds(3), () => $"station view {station.View.Service}\n" + Tail(station));
+
+        // The station restarts too. A fresh station learns the condition from the first view, before any card.
+        station.Dispose();
+        station = NewStation(port, "STN-2");
+        using var _ = station;
+        WaitFor(() => station.Link.Connected && station.View.Service.Holds("PUMP.HOSE.BREAKAWAY"), TimeSpan.FromSeconds(8), () => $"second station view {station.View.Service}\n" + Tail(station));
+        var (ok, _, reason) = station.TryPresentCard("Good");
+        Assert.False(ok);
+        Assert.Contains("PUMP.HOSE.BREAKAWAY", reason);
+
+        station.ResetBreakaway();
+        WaitFor(() => station.View.Service.InService, TimeSpan.FromSeconds(3), () => "reset never reached the station\n" + Tail(station));
+        Assert.True(station.TryPresentCard("Good").Ok);
+        WaitFor(() => station.Snapshot().State == SaleState.ReadyToPump, TimeSpan.FromSeconds(5), () => "never armed after the reset\n" + Tail(station));
+        dispenser.Dispose();
+    }
+
+    [Fact]
+    public void E_stop_over_the_socket_keeps_its_final_snapshot_and_the_reset_closes_the_sale_with_no_hold_left()
+    {
+        var dispenser = NewDispenser();
+        var port = dispenser.Port;
+        var poweredOff = new ManualResetEventSlim();
+        dispenser.PoweredOff += poweredOff.Set;
+        var card = TestCards.Get("Good");
+        Money before, atStop;
+        using (var station = NewStation(port, "STN-1"))
+        {
+            WaitFor(() => station.Link.Connected && station.View.Phase != "Offline", TimeSpan.FromSeconds(5), () => "station never connected\n" + Tail(station));
+            before = station.Issuer.AvailableBalance(card.Pan);
+            station.PresentCard("Good");
+            WaitFor(() => station.Snapshot().State == SaleState.ReadyToPump, TimeSpan.FromSeconds(5), () => "never armed\n" + Tail(station));
+            station.StartFueling();
+            WaitFor(() => station.Snapshot().Money > new Money(50), TimeSpan.FromSeconds(5), () => "no fuel recorded\n" + Tail(station));
+            atStop = station.Snapshot().Money;
+            station.EmergencyStop("test");                     // record, final snapshot, power off, down
+            Assert.True(poweredOff.Wait(TimeSpan.FromSeconds(5)), "the dispenser never heard the power go");
+        }
+        var snapshot = StateJournal.Load(Path.Combine(_dir, "state.json"))!;
+        Assert.Equal("ESTOP", snapshot.StopReason);              // the station's own link drop did not overwrite it
+        Assert.Equal("Fueling", snapshot.Sale.State);
+
+        // The cashier's reset: power back to the island, then a new station.
+        dispenser = NewDispenserOnSamePort(port);
+        using var station2 = NewStation(port, "STN-2");
+        WaitFor(() => station2.Link.Connected, TimeSpan.FromSeconds(8), () => "second station never connected\n" + Tail(station2));
+        Assert.Equal(RecoveryKind.ClosedOut, station2.LastRecovery.Kind);
+        Assert.Equal(Volume.Zero, station2.LastRecovery.UnrecordedUpTo);
+        WaitFor(() => station2.Issuer.OpenHolds.Count == 0 && station2.Issuer.AvailableBalance(card.Pan) == before - atStop, TimeSpan.FromSeconds(5), () => $"holds {string.Join(",", station2.Issuer.OpenHolds)}\n" + Tail(station2));
+        dispenser.Dispose();
+    }
+
     /// <summary>The port the last dispenser held can sit in TIME_WAIT for a moment after it closed. Retry the bind briefly.</summary>
     private DispenserServer NewDispenserOnSamePort(int port)
     {

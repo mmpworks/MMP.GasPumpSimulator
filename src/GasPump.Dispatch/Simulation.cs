@@ -245,6 +245,7 @@ public sealed class Simulation : IDisposable
     /// </summary>
     private void OnDispenserConnection(bool up)
     {
+        if (_frozen) return;   // the station cut this link itself; see EmergencyStop
         var code = DiagnosticCodes.LinkDispenserLost;
         if (up)
         {
@@ -267,20 +268,23 @@ public sealed class Simulation : IDisposable
     /// </summary>
     private void OnServiceView(ServiceStatus service)
     {
-        string saleId;
-        lock (_gate)
+        // One lock from compare to post, so two reporters (the link thread and the constructor) cannot cross and leave
+        // the sale holding one status while the station holds another. The sale worker drains the box in post order.
+        lock (_serviceGate)
         {
-            if (service == _service) return;
+            if (_frozen || service == _service) return;
             _service = service;
-            saleId = _sale.SaleId;
+            string saleId;
+            lock (_gate) saleId = _sale.SaleId;
+            Ledger.Append("service.status", $"pump {service}");
+            Log.Write("station", "pump {Service}", ("Service", service.ToString()), ("Codes", string.Join(",", service.Codes)));
+            _saleBox.Post(new SaleEvent.PumpService(saleId, service));
         }
-        Ledger.Append("service.status", $"pump {service}");
-        Log.Write("station", "pump {Service}", ("Service", service.ToString()), ("Codes", string.Join(",", service.Codes)));
-        _saleBox.Post(new SaleEvent.PumpService(saleId, service));
     }
 
-    /// <summary>Under _gate. What the station last heard about the pump; every new sale starts from it.</summary>
-    private ServiceStatus _service = ServiceStatus.Normal;
+    private readonly Lock _serviceGate = new();
+    /// <summary>What the station last heard about the pump; every new sale starts from it. Written under _serviceGate, read under _gate.</summary>
+    private volatile ServiceStatus _service = ServiceStatus.Normal;
 
     public string RunId { get; }
     public string? CustodyPath { get; }
@@ -315,6 +319,7 @@ public sealed class Simulation : IDisposable
         {
             d.Totalizer.Restore(new Volume(s.TotalizerMilliGallons));
             d.Nonces.Import(s.Nonces);
+            if (s.DispenserConditions is { Count: > 0 } c) d.RestoreConditions(c);
         }
         Issuer.Import(s.Issuer);
         Site.Restore(new Money(s.CreditHoldCents), new Money(s.DebitHoldCents), s.FailedPins, s.LockedUntil);
@@ -376,7 +381,8 @@ public sealed class Simulation : IDisposable
             Drawer.Open.ToDictionary(kv => kv.Key, kv => kv.Value.Cents),
             Drawer.ChangeDue.ToDictionary(kv => kv.Key, kv => kv.Value.Cents),
             Site.CreditHold.Cents, Site.DebitHold.Cents, Site.FailedPins, Site.LockedUntil,
-            view.TotalizerMilliGallons, _local?.Nonces.Export().ToList() ?? [], Issuer.Export(), stopReason);
+            view.TotalizerMilliGallons, _local?.Nonces.Export().ToList() ?? [], Issuer.Export(), stopReason,
+            _local?.ConditionCodes.ToList());
     }
 
     /// <summary>Write the snapshot. Called by the one-second timer and on every sale change, serialized so two never interleave.</summary>
@@ -385,6 +391,7 @@ public sealed class Simulation : IDisposable
         if (_options.Journal is not { } j) return;
         lock (_journalGate)
         {
+            if (_frozen) return;
             try { StateJournal.Save(j.StatePath, CaptureSnapshot(stopReason)); }
             catch (Exception ex) { Log.Error("journal", "snapshot failed: {Message}", ("Message", ex.Message)); }
         }
@@ -671,11 +678,20 @@ public sealed class Simulation : IDisposable
         Log.Error("station", "{Code} emergency stop pressed by {By}: power removed from every dispenser and STP", ("Code", code.Code), ("By", pressedBy));
         Ledger.Append("station.estop", code.Format($"pressed by {pressedBy}; sale {CurrentSaleId} {Snapshot().State} {Snapshot().Volume} {Snapshot().Money}"));
         Custody?.Pump();
-        SaveJournal(stopReason: "ESTOP");
+        // The final snapshot is the last word. After it, nothing may rewrite the journal or turn the station's own
+        // power cut into a dispenser fault on the open sale: the link is about to drop because we are dropping it.
+        lock (_journalGate)
+        {
+            SaveJournal(stopReason: "ESTOP");
+            _frozen = true;
+        }
         // The forecourt goes dark: a dispenser in another process is told the power is off and ends. In-process it ends with us.
         _link.PowerOff();
         TearDown();
     }
+
+    /// <summary>True from the E-stop's final snapshot on. The journal and the link reactions are done; only the teardown remains.</summary>
+    private volatile bool _frozen;
 
     /// <summary>
     /// Guess the admin PIN from 0000 upward. The panel locks after three wrong

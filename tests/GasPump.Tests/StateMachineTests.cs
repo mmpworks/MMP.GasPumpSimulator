@@ -21,6 +21,83 @@ public class StateMachineTests
         return m;
     }
 
+    private static readonly ServiceStatus HoseApart = ServiceStatus.Of([DiagnosticCodes.PumpHoseBreakaway]);
+
+    [Fact]
+    public void A_service_report_during_fueling_or_completing_is_noted_and_changes_nothing()
+    {
+        var m = Fueling();
+        m.Apply(new SaleEvent.Progress("S1", Volume.FromGallons(1), new Money(350), FlowRate.GallonsPerMinute(10), "full"));
+        var c = m.Apply(new SaleEvent.PumpService("S1", HoseApart));
+        Assert.Equal(SaleState.Fueling, m.State);                 // the pump's own fault event ends the delivery, never the report
+        Assert.DoesNotContain(c, x => x is SaleCommand.Reverse or SaleCommand.SendCompletion or SaleCommand.CloseValve);
+        Assert.Equal(HoseApart, m.Service);
+
+        m.Apply(new SaleEvent.CeilingReached("S1", Volume.FromGallons(8.574m), new Money(3000)));
+        Assert.Equal(SaleState.Completing, m.State);
+        m.Apply(new SaleEvent.PumpService("S1", ServiceStatus.Normal));
+        Assert.Equal(SaleState.Completing, m.State);              // a repair never clears a live sale
+    }
+
+    [Fact]
+    public void A_repair_that_arrives_before_the_fault_still_clears_the_screen_once_the_bank_answers()
+    {
+        var m = Fueling();
+        m.Apply(new SaleEvent.Progress("S1", Volume.FromGallons(1), new Money(350), FlowRate.GallonsPerMinute(10), "full"));
+        m.Apply(new SaleEvent.PumpService("S1", HoseApart));
+        m.Apply(new SaleEvent.PumpService("S1", ServiceStatus.Normal));          // the repair, reordered ahead of the fault
+        var c = m.Apply(new SaleEvent.Fault("S1", "[PUMP.HOSE.BREAKAWAY] x", "PUMP.HOSE.BREAKAWAY"));
+        Assert.Equal(SaleState.Faulted, m.State);
+        Assert.Contains(c, x => x is SaleCommand.SendCompletion { Final.Cents: 350 });
+        m.Apply(new SaleEvent.CompletionSent("S1", new Money(350)));
+        Assert.Equal(SaleState.Idle, m.State);                    // settled, and the part is already fine: clear
+        Assert.Equal("Pump back in service", m.Notice().Headline);
+    }
+
+    [Fact]
+    public void A_part_failing_with_the_nozzle_in_hand_before_the_first_pour_ends_the_sale_and_gives_the_hold_back()
+    {
+        var m = Machine();
+        m.Apply(new SaleEvent.CardPresented("S1", "Good"));
+        m.Apply(new SaleEvent.Approved("S1", Money.FromDollars(30), "tok"));
+        m.Apply(new SaleEvent.NozzleLifted("S1"));
+        var c = m.Apply(new SaleEvent.PumpService("S1", HoseApart));
+        Assert.Equal(SaleState.Faulted, m.State);
+        Assert.Equal("PUMP.HOSE.BREAKAWAY", m.FaultCode);
+        Assert.Contains(c, x => x is SaleCommand.Reverse);
+        Assert.Contains(c, x => x is SaleCommand.CloseValve);
+        Assert.Equal(DriverAction.SeeAttendant, m.Notice().Action);
+    }
+
+    [Fact]
+    public void A_store_and_forward_screen_survives_a_repair_and_a_fresh_sale_starts_out_of_service()
+    {
+        var m = Fueling();
+        m.Apply(new SaleEvent.CeilingReached("S1", Volume.FromGallons(8.574m), new Money(3000)));
+        m.Apply(new SaleEvent.CompletionQueued("S1", new Money(3000)));
+        Assert.Equal(SaleState.StoreAndForward, m.State);
+        m.Apply(new SaleEvent.PumpService("S1", HoseApart));
+        m.Apply(new SaleEvent.PumpService("S1", ServiceStatus.Normal));
+        Assert.Equal(SaleState.StoreAndForward, m.State);
+
+        var seeded = new SaleStateMachine("S2", service: HoseApart);
+        Assert.Equal("Out of service: hose breakaway coupling", seeded.Notice().Headline);
+        Assert.Contains("attendant", seeded.Notice().Detail);
+    }
+
+    [Fact]
+    public void A_per_sale_fault_clears_at_the_notice_timeout_without_the_back_in_service_headline()
+    {
+        var m = Fueling();
+        m.Apply(new SaleEvent.Progress("S1", Volume.FromGallons(1), new Money(350), FlowRate.GallonsPerMinute(10), "full"));
+        m.Apply(new SaleEvent.Fault("S1", "[PUMP.MTR.OVERPULSE] x", "PUMP.MTR.OVERPULSE"));
+        m.Apply(new SaleEvent.CompletionSent("S1", new Money(350)));
+        Assert.Equal(SaleState.Faulted, m.State);                 // a per-sale fault waits for the notice timeout
+        m.Apply(new SaleEvent.Timeout("S1", SaleState.Faulted));
+        Assert.Equal(SaleState.Idle, m.State);
+        Assert.NotEqual("Pump back in service", m.Notice().Headline);
+    }
+
     [Fact]
     public void Happy_path_emits_the_right_commands_in_order()
     {

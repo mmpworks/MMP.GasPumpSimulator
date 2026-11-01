@@ -409,15 +409,7 @@ public sealed class SaleStateMachine
     private DriverNotice OutOfServiceNotice()
     {
         var code = DiagnosticCodes.Find(Service.Codes[0]);
-        var repair = code?.ClearedBy switch
-        {
-            ServiceAction.AttendantReset => "The attendant must reset it before the next sale.",
-            ServiceAction.SupplyRestored => "The fuel supply must be restored before the next sale.",
-            ServiceAction.PulserRepaired => "The meter must be repaired before the next sale.",
-            ServiceAction.LinkRestored => "The station is waiting for this pump to reconnect.",
-            ServiceAction.CashierReset => "The cashier must reset the station.",
-            _ => "",
-        };
+        var repair = code is null ? "" : ServiceActions.Describe(code.ClearedBy);
         return new($"Out of service: {code?.Part ?? Service.Codes[0]}", Join(repair, "Please use another pump."), DriverAction.UseAnotherPump);
     }
 
@@ -484,8 +476,8 @@ public sealed class SaleStateMachine
         {
             case SaleState.Idle when !Service.InService:
                 return OutOfServiceNotice();
-            case SaleState.Idle when End == EndReason.PumpFault:
-                // The last sale faulted and the pump has no condition left. Say so, and where that driver's money went.
+            case SaleState.Idle when End == EndReason.PumpFault && FaultCode is { } fc && DiagnosticCodes.Find(fc) is { OutOfService: true }:
+                // The last sale faulted for a part that was then repaired. Say so, and where that driver's money went.
                 return new("Pump back in service", Join(holdLine, "Insert or tap your card, or pay the cashier, for the next sale."), DriverAction.None);
             case SaleState.Idle when Hold == HoldStatus.Settled:
                 // The last sale's receipt stays on the screen until the next driver starts or the screen is reset.

@@ -166,9 +166,17 @@ public sealed class Dispenser
             case PumpMessage.DriveOff:
                 Hydraulics.BreakawaySeparated = true;
                 Log.Error("pump", "{Code} breakaway coupling separated", ("Code", DiagnosticCodes.PumpHoseBreakaway.Code));
-                if (Pump.Phase is not PumpPhase.Dispensing)
+                if (Pump.Phase is PumpPhase.Dispensing or PumpPhase.Paused)
                 {
-                    // Not mid-pour: the sensor still records it, and the next arm is refused until the attendant resets.
+                    // Mid-delivery, trigger held or released: the delivery ends here and the sale must hear it now,
+                    // because a paused pump has no tick that would notice the coupling.
+                    Pump.EmergencyStop(DiagnosticCodes.PumpHoseBreakaway, "breakaway coupling separated during delivery");
+                    Log.Error("pump", "FAULT {Code} {Fault}", ("Code", Pump.LastFaultCode), ("Part", DiagnosticCodes.PumpHoseBreakaway.Part), ("Fault", Pump.LastFault));
+                    events.Add(new SaleEvent.Fault(saleId, Pump.LastFault!, Pump.LastFaultCode));
+                }
+                else
+                {
+                    // Not mid-delivery: the sensor still records it, and the next arm is refused until the attendant resets.
                     Ledger.Append("hose.breakaway", DiagnosticCodes.PumpHoseBreakaway.Format($"separated while {Pump.Phase}"));
                     Pump.HangNozzle();
                 }
@@ -208,6 +216,24 @@ public sealed class Dispenser
         if (m is not PumpMessage.Tick && Pump.ReturnToService())
             Log.Write("pump", "back in service, {Service}", ("Service", Pump.Service.ToString()));
         return events;
+    }
+
+    /// <summary>
+    /// The broken parts as the sensors read them, for a state file. A restart
+    /// of the software repairs nothing on the island, so the next process must
+    /// start with the same hose, tank, and pulser it was left with.
+    /// </summary>
+    public IReadOnlyList<string> ConditionCodes => Pump.Service.Codes;
+
+    /// <summary>Set the part sensors back to a saved state. The inverse of <see cref="ConditionCodes"/>; unknown codes are ignored.</summary>
+    public void RestoreConditions(IEnumerable<string> codes)
+    {
+        foreach (var code in codes)
+        {
+            if (code == DiagnosticCodes.PumpHoseBreakaway.Code) Hydraulics.BreakawaySeparated = true;
+            else if (code == DiagnosticCodes.PumpSupplyNoFlow.Code) Hydraulics.SupplyAvailable = false;
+            else if (code == DiagnosticCodes.PumpMeterNoPulse.Code) Meter.PulserDead = true;
+        }
     }
 
     public DispenserView View(string runId, int pid, string? custodyPath) => new(

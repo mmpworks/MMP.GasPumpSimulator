@@ -46,7 +46,8 @@ public static class Contracts
                 lastExit = process?.LastExit,
             },
             sale = Sale(s),
-            pump = Pump(sim.View),
+            // While the E-stop holds, the forecourt has no power: the pump is out of service whatever its last view said.
+            pump = Pump(host?.EStopActive == true ? sim.View with { Service = EStopStatus } : sim.View),
             network = new { mode = sim.Network.Mode.ToString(), latencyMs = sim.Network.Latency.TotalMilliseconds, lateResponseMs = sim.Network.LateResponse.TotalMilliseconds, flapFailureRate = sim.Network.FlapFailureRate },
             pendingCompletions = sim.Gateway.PendingCompletions.Select(p => new { p.SaleId, cents = p.Final.Cents }),
             pending = sim.Gateway.Pending.Select(p => new { p.SaleId, kind = p.Kind.ToString(), cents = p.Final.Cents }),
@@ -79,6 +80,8 @@ public static class Contracts
             ledgerOk = sim.Ledger.Verify() == 0,
         };
     }
+
+    private static readonly ServiceStatus EStopStatus = new([DiagnosticCodes.StationEStop.Code]);
 
     /// <summary>The pump as the station knows it. Same shape whether the dispenser is a mailbox away or a socket away.</summary>
     public static object Pump(DispenserView v) => new
