@@ -5,10 +5,30 @@
 }
 * { box-sizing: border-box; }
 body { margin: 0; }
-#app { padding: 16px; display: grid; grid-template-columns: 1.2fr 1fr 1fr; grid-template-rows: auto auto auto auto; gap: 14px; min-height: 100vh; }
+html, body, #app { height: 100%; }
+#app { padding: 10px 12px 12px; display: flex; flex-direction: column; gap: 8px; overflow: hidden; }
+.workspace { flex: 1; min-height: 0; }
 .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px; min-height: 0; display: flex; flex-direction: column; }
+.panel.fill { height: 100%; overflow: auto; box-sizing: border-box; }
+.panel.fill > div { display: flex; flex-direction: column; min-height: 0; flex: 1; }
+/* splitpanes: the gap between panels is the handle. Wide enough to grab, dark enough to disappear. */
+.splitpanes.dark-theme > .splitpanes__splitter { background: transparent; position: relative; }
+.splitpanes.dark-theme.splitpanes--vertical > .splitpanes__splitter { width: 10px; cursor: col-resize; }
+.splitpanes.dark-theme.splitpanes--horizontal > .splitpanes__splitter { height: 10px; cursor: row-resize; }
+.splitpanes.dark-theme > .splitpanes__splitter::before { content: ''; position: absolute; inset: 0; margin: auto; border-radius: 2px; background: var(--line); transition: background .15s; }
+.splitpanes.dark-theme.splitpanes--vertical > .splitpanes__splitter::before { width: 2px; height: 40px; }
+.splitpanes.dark-theme.splitpanes--horizontal > .splitpanes__splitter::before { height: 2px; width: 40px; }
+.splitpanes.dark-theme > .splitpanes__splitter:hover::before { background: var(--info); }
+.splitpanes__pane { overflow: hidden; }
+/* tabs */
+.tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); margin-bottom: 10px; }
+.tabs button { background: transparent; border: 0; border-bottom: 2px solid transparent; border-radius: 0; padding: 6px 10px; color: var(--muted); font-size: 13px; letter-spacing: .06em; text-transform: uppercase; }
+.tabs button.active { color: var(--text); border-bottom-color: var(--info); }
+.tabs button .muted { text-transform: none; letter-spacing: 0; margin-left: 6px; }
+.tabs .bad { color: var(--bad); }
+.tabbody { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.tabbody > div { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .panel h2 { margin: 0 0 10px; font-size: 13px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
-.pump { grid-row: span 2; }
 .notice { border: 1px solid var(--line); border-left-width: 5px; border-radius: 10px; padding: 10px 14px; margin-bottom: 10px; background: #10131a; }
 .notice.ok { border-left-color: var(--accent); } .notice.warn { border-left-color: var(--warn); } .notice.bad { border-left-color: var(--bad); } .notice.info { border-left-color: var(--info); }
 .notice .headline { font-size: 18px; font-weight: 600; }
@@ -39,9 +59,8 @@ select, input[type=number] { background: #0f1115; color: var(--text); border: 1p
 .list { overflow: auto; font-family: ui-monospace, Consolas, monospace; font-size: 12px; line-height: 1.5; flex: 1; min-height: 0; }
 .list .line { white-space: pre-wrap; border-bottom: 1px solid #1a1f29; padding: 2px 0; }
 .list .line.cols { display: grid; grid-template-columns: 100px 72px 1fr; column-gap: 14px; align-items: baseline; }
-.log .list { max-height: 34vh; }
+.log .list, .fill .list { flex: 1; min-height: 0; }
 .line.sev-Warn { color: var(--warn); } .line.sev-Error { color: var(--bad); }
-.ledger .list { max-height: 260px; }
 .src { color: var(--muted); display: inline-block; width: 72px; }
 input[type=text], input:not([type]) { background: #0f1115; color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px; font-size: 13px; }
 .src.attack { color: var(--bad); } .src.pump { color: var(--accent); } .src.payment { color: var(--info); } .src.sale { color: #d2a8ff; }

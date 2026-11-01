@@ -74,11 +74,12 @@ function start() {
 
     <div class="muted" style="margin-bottom: 4px">3. Trigger <span class="badge" :class="flowing ? 'ok' : ''">{{ flowing ? 'flowing' : 'closed' }}</span></div>
     <div class="grid2" style="margin-bottom: 10px">
-      <button class="primary" :disabled="!canSqueeze" @click="api.squeeze()">Squeeze trigger</button>
-      <button :disabled="!flowing" @click="api.release()">Release trigger</button>
+      <!-- One button, two states: it reads what the next press will do. -->
+      <button v-if="flowing" class="danger" @click="api.release()">Release trigger (pause)</button>
+      <button v-else class="primary" :disabled="!canSqueeze" @click="api.squeeze()">Squeeze trigger{{ pump?.poured ? ' (resume)' : '' }}</button>
+      <button :disabled="!state?.pending.length" @click="api.drain()">Drain queued to bank ({{ state?.pending.length ?? 0 }})</button>
     </div>
 
-    <button :disabled="!state?.pending.length" @click="api.drain()">Drain queued to bank ({{ state?.pending.length ?? 0 }})</button>
     <p class="muted" style="margin: 10px 0 0">
       Credit asks the bank for the site's credit ceiling. Debit asks for the debit ceiling and gets the lesser of that and the bank's answer; use a
       Debit card for it. Cash sets the ceiling to the cent, no bank. Fuel flows only with a grade chosen, the nozzle in the tank, and the trigger held.
