@@ -42,9 +42,9 @@ const grades = ['Regular', 'Plus', 'Premium']
     </div>
     <div class="grid2" style="margin-bottom: 10px">
       <button v-if="!nozzleOut" :disabled="!armed" @click="api.lift()">Lift nozzle</button>
-      <button v-else :disabled="!armed" @click="api.hang()">Hang nozzle{{ pump?.poured ? ' (ends sale)' : '' }}</button>
+      <button v-else @click="api.hang()">Hang nozzle{{ pump?.poured ? ' (ends sale)' : '' }}</button>
       <button v-if="!seated" :disabled="!armed || !nozzleOut" @click="api.seat()">Put in tank</button>
-      <button v-else :disabled="!armed" @click="api.unseat()">Pull out of tank</button>
+      <button v-else @click="api.unseat()">Pull out of tank</button>
     </div>
 
     <div class="muted" style="margin-bottom: 4px">3. Trigger <span class="badge" :class="flowing ? 'ok' : ''">{{ flowing ? 'flowing' : 'closed' }}</span></div>

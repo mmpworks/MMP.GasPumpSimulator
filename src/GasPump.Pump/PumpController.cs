@@ -182,7 +182,7 @@ public sealed class PumpController(
         Phase = PumpPhase.Faulted;
         LastFault = reason;
         ledger.Append("pump.fault", $"{_armed?.SaleId ?? "-"} {reason} after {Volume} {Money}");
-        _armed = null;
+        ClearSale();
     }
 
     /// <summary>
@@ -284,15 +284,22 @@ public sealed class PumpController(
         hydraulics.Close();
         Phase = PumpPhase.Stopped;
         ledger.Append("valve.close", $"{_armed?.SaleId} {reason} {Volume} {Money} totalizer {totalizer.Total}");
+        ClearSale();
+    }
+
+    /// <summary>The delivery is over. Drop what the driver chose so the next driver starts from nothing. Volume and Money stay for the receipt.</summary>
+    private void ClearSale()
+    {
         _armed = null;
+        _grade = null;
+        _poured = false;
+        _triggerHeld = false;
     }
 
     public void Disarm()
     {
         hydraulics.Close();
-        _armed = null;
-        _grade = null;
-        _poured = false;
+        ClearSale();
         Phase = PumpPhase.Disarmed;
     }
 

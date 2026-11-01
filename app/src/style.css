@@ -38,7 +38,11 @@ select, input[type=number] { background: #0f1115; color: var(--text); border: 1p
 .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .list { overflow: auto; font-family: ui-monospace, Consolas, monospace; font-size: 12px; line-height: 1.5; flex: 1; min-height: 0; }
 .list .line { white-space: pre-wrap; border-bottom: 1px solid #1a1f29; padding: 2px 0; }
+.list .line.cols { display: grid; grid-template-columns: 100px 72px 1fr; column-gap: 14px; align-items: baseline; }
+.log .list { max-height: 34vh; }
+.ledger .list { max-height: 260px; }
 .src { color: var(--muted); display: inline-block; width: 72px; }
+input[type=text], input:not([type]) { background: #0f1115; color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px; font-size: 13px; }
 .src.attack { color: var(--bad); } .src.pump { color: var(--accent); } .src.payment { color: var(--info); } .src.sale { color: #d2a8ff; }
 .trace { display: flex; align-items: flex-end; gap: 1px; height: 60px; background: #0a0c10; border-radius: 6px; padding: 4px; margin-top: 8px; }
 .trace > i { flex: 1; background: var(--accent); min-width: 1px; opacity: .85; }

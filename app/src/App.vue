@@ -24,6 +24,6 @@ onMounted(connect)
   <ControlPanel class="panel" />
   <NetworkPanel class="panel" />
   <AttackPanel class="panel" />
-  <LedgerPanel class="panel" />
-  <LogPanel class="panel" style="grid-column: 1 / -1" />
+  <LedgerPanel class="panel ledger" />
+  <LogPanel class="panel log" style="grid-column: 1 / -1" />
 </template>
