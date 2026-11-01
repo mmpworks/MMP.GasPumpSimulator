@@ -429,6 +429,89 @@ public class SimulationTests
         Assert.Equal(0, h.Sim.Ledger.Verify());
     }
 
+    // ----- Forecourt faults: a failed part names itself, the sale closes for the fuel that moved, the driver hears the right next step.
+
+    [Theory]
+    [MemberData(nameof(SimHarness.Strategies), MemberType = typeof(SimHarness))]
+    public void Tank_runs_dry_mid_fuel_and_the_sale_settles_for_the_metered_fuel_with_the_code(string strategy)
+    {
+        using var h = new SimHarness(strategy, ThirtyDollarHold);
+        var card = TestCards.Get("Good");
+        var before = h.Sim.Issuer.AvailableBalance(card.Pan);
+        h.Sim.PresentCard("Good");
+        h.AdvanceUntilState(SaleState.ReadyToPump, TimeSpan.FromSeconds(5));
+        h.Sim.StartFueling();
+        h.AdvanceUntilState(SaleState.Fueling, TimeSpan.FromSeconds(1));
+        h.Advance(TimeSpan.FromSeconds(3));
+        var metered = h.State.Volume;
+
+        h.Sim.TankRunsDry();
+        h.AdvanceUntilState(SaleState.Faulted, TimeSpan.FromSeconds(6));
+        Assert.Equal("PUMP.STP.NOFLOW", h.State.FaultCode);
+        Assert.Equal(metered, h.State.Volume);
+        Assert.Equal("Fuel supply stopped", h.State.Notice.Headline);
+        Assert.Equal(DriverAction.UseAnotherPump, h.State.Notice.Action);
+        Assert.Contains("charged only for the", h.State.Notice.Detail);
+
+        h.Advance(TimeSpan.FromSeconds(1));
+        Assert.Equal(HoldStatus.Settled, h.State.Hold);
+        Assert.Equal(before - h.State.Money, h.Sim.Issuer.AvailableBalance(card.Pan));
+        var ledger = h.Sim.Ledger.Snapshot();
+        Assert.Contains(ledger, e => e.Kind == "tank.fuelout" && e.Detail.Contains("[TANK.FUELOUT]"));
+        Assert.Contains(ledger, e => e.Kind == "pump.fault" && e.Detail.Contains("[PUMP.STP.NOFLOW]"));
+        Assert.Contains(h.Sim.Log.Snapshot(), l => l.Source == "pump" && l.Severity == LogSeverity.Error && l.Props.Any(p => p.Key == "Code" && (string?)p.Value == "PUMP.STP.NOFLOW"));
+    }
+
+    [Theory]
+    [MemberData(nameof(SimHarness.Strategies), MemberType = typeof(SimHarness))]
+    public void Drive_off_closes_the_sale_calls_the_attendant_and_blocks_the_next_sale_until_reset(string strategy)
+    {
+        using var h = new SimHarness(strategy, ThirtyDollarHold);
+        h.Sim.PresentCard("Good");
+        h.AdvanceUntilState(SaleState.ReadyToPump, TimeSpan.FromSeconds(5));
+        h.Sim.StartFueling();
+        h.AdvanceUntilState(SaleState.Fueling, TimeSpan.FromSeconds(1));
+        h.Advance(TimeSpan.FromSeconds(2));
+
+        h.Sim.DriveOff();
+        h.AdvanceUntilState(SaleState.Faulted, TimeSpan.FromSeconds(1));
+        Assert.Equal("PUMP.HOSE.BREAKAWAY", h.State.FaultCode);
+        Assert.Equal(DriverAction.SeeAttendant, h.State.Notice.Action);
+        h.Advance(TimeSpan.FromSeconds(1));
+        Assert.Equal(HoldStatus.Settled, h.State.Hold);
+
+        // The next driver cannot arm a pump with a separated hose.
+        h.Sim.PresentCard("Good");
+        h.AdvanceUntilState(SaleState.Faulted, TimeSpan.FromSeconds(5));
+        Assert.Contains("BreakawayOpen", h.State.LastMessage);
+
+        h.Sim.ResetBreakaway();
+        h.Advance(TimeSpan.FromMilliseconds(300));
+        h.Sim.PresentCard("Good");
+        h.AdvanceUntilState(SaleState.ReadyToPump, TimeSpan.FromSeconds(5));
+        Assert.Contains(h.Sim.Ledger.Snapshot(), e => e.Kind == "hose.breakaway.reset");
+    }
+
+    [Theory]
+    [MemberData(nameof(SimHarness.Strategies), MemberType = typeof(SimHarness))]
+    public void Dead_pulser_mid_fuel_faults_fast_and_bills_only_what_was_counted(string strategy)
+    {
+        using var h = new SimHarness(strategy, ThirtyDollarHold);
+        h.Sim.PresentCard("Good");
+        h.AdvanceUntilState(SaleState.ReadyToPump, TimeSpan.FromSeconds(5));
+        h.Sim.StartFueling();
+        h.AdvanceUntilState(SaleState.Fueling, TimeSpan.FromSeconds(1));
+        h.Advance(TimeSpan.FromSeconds(2));
+        var counted = h.State.Volume;
+
+        h.Sim.KillPulser();
+        h.AdvanceUntilState(SaleState.Faulted, TimeSpan.FromSeconds(1));
+        Assert.Equal("PUMP.MTR.NOPULSE", h.State.FaultCode);
+        Assert.Equal(counted, h.State.Volume);
+        Assert.True(h.Sim.Meter.UnmeteredVolume > Volume.Zero);
+        Assert.Equal(DriverAction.SeeAttendant, h.State.Notice.Action);
+    }
+
     // ----- Attacks
 
     [Theory]

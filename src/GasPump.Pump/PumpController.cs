@@ -7,11 +7,11 @@ namespace GasPump.Pump;
 /// Disarmed: no authorization. Armed: authorized, valve shut, waiting for the
 /// driver. Dispensing: trigger held, valve open. Paused: a pour has happened
 /// or the nozzle is out, valve shut, the driver may squeeze again. Stopped:
-/// the delivery ended. Faulted: something looked like tampering.
+/// the delivery ended. Faulted: something looked like tampering or a part failed.
 /// </summary>
 public enum PumpPhase { Disarmed, Armed, Dispensing, Paused, Stopped, Faulted }
 
-/// <summary>What one tick produced. The worker turns this into sale events.</summary>
+/// <summary>What one tick produced. The worker turns this into sale events. Fault carries the formatted code and detail; FaultCode the code alone.</summary>
 public sealed record PumpTick(
     PumpPhase Phase,
     Volume Volume,
@@ -20,16 +20,19 @@ public sealed record PumpTick(
     string TaperPhase,
     bool CeilingReached,
     bool Stopped,
-    string? Fault);
+    string? Fault,
+    string? FaultCode);
 
 /// <summary>
 /// The dispenser's brain. Single-threaded by contract: the pump worker is the
 /// only caller. It opens the valve only after the authority armed it, only
 /// while the driver holds the trigger, only with the nozzle seated in a fill
 /// point, and only after a grade is chosen. It closes the valve on the cent,
-/// and it stops dead on anything that looks like tampering: pulses the valve
-/// could not have passed, fuel moving while the valve is shut, a sale running
-/// past its time.
+/// and it stops dead on anything that looks like tampering or a failed part:
+/// pulses the valve could not have passed, fuel moving while the valve is
+/// shut, fuel moving with no pulses, no fuel moving with the valve open, a
+/// separated hose, a sale running past its time. Every stop carries a
+/// diagnostic code naming the part.
 ///
 /// Nozzle lifecycle. Lift takes the nozzle off the harness. Seat puts it in
 /// the tank or can. Squeeze opens the valve, Release shuts it, as many times
@@ -46,6 +49,11 @@ public sealed class PumpController(
     TaperPolicy taper,
     TimeProvider clock)
 {
+    /// <summary>Valve open and nothing moving for this long is a supply fault. Three seconds covers a slow-flow solenoid opening.</summary>
+    public static readonly TimeSpan NoFlowWindow = TimeSpan.FromSeconds(3);
+    /// <summary>Fuel moving with no pulses for this long is a dead pulser. Short, because every tick of it is unmetered fuel.</summary>
+    public static readonly TimeSpan NoPulseWindow = TimeSpan.FromMilliseconds(300);
+
     private ArmedAuthorization? _armed;
     private DateTimeOffset _armedAt;
     private Grade? _grade;
@@ -54,11 +62,14 @@ public sealed class PumpController(
     private bool _triggerHeld;
     private bool _poured;
     private string _tickPhase = "armed";
+    private TimeSpan _noFlowFor;
+    private TimeSpan _noPulseFor;
 
     public PumpPhase Phase { get; private set; } = PumpPhase.Disarmed;
     public Money Money { get; private set; }
     public Volume Volume => meter.SaleVolume;
     public string? LastFault { get; private set; }
+    public string? LastFaultCode { get; private set; }
     public ArmedAuthorization? Armed => _armed;
     public bool NozzleLifted => _nozzleLifted;
     public bool NozzleSeated => _nozzleSeated;
@@ -66,12 +77,19 @@ public sealed class PumpController(
     public Grade? SelectedGrade => _grade;
     /// <summary>True once any fuel has moved in this sale. After this, hanging the nozzle ends the delivery.</summary>
     public bool Poured => _poured;
+    public bool BreakawayOpen => hydraulics.BreakawaySeparated;
+    public bool SupplyAvailable => hydraulics.SupplyAvailable;
 
     /// <summary>Arm from a signed token. A preselected grade is a convenience for a driver who chose at the card reader.</summary>
     public (bool Ok, string Reason, ArmedAuthorization? Armed) Arm(string saleId, string tokenWire, Grade? preselectedGrade = null)
     {
         if (Phase is PumpPhase.Dispensing or PumpPhase.Paused)
             return (false, "AlreadyDispensing", null);
+        if (hydraulics.BreakawaySeparated)
+        {
+            ledger.Append("arm.refused", DiagnosticCodes.PumpHoseBreakaway.Format($"{saleId} breakaway coupling still separated; attendant reset required"));
+            return (false, "BreakawayOpen", null);
+        }
 
         var (armed, refusal) = authority.TryArm(saleId, tokenWire);
         if (armed is null) return (false, refusal, null);
@@ -81,8 +99,11 @@ public sealed class PumpController(
         _grade = preselectedGrade;
         _poured = false;
         _triggerHeld = false;
+        _noFlowFor = TimeSpan.Zero;
+        _noPulseFor = TimeSpan.Zero;
         Money = Money.Zero;
         LastFault = null;
+        LastFaultCode = null;
         meter.ResetSale();
         hydraulics.Close();
         Phase = PumpPhase.Armed;
@@ -149,6 +170,7 @@ public sealed class PumpController(
         var first = !_poured;
         _poured = true;
         Phase = PumpPhase.Dispensing;
+        _noFlowFor = TimeSpan.Zero;
         hydraulics.SetOpening(1);
         ledger.Append("valve.open", $"{_armed.SaleId} grade {_grade} ceiling {_armed.Ceiling}{(first ? "" : " (resumed)")}");
         return (true, "", first);
@@ -174,21 +196,34 @@ public sealed class PumpController(
         return false;
     }
 
+    /// <summary>The attendant reconnected the breakaway coupling and hung the nozzle. The next sale may arm.</summary>
+    public void ResetBreakaway()
+    {
+        hydraulics.BreakawaySeparated = false;
+        _nozzleLifted = false;
+        _nozzleSeated = false;
+        ledger.Append("hose.breakaway.reset", DiagnosticCodes.PumpHoseBreakaway.Format("coupling reconnected by the attendant"));
+    }
+
     public void CloseValve(string reason) => Stop(reason);
 
-    public void EmergencyStop(string reason)
+    public void EmergencyStop(DiagnosticCode code, string detail)
     {
         hydraulics.Close();
         Phase = PumpPhase.Faulted;
-        LastFault = reason;
-        ledger.Append("pump.fault", $"{_armed?.SaleId ?? "-"} {reason} after {Volume} {Money}");
+        LastFault = code.Format(detail);
+        LastFaultCode = code.Code;
+        ledger.Append("pump.fault", code.Format($"{_armed?.SaleId ?? "-"} {detail} after {Volume} {Money}"));
         ClearSale();
     }
 
     /// <summary>
     /// One slice of time. Checks the clock, moves fuel through the valve at the
     /// taper's opening, counts it, prices it, and clamps the last slice so the
-    /// money lands on the ceiling and never past it.
+    /// money lands on the ceiling and never past it. Between those steps it
+    /// watches the three disagreements that name a failed part: the valve says
+    /// open and nothing moves, fuel moves and nothing is counted, more is
+    /// counted than could have moved.
     /// </summary>
     public PumpTick Tick(TimeSpan dt)
     {
@@ -198,12 +233,12 @@ public sealed class PumpController(
             var strayPulses = meter.TakePulseCount();
             if (strayPulses > 0 && Phase != PumpPhase.Faulted)
             {
-                EmergencyStop($"{strayPulses} pulses while {Phase}");
+                EmergencyStop(DiagnosticCodes.PumpMeterStray, $"{strayPulses} pulses while {Phase}");
                 return Current(ceilingReached: false, stopped: true);
             }
             if ((Phase is PumpPhase.Paused or PumpPhase.Armed) && _armed is { } waiting && clock.GetUtcNow() - _armedAt > waiting.MaxDuration)
             {
-                Stop("max sale duration");
+                Stop(DiagnosticCodes.PumpMaxTime.Format("max sale duration"));
                 return Current(ceilingReached: false, stopped: true);
             }
             return Current(ceilingReached: false, stopped: Phase is PumpPhase.Stopped or PumpPhase.Faulted);
@@ -214,7 +249,14 @@ public sealed class PumpController(
         var now = clock.GetUtcNow();
         if (now - _armedAt > armed.MaxDuration)
         {
-            Stop("max sale duration");
+            Stop(DiagnosticCodes.PumpMaxTime.Format("max sale duration"));
+            return Current(ceilingReached: false, stopped: true);
+        }
+
+        // A separated hose is a sensed event, never inferred from zero flow.
+        if (hydraulics.BreakawaySeparated)
+        {
+            EmergencyStop(DiagnosticCodes.PumpHoseBreakaway, "breakaway coupling separated during delivery");
             return Current(ceilingReached: false, stopped: true);
         }
 
@@ -232,9 +274,23 @@ public sealed class PumpController(
         hydraulics.SetOpening(opening);
         _tickPhase = opening >= 1 ? "full" : opening <= taper.MinimumOpening ? "creep" : "taper";
 
-        // Move fuel, then clamp the last slice so it lands on the cap.
+        // Move fuel. The flow switch is the fact; the pulser is the claim.
         var delivered = hydraulics.Deliver(dt);
-        if (delivered == Volume.Zero && cap > Volume.Zero) delivered = new Volume(1);   // creep floor: at least one pulse per tick
+        if (!hydraulics.FlowSwitch)
+        {
+            // Valve open, nothing moved. A supply fault after the window; before it, wait.
+            _noFlowFor += dt;
+            if (_noFlowFor >= NoFlowWindow)
+            {
+                EmergencyStop(DiagnosticCodes.PumpSupplyNoFlow, $"valve open at {opening:0.00}, no flow for {_noFlowFor.TotalSeconds:0.0} s");
+                return Current(ceilingReached: false, stopped: true);
+            }
+            return Current(ceilingReached: false, stopped: false);
+        }
+        _noFlowFor = TimeSpan.Zero;
+
+        // Creep floor: at least one pulse per tick once the taper is near its floor, so the last cent lands.
+        if (delivered == Volume.Zero && cap > Volume.Zero) delivered = new Volume(1);
         bool ceilingReached = false;
         if (delivered >= cap)
         {
@@ -243,12 +299,25 @@ public sealed class PumpController(
         }
 
         meter.Register(delivered);
+        var pulses = meter.TakePulseCount();
+
+        // Fuel moved and the pulser said nothing: a dead pulser, and every tick of it is unmetered fuel.
+        if (pulses == 0)
+        {
+            _noPulseFor += dt;
+            if (_noPulseFor >= NoPulseWindow)
+            {
+                EmergencyStop(DiagnosticCodes.PumpMeterNoPulse, $"flow switch closed, no pulses for {_noPulseFor.TotalMilliseconds:0} ms, {meter.UnmeteredVolume} moved unmetered");
+                return Current(ceilingReached: false, stopped: true);
+            }
+            return Current(ceilingReached: false, stopped: false);
+        }
+        _noPulseFor = TimeSpan.Zero;
 
         // Pulser sanity. The valve at full open over one tick cannot pass more than this.
-        var pulses = meter.TakePulseCount();
         if (pulses > authority.Limits.MaxPulsesPerTick * Math.Max(1.0, dt.TotalMilliseconds / 100.0))
         {
-            EmergencyStop($"pulser reported {pulses} pulses in one tick, valve could pass at most {authority.Limits.MaxPulsesPerTick}");
+            EmergencyStop(DiagnosticCodes.PumpMeterOverPulse, $"pulser reported {pulses} pulses in one tick, valve could pass at most {authority.Limits.MaxPulsesPerTick}");
             return Current(ceilingReached: false, stopped: true);
         }
 
@@ -258,7 +327,7 @@ public sealed class PumpController(
         if (Money > armed.Ceiling)
         {
             // Belt and braces. MaxVolumeFor makes this unreachable; the ledger will say if it ever is not.
-            EmergencyStop($"money {Money} exceeded ceiling {armed.Ceiling}");
+            EmergencyStop(DiagnosticCodes.PumpCeilingOverrun, $"money {Money} exceeded ceiling {armed.Ceiling}");
             return Current(ceilingReached: true, stopped: true);
         }
 
@@ -306,6 +375,6 @@ public sealed class PumpController(
     private PumpTick Current(bool ceilingReached, bool stopped)
     {
         var phaseName = Phase == PumpPhase.Dispensing ? _tickPhase : Phase.ToString().ToLowerInvariant();
-        return new PumpTick(Phase, Volume, Money, hydraulics.CurrentFlow, phaseName, ceilingReached, stopped, LastFault);
+        return new PumpTick(Phase, Volume, Money, hydraulics.CurrentFlow, phaseName, ceilingReached, stopped, LastFault, LastFaultCode);
     }
 }

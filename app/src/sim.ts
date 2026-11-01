@@ -10,7 +10,9 @@ export interface Sale {
   hold: string; end: string; notice: Notice; deadlineAt: string | null
   gradeSelected: boolean; nozzleOut: boolean; nozzleSeated: boolean
   tender: 'Credit' | 'Debit' | 'Cash'; cashPrepaidCents: number; changeDueCents: number
+  faultCode: string | null; faultPart: string | null
 }
+export interface Station { estopActive: boolean; estopAt: string | null; custodyLinesPublished: number; custodyLinesReceived: number; custodyCopyPath: string | null }
 export interface Site { creditHoldCents: number; debitHoldCents: number; failedPins: number; lockedUntil: string | null; maxPinFailures: number }
 export interface Recovery {
   kind: 'CleanStart' | 'ClosedOut' | 'Reversed' | 'CompletionResent'; previousRunId: string; saleId: string | null; tender: string; grade: string
@@ -20,9 +22,11 @@ export interface Armed { saleId: string; ceilingCents: number; maxGallons: numbe
 export interface Pending { saleId: string; kind: 'Completion' | 'Reversal'; cents: number }
 export interface State {
   strategy: string; pumpId: string; sale: Sale
+  station: Station
   pump: {
-    phase: string; armed: Armed | null; fault: string | null; totalizerGallons: number
+    phase: string; armed: Armed | null; fault: string | null; faultCode: string | null; totalizerGallons: number
     nozzleLifted: boolean; nozzleSeated: boolean; triggerHeld: boolean; selectedGrade: string | null; poured: boolean
+    supplyAvailable: boolean; breakawayOpen: boolean; pulserDead: boolean
   }
   network: { mode: string; latencyMs: number; lateResponseMs: number; flapFailureRate: number }
   pendingCompletions: { saleId: string; cents: number }[]
@@ -128,6 +132,10 @@ export const api = {
   },
   custodyInfo: async () => (await fetch(`${HOST}/api/custody`)).json() as Promise<{ runId: string; path: string | null; journalPath: string | null; ikmPath: string; files: string[] }>,
   verifyCustody: async () => (await (await fetch(`${HOST}/api/custody/verify`, { method: 'POST' })).json()) as { ok: boolean; failureAtSeq: number | null; reason: string | null; lines: number; status: string },
+  fault: (kind: 'tankout' | 'tankback' | 'pulserdead' | 'pulserfix' | 'driveoff' | 'breakawayreset') => post(`/api/fault/${kind}`),
+  estop: (pressedBy: string) => post('/api/station/estop', { pressedBy }),
+  estopReset: async () => (await (await fetch(`${HOST}/api/station/reset`, { method: 'POST' })).json()) as { estopActive: boolean; recovery: Recovery; runId: string },
+  verifyStationCopy: async () => (await (await fetch(`${HOST}/api/station/custody/verify`, { method: 'POST' })).json()) as { ok: boolean; failureAtSeq: number | null; reason: string | null; lines: number },
   powerLoss: async () => (await (await fetch(`${HOST}/api/host/powerloss`, { method: 'POST' })).json()) as { recovery: Recovery; runId: string },
   verifyLedger: async () => (await fetch(`${HOST}/api/ledger`)).json() as Promise<{ verify: number; totalizer: number }>,
 }

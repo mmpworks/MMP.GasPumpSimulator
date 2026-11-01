@@ -8,7 +8,7 @@ namespace GasPump.Host;
 /// <summary>The JSON the UI sees. One shape for the REST snapshot and the socket push.</summary>
 public static class Contracts
 {
-    public static object State(Simulation sim)
+    public static object State(Simulation sim, SimulationHost? host = null, StationServer? station = null)
     {
         var s = sim.Snapshot();
         return new
@@ -16,10 +16,22 @@ public static class Contracts
             type = "state",
             strategy = sim.StrategyName,
             pumpId = sim.Options.PumpId,
+            station = new
+            {
+                estopActive = host?.EStopActive ?? false,
+                estopAt = host?.EStopAt,
+                custodyLinesPublished = sim.Custody?.LinesPublished ?? 0,
+                custodyLinesReceived = station?.LinesReceived ?? 0,
+                custodyCopyPath = station?.CopyPath,
+            },
             sale = Sale(s),
             pump = new
             {
                 phase = sim.Pump.Phase.ToString(),
+                faultCode = sim.Pump.LastFaultCode,
+                supplyAvailable = sim.Pump.SupplyAvailable,
+                breakawayOpen = sim.Pump.BreakawayOpen,
+                pulserDead = sim.Meter.PulserDead,
                 nozzleLifted = sim.Pump.NozzleLifted,
                 nozzleSeated = sim.Pump.NozzleSeated,
                 triggerHeld = sim.Pump.TriggerHeld,
@@ -82,6 +94,8 @@ public static class Contracts
         s.NozzleOut,
         s.NozzleSeated,
         tender = s.Tender.ToString(),
+        s.FaultCode,
+        faultPart = s.FaultCode is { } fc ? DiagnosticCodes.Find(fc)?.Part : null,
         cashPrepaidCents = s.CashPrepaid.Cents,
         changeDueCents = s.ChangeDue.Cents,
         s.DeadlineAt,

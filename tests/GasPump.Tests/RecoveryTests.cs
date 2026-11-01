@@ -230,6 +230,66 @@ public class RecoveryTests : IDisposable
         Assert.Contains("recovery.restart", reader.ReadToEnd());
     }
 
+    [Theory]
+    [MemberData(nameof(SimHarness.Strategies), MemberType = typeof(SimHarness))]
+    public void E_stop_writes_the_record_before_the_power_drops_and_the_reset_closes_the_sale_exactly(string strategy)
+    {
+        var card = TestCards.Get("Good");
+        Money before, atStop;
+        string custodyPath;
+        using (var h = new SimHarness(strategy, Options("RUN-1")))
+        {
+            before = h.Sim.Issuer.AvailableBalance(card.Pan);
+            custodyPath = h.Sim.CustodyPath!;
+            h.Sim.PresentCard("Good");
+            h.AdvanceUntilState(SaleState.ReadyToPump, TimeSpan.FromSeconds(5));
+            h.Sim.StartFueling();
+            h.AdvanceUntilState(SaleState.Fueling, TimeSpan.FromSeconds(1));
+            h.Advance(TimeSpan.FromSeconds(4));
+            atStop = h.State.Money;
+            h.Sim.EmergencyStop("test harness");       // record, final snapshot, then power
+        }
+
+        var custody = File.ReadAllText(custodyPath);
+        Assert.Contains("station.estop", custody);
+        Assert.Contains("STATION.ESTOP", custody);
+        var snapshot = StateJournal.Load(Path.Combine(_dir, "state.json"))!;
+        Assert.Equal("ESTOP", snapshot.StopReason);
+
+        using var h2 = new SimHarness(strategy, Options("RUN-2"));
+        var r = h2.Sim.LastRecovery;
+        Assert.Equal(RecoveryKind.ClosedOut, r.Kind);
+        Assert.Equal(Volume.Zero, r.UnrecordedUpTo);      // the E-stop saved after the last tick, so nothing is missing
+        Assert.False(r.UnderRecorded);
+        Assert.Contains("E-stop", r.Note);
+        Assert.Contains("STATION.ESTOP", r.Note);
+        h2.Advance(TimeSpan.FromSeconds(1));
+        Assert.Equal(before - atStop, h2.Sim.Issuer.AvailableBalance(card.Pan));
+    }
+
+    [Fact]
+    public void Custody_stream_hands_out_the_same_bytes_the_file_holds_and_a_copy_built_from_it_verifies()
+    {
+        var copy = Path.Combine(_dir, "station-copy.ndjson");
+        var received = new List<string>();
+        using (var h = new SimHarness("channel", Options("RUN-1")))
+        {
+            Directory.CreateDirectory(_dir);
+            // A late subscriber, as a station server that connects after the pump booted. Replay gives it the header too.
+            h.Sim.Custody!.SubscribeWithReplay(line => { received.Add(line); File.AppendAllText(copy, line + "\n"); });
+            h.Sim.PresentCard("Good");
+            h.AdvanceUntilState(SaleState.ReadyToPump, TimeSpan.FromSeconds(5));
+            h.Sim.StartFueling();
+            h.AdvanceUntil(() => h.State.State == SaleState.Idle, TimeSpan.FromMinutes(3));
+            h.Sim.TankRunsDry();                               // a tank event is evidence too
+            h.Advance(TimeSpan.FromMilliseconds(300));
+        }
+        var original = File.ReadAllLines(Path.Combine(_dir, "custody-RUN-1.ndjson"));
+        Assert.Equal(original, File.ReadAllLines(copy));
+        Assert.True(ImmutableAuditFileSink.VerifyChain(copy, Ikm, out _, out var reason), reason);
+        Assert.Contains(received, l => l.Contains("TANK.FUELOUT"));
+    }
+
     [Fact]
     public void Recovery_plan_table()
     {

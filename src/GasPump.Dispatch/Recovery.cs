@@ -28,7 +28,7 @@ public sealed record RecoveryOutcome(
     TimeSpan SnapshotAge,
     string Note)
 {
-    public bool UnderRecorded => Kind == RecoveryKind.ClosedOut;
+    public bool UnderRecorded => Kind == RecoveryKind.ClosedOut && UnrecordedUpTo > Volume.Zero;
 }
 
 /// <summary>
@@ -52,21 +52,26 @@ public static class RecoveryPlan
         var age = now - snapshot.SavedAt;
         if (age < TimeSpan.Zero) age = TimeSpan.Zero;
         var flow = new FlowRate(s.FlowMilliGallonsPerSecond);
-        var unrecorded = flow.Over(snapshotPeriod);
+        // An E-stop wrote its own final snapshot on the way down, so nothing flowed after it. A crash did not.
+        var estop = snapshot.StopReason == "ESTOP";
+        var unrecorded = estop ? Volume.Zero : flow.Over(snapshotPeriod);
+        var how = estop ? $"restarted after the station E-stop ({DiagnosticCodes.StationEStop.Code})" : $"pump restarted {age.TotalSeconds:0.0} s after the last record";
 
         switch (state)
         {
             case SaleState.Fueling when volume > Volume.Zero:
                 return new(RecoveryKind.ClosedOut, snapshot.RunId, s.SaleId, tender, grade, volume, money, unrecorded, age,
-                    $"pump restarted {age.TotalSeconds:0.0} s after the last record while fueling; closed for {volume} at {money}; delivery likely under-recorded by up to {unrecorded}");
+                    estop
+                        ? $"{how} while fueling; closed for {volume} at {money}; the E-stop cut power with the valve open, so the record is exact to the last tick"
+                        : $"{how} while fueling; closed for {volume} at {money}; delivery likely under-recorded by up to {unrecorded}");
             case SaleState.Fueling:
             case SaleState.Authorizing:
             case SaleState.ReadyToPump:
                 return new(RecoveryKind.Reversed, snapshot.RunId, s.SaleId, tender, grade, Volume.Zero, Money.Zero, Volume.Zero, age,
-                    $"pump restarted {age.TotalSeconds:0.0} s after the last record in {state} with no fuel delivered; {(tender == Tender.Cash ? "cash refunded" : "hold reversed")}");
+                    $"{how} in {state} with no fuel delivered; {(tender == Tender.Cash ? "cash refunded" : "hold reversed")}");
             case SaleState.Completing:
                 return new(RecoveryKind.CompletionResent, snapshot.RunId, s.SaleId, tender, grade, volume, money, Volume.Zero, age,
-                    $"pump restarted {age.TotalSeconds:0.0} s after the last record while settling {money}; completion sent again");
+                    $"{how} while settling {money}; completion sent again");
             default:
                 return new(RecoveryKind.CleanStart, snapshot.RunId, null, tender, grade, Volume.Zero, Money.Zero, Volume.Zero, age,
                     $"previous run ended in {state}; nothing to close");

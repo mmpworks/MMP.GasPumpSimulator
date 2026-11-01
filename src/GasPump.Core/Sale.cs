@@ -112,7 +112,8 @@ public abstract record SaleEvent(string SaleId)
     public sealed record ReversalQueued(string SaleId) : SaleEvent(SaleId);
     public sealed record Timeout(string SaleId, SaleState InState) : SaleEvent(SaleId);
     public sealed record Cancel(string SaleId, string Reason) : SaleEvent(SaleId);
-    public sealed record Fault(string SaleId, string Reason) : SaleEvent(SaleId);
+    /// <summary>Code is the diagnostic code of the part that failed, so the notice and the records can name it.</summary>
+    public sealed record Fault(string SaleId, string Reason, string? Code = null) : SaleEvent(SaleId);
 }
 
 /// <summary>What the state machine asks the outside world to do. It never does any of it itself.</summary>
@@ -149,6 +150,8 @@ public sealed record SaleSnapshot(
     bool NozzleOut,
     bool NozzleSeated,
     Tender Tender,
+    /// <summary>The diagnostic code behind a fault, or null.</summary>
+    string? FaultCode,
     /// <summary>Cash taken at the cashier. Zero for card sales.</summary>
     Money CashPrepaid,
     /// <summary>Change the cashier owes after a cash sale settled or refunded.</summary>

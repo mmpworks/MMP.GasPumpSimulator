@@ -38,9 +38,11 @@ public sealed class HeraldEventLog : IEventLog, IDisposable
     {
         _clock = clock;
         _bridge = new Bridge(this);
+        // Custody first, so by the time the UI bridge fires the chain line is already on disk and a tail can publish it.
         // The UI stream skips the ledger mirror: the ledger has its own panel, and the mirror exists for the files.
-        var builder = QuickLogBuilder.Create().WithBridge(_bridge, e => e.Category.Value != "ledger").WithMinimumLevel("trace");
+        var builder = QuickLogBuilder.Create().WithMinimumLevel("trace");
         if (custody is { } c) builder.WithBridge(c.Sink, c.Filter);
+        builder.WithBridge(_bridge, e => e.Category.Value != "ledger");
         configure?.Invoke(builder);
         _herald = builder.BuildAndCommit();
     }

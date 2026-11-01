@@ -245,6 +245,34 @@ The number it reports. The last snapshot is at most one period old, and fuel may
 
 The token key survives the reboot. With a journal configured, the pump's token key is derived from the custody key under its own label, so a token issued before the reboot fails after it on its nonce (`Replayed`), not on its signature. A random key per process would make a replay look like a forgery and hide the replay. The test `Replayed_token_is_still_refused_after_a_restart` pins this.
 
+## Who owns what
+
+Three beliefs set the boundaries, and the three workers already sit on them:
+
+| Belief | Worker today | What it owns | Boundary |
+|---|---|---|---|
+| The pump pumps according to its authorized limits | pump worker (`PumpController`, `PumpAuthority`) | the valve, the meter, the hard limits, the nozzle interlocks, every diagnostic code about a wet part | a mailbox in one process today; a network hop later, with the same message types |
+| Telemetry is stored on the dispenser and sent to the station | the TesseraSeal sink plus `CustodyStream` | the custody file, and the byte-identical stream of its lines | the stream is the wire: `StationServer` in-process, `/ws/custody` for anything outside |
+| The station opens and closes the transaction session | sale worker (`SaleStateMachine`) and payment worker (`PaymentGateway`) | the sale saga, the tender, the money, the notice | the same mailbox seam |
+
+What moves across the first seam is already only messages: `PumpMessage` down, `SaleEvent` up. Nothing in the sale worker reads pump state, and nothing in the pump worker reads sale state. That is what lets the seam become a socket without touching either side. The journal is the one thing both sides would need to agree on across a real network, and that is the station's job in the belief table.
+
+## Forecourt faults and the E-stop
+
+Every failed part raises a diagnostic code from `docs/diagnostics.md`, and the controller learns about it from a disagreement between two facts it already has:
+
+| Disagreement | Code | Window |
+|---|---|---|
+| Valve commanded open, flow switch says nothing moved | `PUMP.STP.NOFLOW` | 3 s |
+| Flow switch says fuel moved, pulser sent nothing | `PUMP.MTR.NOPULSE` | 300 ms |
+| Pulser sent more than the valve could pass | `PUMP.MTR.OVERPULSE` | one tick |
+| Pulses with the valve shut | `PUMP.MTR.STRAY` | one tick |
+| Breakaway sensor open | `PUMP.HOSE.BREAKAWAY` | at once |
+
+The tank gauge's Fuel Out alarm reaches the pump as the first row; the gauge entry `TANK.FUELOUT` is in the ledger beside it, so the record shows cause and effect.
+
+The E-stop is the odd one out: it is not a message the pump handles, it is the power leaving. The order of operations is the whole design. The site controller, outside the classified area and still powered, writes `station.estop` to the ledger and the custody file, saves one last snapshot with `StopReason = "ESTOP"`, and only then drops the pump. The cashier's reset builds a new Simulation on that snapshot, and because the snapshot was taken after the last tick, the recovery reports nothing unrecorded. A bare power loss cannot do any of that, which is why the recovery note for it says "likely under-recorded" and the note for an E-stop does not.
+
 ## Two files: debug log and custody file
 
 | | Herald.OSS NDJSON | TesseraSeal custody file |

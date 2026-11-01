@@ -50,10 +50,16 @@ IDispatchStrategy MakeDispatch() => strategyName switch
     _ => new ThreadedDispatch(clock),
 };
 
-var simHost = new SimulationHost(() => new Simulation(MakeDispatch(), clock, options));
+var simHost = new SimulationHost(() => new Simulation(MakeDispatch(), clock, options), clock);
 var hub = new EventHub(simHost);
+// The station server: receives the custody stream and keeps its own copy of the chain, per run.
+var station = new StationServer(logDir, ikm);
+station.Bind(simHost.Current);
+simHost.Swapped += station.Bind;
+hub.Attach(station);
 builder.Services.AddSingleton(simHost);
 builder.Services.AddSingleton(hub);
+builder.Services.AddSingleton(station);
 
 var app = builder.Build();
 app.UseCors();
@@ -62,7 +68,7 @@ app.UseWebSockets();
 var json = new JsonSerializerOptions(JsonSerializerDefaults.Web) { Converters = { new JsonStringEnumConverter() } };
 Simulation Sim() => simHost.Current;
 
-app.MapGet("/api/state", () => Results.Json(Contracts.State(Sim()), json));
+app.MapGet("/api/state", () => Results.Json(Contracts.State(Sim(), simHost, station), json));
 app.MapGet("/api/cards", () => Results.Json(TestCards.ByName.Select(kv => new { name = kv.Key, last4 = kv.Value.Last4, kind = kv.Value.Kind.ToString(), expiry = $"{kv.Value.ExpiryMonth:00}/{kv.Value.ExpiryYear}" }), json));
 app.MapGet("/api/log", (int? after) => Results.Json(Sim().Log.Snapshot().Skip(after ?? 0).Select(Contracts.Log), json));
 app.MapGet("/api/logfile", () => Results.Json(new { path = heraldLogPath, directory = logDir, format = "ndjson (Herald.OSS json_file sink)", lines = Sim().Log.Snapshot().Count }, json));
@@ -95,6 +101,54 @@ app.MapPost("/api/host/powerloss", () =>
 {
     simHost.PowerLoss();
     return Results.Json(new { recovery = Contracts.Recovery(Sim().LastRecovery), runId = Sim().RunId }, json);
+});
+
+// The station. E-stop drops power to everything and stays down until the cashier resets.
+app.MapPost("/api/station/estop", (EStopRequest? r) => { simHost.EmergencyStop(r?.PressedBy ?? "forecourt button"); return Results.Json(new { estopActive = simHost.EStopActive, estopAt = simHost.EStopAt }, json); });
+app.MapPost("/api/station/reset", () =>
+{
+    simHost.Reset();
+    return Results.Json(new { estopActive = simHost.EStopActive, recovery = Contracts.Recovery(Sim().LastRecovery), runId = Sim().RunId }, json);
+});
+app.MapGet("/api/station/custody", () => Results.Json(new { station.RunId, copyPath = station.CopyPath, linesReceived = station.LinesReceived, dispenserLines = Sim().Custody?.LinesPublished ?? 0 }, json));
+app.MapPost("/api/station/custody/verify", () =>
+{
+    var (ok, seq, reason, lines) = station.VerifyCopy();
+    return Results.Json(new { ok, failureAtSeq = seq, reason, lines, status = ok ? "Status: PASS" : $"Status: FAIL\nReason: {reason}" }, json);
+});
+
+// Forecourt faults: what a sensor or the tank gauge would deliver to the pump.
+app.MapPost("/api/fault/{kind}", (string kind) =>
+{
+    if (simHost.EStopActive) return Results.Conflict(new { error = "E-stop active; reset at the cashier first" });
+    var s = Sim();
+    switch (kind)
+    {
+        case "tankout": s.TankRunsDry(); break;
+        case "tankback": s.TankRefilled(); break;
+        case "pulserdead": s.KillPulser(); break;
+        case "pulserfix": s.FixPulser(); break;
+        case "driveoff": s.DriveOff(); break;
+        case "breakawayreset": s.ResetBreakaway(); break;
+        default: return Results.NotFound(new { error = $"unknown fault '{kind}'" });
+    }
+    return Results.Ok();
+});
+
+// The custody stream for outside listeners: every line the dispenser's sink writes, byte for byte, as it lands.
+app.Map("/ws/custody", async (HttpContext ctx) =>
+{
+    if (!ctx.WebSockets.IsWebSocketRequest) { ctx.Response.StatusCode = 400; return; }
+    using var socket = await ctx.WebSockets.AcceptWebSocketAsync();
+    var queue = System.Threading.Channels.Channel.CreateUnbounded<string>();
+    using var sub = station.Subscribe(line => queue.Writer.TryWrite(line));
+    try
+    {
+        await foreach (var line in queue.Reader.ReadAllAsync(ctx.RequestAborted))
+            await socket.SendAsync(System.Text.Encoding.UTF8.GetBytes(line), WebSocketMessageType.Text, true, ctx.RequestAborted);
+    }
+    catch (OperationCanceledException) { }
+    catch (WebSocketException) { }
 });
 
 app.MapPost("/api/card", (CardRequest r) => Results.Json(new { saleId = Sim().PresentCard(r.Name, r.Grade, r.Tender ?? Tender.Credit) }, json));
@@ -155,11 +209,12 @@ app.Map("/ws", async (HttpContext ctx) =>
     await hub.ServeAsync(socket, json, ctx.RequestAborted);
 });
 
-app.Lifetime.ApplicationStopping.Register(() => simHost.Dispose());
+app.Lifetime.ApplicationStopping.Register(() => { station.Dispose(); simHost.Dispose(); });
 Sim().Log.Write("host", "listening on {Url} with {Dispatch} dispatch, Herald.OSS log at {LogPath}, custody at {Custody}", ("Url", "http://localhost:5177"), ("Dispatch", Sim().StrategyName), ("LogPath", heraldLogPath), ("Custody", Sim().CustodyPath));
 app.Run();
 
 record CardRequest(string Name, Grade? Grade, Tender? Tender);
+record EStopRequest(string? PressedBy);
 record CashRequest(long Cents, Grade? Grade);
 record AdminRequest(string? Pin, Tender Tender, long Cents);
 record GradeRequest(Grade Grade);

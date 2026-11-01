@@ -32,7 +32,9 @@ public sealed record JournalSnapshot(
     List<JournalPending> Pending, Dictionary<string, string> Tenders,
     Dictionary<string, long> CashOpenCents, Dictionary<string, long> CashChangeDueCents,
     long CreditHoldCents, long DebitHoldCents, int FailedPins, DateTimeOffset? LockedUntil,
-    long TotalizerMilliGallons, List<string> Nonces, IssuerState Issuer)
+    long TotalizerMilliGallons, List<string> Nonces, IssuerState Issuer,
+    /// <summary>Set only when the stop was deliberate and had time to say so: "ESTOP". A crash leaves it null.</summary>
+    string? StopReason = null)
 {
     public const int CurrentVersion = 1;
 }

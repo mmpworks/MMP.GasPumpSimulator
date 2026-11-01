@@ -25,6 +25,14 @@ public abstract record PumpMessage
     public sealed record Stop(string Reason) : PumpMessage;
     /// <summary>Attack hook: pulses with no fuel behind them, as a spoofed pulser would send.</summary>
     public sealed record SpoofPulses(long Pulses) : PumpMessage;
+    /// <summary>Forecourt fault: the tank ran dry, the STP tripped, or the gauge shut the line (false), or the supply came back (true).</summary>
+    public sealed record Supply(bool Available) : PumpMessage;
+    /// <summary>Forecourt fault: the pulser stopped counting (true) or was repaired (false).</summary>
+    public sealed record PulserDead(bool Dead) : PumpMessage;
+    /// <summary>Forecourt fault: a drive-off separated the breakaway coupling.</summary>
+    public sealed record DriveOff : PumpMessage;
+    /// <summary>The attendant reconnected the coupling.</summary>
+    public sealed record ResetBreakaway : PumpMessage;
 }
 
 /// <summary>What the sale worker sends the payment worker.</summary>

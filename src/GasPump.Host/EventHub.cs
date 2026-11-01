@@ -16,6 +16,7 @@ public sealed class EventHub
     private readonly SimulationHost _host;
     private readonly Lock _gate = new();
     private readonly List<Channel<object>> _clients = [];
+    private StationServer? _station;
 
     public EventHub(SimulationHost host)
     {
@@ -29,9 +30,14 @@ public sealed class EventHub
             Broadcast(new { type = "run", runId = sim.RunId });
             foreach (var l in sim.Log.Snapshot()) Broadcast(Contracts.Log(l));
             foreach (var e in sim.Ledger.Snapshot()) Broadcast(Contracts.Ledger(e));
-            Broadcast(Contracts.State(sim));
+            Broadcast(StateFor(sim));
         };
     }
+
+    /// <summary>The station server, once built, so the state push can carry its counters.</summary>
+    public void Attach(StationServer station) => _station = station;
+
+    private object StateFor(Simulation sim) => Contracts.State(sim, _host, _station);
 
     private void Bind(Simulation sim)
     {
@@ -55,7 +61,7 @@ public sealed class EventHub
         {
             // Full state first, then the stream. The UI never has to merge a gap.
             var sim = _host.Current;
-            channel.Writer.TryWrite(Contracts.State(sim));
+            channel.Writer.TryWrite(StateFor(sim));
             foreach (var l in sim.Log.Snapshot().TakeLast(200)) channel.Writer.TryWrite(Contracts.Log(l));
             foreach (var e in sim.Ledger.Snapshot().TakeLast(200)) channel.Writer.TryWrite(Contracts.Ledger(e));
 
@@ -72,7 +78,7 @@ public sealed class EventHub
             var heartbeat = Task.Run(async () =>
             {
                 using var timer = new PeriodicTimer(TimeSpan.FromMilliseconds(500));
-                while (await timer.WaitForNextTickAsync(ct)) channel.Writer.TryWrite(Contracts.State(_host.Current));
+                while (await timer.WaitForNextTickAsync(ct)) channel.Writer.TryWrite(StateFor(_host.Current));
             }, ct);
 
             var buffer = new byte[1024];

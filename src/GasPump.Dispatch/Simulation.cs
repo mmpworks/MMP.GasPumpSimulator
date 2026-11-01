@@ -63,6 +63,7 @@ public sealed class Simulation : IDisposable
     private readonly CancellationTokenSource _cts = new();
 
     private readonly NetworkSimulator _networkSim;
+    private readonly Hydraulics _hydraulics;
     private SaleStateMachine _sale;
     private IDisposable? _saleTimer;
     private DateTimeOffset? _saleDeadline;
@@ -113,10 +114,18 @@ public sealed class Simulation : IDisposable
         Nonces = new NonceStore();
         Authority = new PumpAuthority(new HmacAuthorizationVerifier(key, _options.PumpId, Nonces, TimeSpan.FromSeconds(5)), _options.HardLimits, Ledger, clock);
         Meter = new Meter();
-        Pump = new PumpController(Authority, new Hydraulics(_options.NominalFlow), Meter, Totalizer, Ledger, _options.Pricing, _options.Taper, clock);
+        _hydraulics = new Hydraulics(_options.NominalFlow);
+        Pump = new PumpController(Authority, _hydraulics, Meter, Totalizer, Ledger, _options.Pricing, _options.Taper, clock);
 
         // The ledger is mirrored into Herald under its own category, which is how it reaches the custody file.
         Ledger.Appended += e => Log.Write("ledger", "#{Seq} {Kind} {Detail}", ("Seq", e.Seq), ("Kind", e.Kind), ("Detail", e.Detail), ("Hash", e.Hash), ("Prev", e.PrevHash));
+        if (CustodyPath is not null)
+        {
+            // Custody is written before the UI bridge fires, so a pump of the tail after each line publishes it at once.
+            Custody = new CustodyStream(CustodyPath);
+            Log.Written += _ => Custody.Pump();
+            Ledger.Appended += _ => Custody.Pump();
+        }
 
         // Restore from the journal before any worker runs, then decide what to do about the sale that was open.
         var snapshot = _options.Journal is { } jo ? StateJournal.Load(jo.StatePath) : null;
@@ -150,7 +159,15 @@ public sealed class Simulation : IDisposable
     private readonly Lock _journalGate = new();
 
     /// <summary>Which categories are evidence for the custody file. The rest is debugging and stays in the Herald file.</summary>
-    private static bool IsEvidence(LogEvent e) => e.Category.Value is "ledger" or "sale" or "payment" or "admin" or "recovery" or "attack";
+    private static bool IsEvidence(LogEvent e) => e.Category.Value is "ledger" or "sale" or "payment" or "admin" or "recovery" or "attack" or "station" or "tank";
+
+    /// <summary>
+    /// The custody file, as a stream. Every complete line the TesseraSeal sink
+    /// writes is published here byte for byte, so a station server, a message
+    /// bus, or a WebSocket client can hold the same chain and verify it with
+    /// the same verifier. Null when the journal is off.
+    /// </summary>
+    public CustodyStream? Custody { get; private set; }
 
     public string RunId { get; }
     public string? CustodyPath { get; }
@@ -226,7 +243,7 @@ public sealed class Simulation : IDisposable
         if (Gateway.Pending.Count > 0) _paymentBox.Post(new PaymentMessage.DrainPending(CurrentSaleId));
     }
 
-    private JournalSnapshot CaptureSnapshot()
+    private JournalSnapshot CaptureSnapshot(string? stopReason = null)
     {
         SaleSnapshot s;
         int counter;
@@ -241,16 +258,16 @@ public sealed class Simulation : IDisposable
             Drawer.Open.ToDictionary(kv => kv.Key, kv => kv.Value.Cents),
             Drawer.ChangeDue.ToDictionary(kv => kv.Key, kv => kv.Value.Cents),
             Site.CreditHold.Cents, Site.DebitHold.Cents, Site.FailedPins, Site.LockedUntil,
-            Totalizer.Total.MilliGallons, Nonces.Export().ToList(), Issuer.Export());
+            Totalizer.Total.MilliGallons, Nonces.Export().ToList(), Issuer.Export(), stopReason);
     }
 
     /// <summary>Write the snapshot. Called by the one-second timer and on every sale change, serialized so two never interleave.</summary>
-    public void SaveJournal()
+    public void SaveJournal(string? stopReason = null)
     {
         if (_options.Journal is not { } j) return;
         lock (_journalGate)
         {
-            try { StateJournal.Save(j.StatePath, CaptureSnapshot()); }
+            try { StateJournal.Save(j.StatePath, CaptureSnapshot(stopReason)); }
             catch (Exception ex) { Log.Error("journal", "snapshot failed: {Message}", ("Message", ex.Message)); }
         }
     }
@@ -412,6 +429,51 @@ public sealed class Simulation : IDisposable
 
     /// <summary>Arm with no token at all. There is no code path that accepts this, which is the point.</summary>
     public void AttackArmWithoutToken() => _pumpBox.Post(new PumpMessage.Arm(CurrentSaleId, "", Grade.Regular));
+
+    // ----- Forecourt faults. Each is a message to the pump worker, as a sensor or the tank gauge would deliver it.
+
+    /// <summary>The underground tank ran out, or the gauge shut the line. The pump's valve position means nothing until the supply is back.</summary>
+    public void TankRunsDry()
+    {
+        Log.Warn("tank", "{Code} product below the fuel-out level, supply to the pump stops", ("Code", DiagnosticCodes.TankFuelOut.Code));
+        Ledger.Append("tank.fuelout", DiagnosticCodes.TankFuelOut.Format("fuel out, supply stopped"));
+        _pumpBox.Post(new PumpMessage.Supply(false));
+    }
+
+    public void TankRefilled()
+    {
+        Log.Write("tank", "{Code} cleared, supply restored", ("Code", DiagnosticCodes.TankFuelOut.Code));
+        Ledger.Append("tank.refilled", DiagnosticCodes.TankFuelOut.Format("cleared, supply restored"));
+        _pumpBox.Post(new PumpMessage.Supply(true));
+    }
+
+    /// <summary>The pulser stops counting while fuel keeps moving. The controller catches it by the flow switch.</summary>
+    public void KillPulser() => _pumpBox.Post(new PumpMessage.PulserDead(true));
+    public void FixPulser() => _pumpBox.Post(new PumpMessage.PulserDead(false));
+
+    /// <summary>A drive-off: the breakaway coupling separates and both halves seal.</summary>
+    public void DriveOff() => _pumpBox.Post(new PumpMessage.DriveOff());
+
+    /// <summary>The attendant reconnected the coupling.</summary>
+    public void ResetBreakaway() => _pumpBox.Post(new PumpMessage.ResetBreakaway());
+
+    /// <summary>
+    /// The station emergency stop. It is not a message to the pump: it is the
+    /// power going away under the pump, the STPs, and every signal circuit, all
+    /// at once. The site controller outside the classified area writes the
+    /// record first, saves one last snapshot so the restart knows this was an
+    /// E-stop and not a crash, then the power drops. Reset is a cashier action
+    /// that builds a new Simulation on the same journal.
+    /// </summary>
+    public void EmergencyStop(string pressedBy = "forecourt button")
+    {
+        var code = DiagnosticCodes.StationEStop;
+        Log.Error("station", "{Code} emergency stop pressed by {By}: power removed from every dispenser and STP", ("Code", code.Code), ("By", pressedBy));
+        Ledger.Append("station.estop", code.Format($"pressed by {pressedBy}; sale {CurrentSaleId} {Snapshot().State} {Snapshot().Volume} {Snapshot().Money}"));
+        Custody?.Pump();
+        SaveJournal(stopReason: "ESTOP");
+        TearDown();
+    }
 
     /// <summary>
     /// Guess the admin PIN from 0000 upward. The panel locks after three wrong
@@ -597,13 +659,39 @@ public sealed class Simulation : IDisposable
                 Meter.InjectPulses(sp.Pulses);
                 break;
 
+            case PumpMessage.Supply s:
+                _hydraulics.SupplyAvailable = s.Available;
+                break;
+
+            case PumpMessage.PulserDead pd:
+                Meter.PulserDead = pd.Dead;
+                Log.Warn("pump", "{Code} pulser {State}", ("Code", DiagnosticCodes.PumpMeterNoPulse.Code), ("State", pd.Dead ? "stopped counting" : "repaired"));
+                break;
+
+            case PumpMessage.DriveOff:
+                _hydraulics.BreakawaySeparated = true;
+                Log.Error("pump", "{Code} breakaway coupling separated", ("Code", DiagnosticCodes.PumpHoseBreakaway.Code));
+                if (Pump.Phase is not PumpPhase.Dispensing)
+                {
+                    // Not mid-pour: the sensor still records it, and the next arm is refused until the attendant resets.
+                    Ledger.Append("hose.breakaway", DiagnosticCodes.PumpHoseBreakaway.Format($"separated while {Pump.Phase}"));
+                    Pump.HangNozzle();
+                }
+                break;
+
+            case PumpMessage.ResetBreakaway:
+                Pump.ResetBreakaway();
+                Log.Write("pump", "{Code} cleared by the attendant", ("Code", DiagnosticCodes.PumpHoseBreakaway.Code));
+                break;
+
             case PumpMessage.Tick tick:
                 var before = Pump.Phase;
                 var t = Pump.Tick(tick.Dt);
                 if (t.Fault is not null && before != PumpPhase.Faulted)
                 {
-                    Log.Error("pump", "FAULT {Fault}", ("Fault", t.Fault));
-                    _saleBox.Post(new SaleEvent.Fault(saleId, t.Fault));
+                    var part = t.FaultCode is { } fc ? DiagnosticCodes.Find(fc)?.Part : null;
+                    Log.Error("pump", "FAULT {Code} {Fault}", ("Code", t.FaultCode), ("Part", part), ("Fault", t.Fault));
+                    _saleBox.Post(new SaleEvent.Fault(saleId, t.Fault, t.FaultCode));
                 }
                 else if (t.CeilingReached)
                 {

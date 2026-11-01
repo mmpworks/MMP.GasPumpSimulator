@@ -87,6 +87,10 @@ const holdText: Record<string, string> = {
         <v-chip :color="phaseColor">{{ sale?.phase }}</v-chip>
         <v-chip :color="holdColor">{{ sale?.tender?.toLowerCase() }}: {{ holdText[sale?.hold ?? 'None'] }}</v-chip>
         <v-chip :color="state?.pump.phase === 'Faulted' ? 'error' : undefined">pump {{ state?.pump.phase }}</v-chip>
+        <v-chip v-if="sale?.faultCode" color="error" variant="flat" :title="sale.faultPart ?? ''">{{ sale.faultCode }}</v-chip>
+        <v-chip v-if="state?.pump.breakawayOpen" color="error">breakaway open</v-chip>
+        <v-chip v-if="state && !state.pump.supplyAvailable" color="warning">no supply</v-chip>
+        <v-chip v-if="state?.pump.pulserDead" color="warning">pulser dead</v-chip>
         <v-chip v-if="state?.pump.armed?.clamped" color="error" variant="flat">CLAMPED: {{ state?.pump.armed?.clampNote }}</v-chip>
         <!-- The pump needs the bank only at authorization and settlement. During a sale a dead link changes nothing on the hose. -->
         <v-chip v-if="state && state.network.mode !== 'Up'" color="warning" prepend-icon="mdi-lan-disconnect"

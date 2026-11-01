@@ -15,13 +15,16 @@ A pay-at-the-pump fuel dispenser, simulated. Present a card, get a two-phase aut
 7. **Administrator.** A back-office panel sets the credit and debit ceilings behind an admin PIN. Three wrong PINs lock it for five minutes. Every attempt is in the ledger. Raise the debit ceiling to $5000 and the bank will approve what the card has, and the pump will still clamp it to its own $500 hard limit, because the site's ceilings are business limits and the pump's are safety limits.
 8. **Power loss.** A state journal is rewritten every second and on every sale change. A restart reads it, closes the sale it finds open for the fuel that was recorded, says in the ledger and the log that delivery is likely under-recorded by up to one second of flow, returns the hold or cash when nothing was pumped, and starts a fresh sale. Site limits, the admin lockout, burned nonces, the store-and-forward queue, the till, and the sealed totalizer all come back. There is no resume: a sale interrupted by a reboot is closed, never continued.
 9. **Two files, two jobs.** The Herald.OSS NDJSON file is for debugging and takes everything. The custody file is for audit: an append-only, HMAC-chained record written by TesseraSeal's `ImmutableAuditFileSink`, one chain per run, carrying the ledger, the sale open and close, the money outcomes, the admin attempts, and the attacks. TesseraSeal's verifier checks it from the Ledger tab, and a single changed byte names the entry that broke.
-10. **Logging on Herald.OSS.** Every worker writes structured events through [Herald.OSS](https://github.com/mmpworks/Herald.OSS) 0.14.0. A bridge sink feeds the UI stream and the tests; the host adds a console sink and an NDJSON file per session so a run can be reviewed later with every property intact.
+10. **Forecourt faults with diagnostic codes.** Tank runs dry, pulser dies, drive-off. Each is caught by a disagreement between two facts the controller already has, names its part with a code such as `PUMP.STP.NOFLOW`, settles for the fuel that was metered, and tells the driver the right next step. The same code sits in the log, the ledger, and the custody file. `docs/diagnostics.md` is the table.
+11. **E-stop.** One button, station-wide. The record is written before the power drops, so the cashier's reset closes the open sale with nothing unrecorded.
+12. **Custody stream.** Every custody line goes out byte for byte as it lands. A station server keeps its own copy per run and verifies it with the same verifier. `ws://localhost:5177/ws/custody` is the same stream for anything outside.
+13. **Logging on Herald.OSS.** Every worker writes structured events through [Herald.OSS](https://github.com/mmpworks/Herald.OSS) 0.14.0. A bridge sink feeds the UI stream and the tests; the host adds a console sink and an NDJSON file per session so a run can be reviewed later with every property intact.
 9. **Concurrency.** Three workers, sale, pump, and payment, pass messages through bounded mailboxes and share no state. How they run is a Strategy: `ThreadedDispatch` is a thread per worker with blocking queues. `ChannelDispatch` is a Task per worker over bounded channels. `AsyncProxyDispatch` is the 2008 machine without the 2008 threads: each worker is an iterator-driven state machine from [MMP.AsyncProxy](https://github.com/mmpworks/MMP.AsyncProxy), its loop yields a future for the next message, and the loop resumes on a pool thread when one is posted. Every piece of it would compile for .NET 3.5. One end-to-end test runs the same sale under all three.
 
 ## Run it
 
 ```
-dotnet test                       # 174 tests, about 40 s, on a fake clock, every end-to-end theory under three dispatch strategies
+dotnet test                       # 191 tests, about 70 s, on a fake clock, every end-to-end theory under three dispatch strategies
 cd app && npm install && npm run build && npx electron .
 ```
 
@@ -109,6 +112,15 @@ S0001 · Credit · Regular · 1.054 gal for $3.69 · up to 0.167 gal unrecorded 
 The ledger carries `recovery.restart` and `recovery.closeout ... DELIVERY LIKELY UNDER-RECORDED by up to 0.167 gal`, the log carries the same at Error level, the hold settles to the recorded money, and the next driver starts clean. Pull the plug while the pump is armed and nothing has poured, and the hold is reversed instead. The tests `Power_loss_mid_fuel_closes_the_sale_for_the_recorded_money_and_flags_under_delivery`, `Power_loss_while_armed_with_no_fuel_reverses_the_hold`, and `Power_loss_during_a_cash_sale_owes_change_for_the_unpumped_part` run under every dispatch strategy.
 
 The under-recording is real and by design. The journal is one second old at worst, so up to one second of flow at the last rate can leave the hose after the last record. The restart says so rather than guessing a number.
+
+## Forecourt faults
+
+On the Host link tab, while fuel is flowing:
+
+- **Tank runs dry.** Three seconds later the pump faults with `PUMP.STP.NOFLOW`, closes for the gallons it metered, and the screen reads "Fuel supply stopped. You were charged only for the N gal delivered. Please use another pump."
+- **Kill the pulser.** 300 ms later: `PUMP.MTR.NOPULSE`. The fuel that moved uncounted is in the fault entry and is never billed.
+- **Drive-off.** At once: `PUMP.HOSE.BREAKAWAY`, "Do not drive away. See the attendant." The next card is refused until the attendant resets the breakaway.
+- **E-STOP.** The station goes dark. The ledger and the custody file already hold `station.estop` with `STATION.ESTOP`. Reset at the cashier and the dispenser shows the close-out, with nothing unrecorded because the E-stop saved after its last tick.
 
 ## The custody file, attacked
 

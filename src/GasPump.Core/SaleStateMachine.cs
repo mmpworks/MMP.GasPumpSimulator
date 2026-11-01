@@ -61,6 +61,7 @@ public sealed class SaleStateMachine
     public bool NozzleOut { get; private set; }
     public bool NozzleSeated { get; private set; }
     public Tender Tender { get; private set; } = Tender.Credit;
+    public string? FaultCode { get; private set; }
     public Money CashPrepaid { get; private set; }
     public Money ChangeDue { get; private set; }
 
@@ -71,7 +72,7 @@ public sealed class SaleStateMachine
         s is SaleState.Declined or SaleState.Cancelled or SaleState.Faulted or SaleState.StoreAndForward;
 
     public SaleSnapshot Snapshot(DateTimeOffset? deadlineAt = null) =>
-        new(SaleId, State, CardName, Grade, Ceiling, Volume, Money, Flow, Phase, LastMessage, Hold, End, Notice(), GradeSelected, NozzleOut, NozzleSeated, Tender, CashPrepaid, ChangeDue, deadlineAt);
+        new(SaleId, State, CardName, Grade, Ceiling, Volume, Money, Flow, Phase, LastMessage, Hold, End, Notice(), GradeSelected, NozzleOut, NozzleSeated, Tender, FaultCode, CashPrepaid, ChangeDue, deadlineAt);
 
     public IReadOnlyList<SaleCommand> Apply(SaleEvent e)
     {
@@ -89,6 +90,7 @@ public sealed class SaleStateMachine
             case SaleEvent.Fault f when !IsTerminal(State):
                 End = EndReason.PumpFault;
                 EndDetail = f.Reason;
+                FaultCode = f.Code;
                 if (Volume > Volume.Zero)
                 {
                     // Fuel moved before the fault. The driver owes for it, so settle to the metered amount rather than reverse.
@@ -434,10 +436,23 @@ public sealed class SaleStateMachine
             EndReason.BankDown => new("Bank link is down", "No fuel was dispensed. Nothing was sent to your bank and nothing was charged. Pay the cashier in cash, try again in a few minutes, or use another station.", DriverAction.TryAgain),
             EndReason.NoNozzleLift => new("Sale cancelled", Join("The nozzle was not lifted in time.", holdLine, "Start again when ready."), DriverAction.TryAgain),
             EndReason.DriverCancelled => new("Sale cancelled", Join(Sentence(EndDetail), holdLine, "Start again when ready."), DriverAction.TryAgain),
-            EndReason.PumpFault => new("Pump out of service", Join(Sentence(EndDetail), holdLine, "Please use another pump."), DriverAction.UseAnotherPump),
+            EndReason.PumpFault => FaultNotice(holdLine),
             EndReason.SecurityRefusal => new("Pump refused the sale", Join(Sentence(EndDetail), holdLine, "Please use another pump and tell the attendant."), DriverAction.SeeAttendant),
             EndReason.MaxFuelingTime => new("Time limit reached", Join("The pump stopped at its time limit.", holdLine), DriverAction.Leave),
             _ => new(State.ToString(), holdLine, DriverAction.None),
+        };
+    }
+
+    /// <summary>A fault names its part so the driver hears the right next step: a dry tank wants another pump, a broken hose wants the attendant.</summary>
+    private DriverNotice FaultNotice(string holdLine)
+    {
+        var delivered = Volume > Volume.Zero ? $"You were charged only for the {Volume} delivered." : "No fuel was dispensed.";
+        return FaultCode switch
+        {
+            "PUMP.STP.NOFLOW" => new("Fuel supply stopped", Join("This pump has no fuel pressure.", delivered, holdLine, "Please use another pump."), DriverAction.UseAnotherPump),
+            "PUMP.HOSE.BREAKAWAY" => new("Hose breakaway", Join("The hose coupling separated and sealed.", delivered, holdLine, "Do not drive away. See the attendant."), DriverAction.SeeAttendant),
+            "PUMP.MTR.NOPULSE" => new("Meter fault", Join("The meter stopped counting.", delivered, holdLine, "See the attendant before you leave."), DriverAction.SeeAttendant),
+            _ => new("Pump out of service", Join(Sentence(EndDetail), holdLine, "Please use another pump."), DriverAction.UseAnotherPump),
         };
     }
 

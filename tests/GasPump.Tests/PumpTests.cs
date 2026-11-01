@@ -20,6 +20,7 @@ public class PumpTests
         public Meter Meter = new();
         public PumpAuthority Authority;
         public PumpController Pump;
+        public Hydraulics Hydraulics = new(FlowRate.GallonsPerMinute(10));
         public HmacAuthorizationSigner Signer = new(Key);
         public HardLimits Limits;
 
@@ -28,7 +29,7 @@ public class PumpTests
             Limits = limits ?? HardLimits.Default;
             Ledger = new EventLedger(Clock);
             Authority = new PumpAuthority(new HmacAuthorizationVerifier(Key, "PUMP-07", new NonceStore(), TimeSpan.FromSeconds(5)), Limits, Ledger, Clock);
-            Pump = new PumpController(Authority, new Hydraulics(FlowRate.GallonsPerMinute(10)), Meter, Totalizer, Ledger, Pricing.Default, taper ?? TaperPolicy.Default, Clock);
+            Pump = new PumpController(Authority, Hydraulics, Meter, Totalizer, Ledger, Pricing.Default, taper ?? TaperPolicy.Default, Clock);
         }
 
         public string Token(string saleId, Money ceiling, Volume? max = null) =>
@@ -280,6 +281,82 @@ public class PumpTests
         Assert.True(rig.Pump.HangNozzle());
         Assert.Equal(PumpPhase.Stopped, rig.Pump.Phase);
         Assert.Null(rig.Pump.Armed);
+    }
+
+    // ----- Failed parts, each with its code.
+
+    [Fact]
+    public void Tank_out_mid_sale_stops_with_NOFLOW_after_the_window_and_keeps_the_metered_volume()
+    {
+        var rig = new Rig();
+        rig.ArmAndPour(Money.FromDollars(30));
+        rig.Run(20);
+        var metered = rig.Pump.Volume;
+        Assert.True(metered > Volume.Zero);
+
+        rig.Hydraulics.SupplyAvailable = false;          // the STP lost prime, or the gauge shut the line
+        var trace = rig.RunToStop();
+        var last = trace[^1];
+        Assert.Equal(PumpPhase.Faulted, last.Phase);
+        Assert.Equal(DiagnosticCodes.PumpSupplyNoFlow.Code, last.FaultCode);
+        Assert.Contains("[PUMP.STP.NOFLOW]", last.Fault);
+        Assert.InRange(trace.Count, 29, 32);             // the three-second no-flow window at 100 ms ticks
+        Assert.Equal(metered, rig.Pump.Volume);           // nothing was counted that did not move
+        Assert.Contains(rig.Ledger.Snapshot(), e => e.Kind == "pump.fault" && e.Detail.Contains("[PUMP.STP.NOFLOW]"));
+    }
+
+    [Fact]
+    public void Dead_pulser_faults_with_NOPULSE_and_the_unmetered_volume_is_in_the_record()
+    {
+        var rig = new Rig();
+        rig.ArmAndPour(Money.FromDollars(30));
+        rig.Run(10);
+        var metered = rig.Pump.Volume;
+        var totalizer = rig.Totalizer.Total;
+
+        rig.Meter.PulserDead = true;                      // fuel keeps moving, the count stands still
+        var trace = rig.RunToStop();
+        var last = trace[^1];
+        Assert.Equal(DiagnosticCodes.PumpMeterNoPulse.Code, last.FaultCode);
+        Assert.InRange(trace.Count, 3, 4);                // the 300 ms no-pulse window
+        Assert.Equal(metered, rig.Pump.Volume);
+        Assert.Equal(totalizer, rig.Totalizer.Total);     // the sealed counter only counts what the meter counted
+        Assert.True(rig.Meter.UnmeteredVolume > Volume.Zero);
+        Assert.Contains(rig.Ledger.Snapshot(), e => e.Kind == "pump.fault" && e.Detail.Contains("unmetered"));
+    }
+
+    [Fact]
+    public void Drive_off_faults_with_BREAKAWAY_and_arming_is_refused_until_the_attendant_resets()
+    {
+        var rig = new Rig();
+        rig.ArmAndPour(Money.FromDollars(30));
+        rig.Run(5);
+        rig.Hydraulics.BreakawaySeparated = true;         // the coupling sensor
+        rig.Clock.Advance(Tick);
+        var t = rig.Pump.Tick(Tick);
+        Assert.Equal(PumpPhase.Faulted, t.Phase);
+        Assert.Equal(DiagnosticCodes.PumpHoseBreakaway.Code, t.FaultCode);
+
+        var (ok, reason, _) = rig.Pump.Arm("S2", rig.Token("S2", Money.FromDollars(30)));
+        Assert.False(ok);
+        Assert.Equal("BreakawayOpen", reason);
+        Assert.Contains(rig.Ledger.Snapshot(), e => e.Kind == "arm.refused" && e.Detail.Contains("[PUMP.HOSE.BREAKAWAY]"));
+
+        rig.Pump.ResetBreakaway();
+        var (okAfter, _, _) = rig.Pump.Arm("S3", rig.Token("S3", Money.FromDollars(30)));
+        Assert.True(okAfter);
+    }
+
+    [Fact]
+    public void Every_diagnostic_code_names_a_part_and_formats_with_brackets()
+    {
+        Assert.All(DiagnosticCodes.All, c =>
+        {
+            Assert.Matches("^[A-Z]+(\\.[A-Z]+){1,2}$", c.Code);   // SUBSYSTEM.PART.FAULT, or SUBSYSTEM.FAULT when the subsystem is the part
+            Assert.False(string.IsNullOrWhiteSpace(c.Part));
+            Assert.StartsWith($"[{c.Code}] ", c.Format("x"));
+            Assert.Same(c, DiagnosticCodes.Find(c.Code));
+        });
     }
 
     [Fact]

@@ -21,6 +21,13 @@ async function verifyCustody() {
 onMounted(loadCustody)
 watch(() => state.value?.runId, loadCustody)
 
+// The station server's copy of the chain, received over the custody stream line by line.
+const stationVerdict = ref<{ ok: boolean; text: string } | null>(null)
+async function verifyStation() {
+  const r = await api.verifyStationCopy()
+  stationVerdict.value = { ok: r.ok, text: r.ok ? `Status: PASS · ${r.lines} lines received` : `Status: FAIL · ${r.reason}` }
+}
+
 const kindClass = (k: string) => k.includes('refused') || k.includes('fault') || k.includes('locked') || k.startsWith('recovery') ? 'kind-bad' : k.includes('ok') || k.includes('open') || k.includes('limits') ? 'kind-ok' : ''
 const basename = (p: string | null) => p ? p.split(/[\\/]/).pop() : ''
 </script>
@@ -36,6 +43,11 @@ const basename = (p: string | null) => p ? p.split(/[\\/]/).pop() : ''
       <v-btn prepend-icon="mdi-certificate-outline" @click="verifyCustody">Verify custody file</v-btn>
       <v-chip v-if="custodyVerdict" :color="custodyVerdict.ok ? 'success' : 'error'">{{ custodyVerdict.text }}</v-chip>
       <span v-else-if="custody" class="muted" :title="custody.path ?? ''">TesseraSeal HMAC chain · {{ basename(custody.path) }} · {{ custody.files.length }} run file{{ custody.files.length === 1 ? '' : 's' }} on disk</span>
+    </div>
+    <div class="row-wrap mb-2">
+      <v-btn prepend-icon="mdi-server-network" @click="verifyStation">Verify station copy</v-btn>
+      <v-chip v-if="stationVerdict" :color="stationVerdict.ok ? 'success' : 'error'">{{ stationVerdict.text }}</v-chip>
+      <span v-else class="muted">dispenser published {{ state?.station.custodyLinesPublished ?? 0 }} · station received {{ state?.station.custodyLinesReceived ?? 0 }} · also on ws://localhost:5177/ws/custody</span>
     </div>
     <div class="mono-list">
       <div v-for="e in [...ledger].reverse()" :key="e.seq" class="line ledger">
