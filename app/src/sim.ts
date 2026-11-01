@@ -3,16 +3,26 @@ import { reactive, ref } from 'vue'
 
 export const HOST = (window as unknown as { gaspump?: { hostUrl: string } }).gaspump?.hostUrl ?? 'http://localhost:5177'
 
+export interface Notice { headline: string; detail: string; action: string }
 export interface Sale {
   saleId: string; state: string; cardName: string | null; grade: string
   ceilingCents: number; cents: number; gallons: number; gpm: number; phase: string; lastMessage: string | null
+  hold: string; end: string; notice: Notice; deadlineAt: string | null
+  gradeSelected: boolean; nozzleOut: boolean; nozzleSeated: boolean
 }
 export interface Armed { saleId: string; ceilingCents: number; maxGallons: number; clamped: boolean; clampNote: string }
+export interface Pending { saleId: string; kind: 'Completion' | 'Reversal'; cents: number }
 export interface State {
   strategy: string; pumpId: string; sale: Sale
-  pump: { phase: string; armed: Armed | null; fault: string | null; totalizerGallons: number }
-  network: { mode: string; latencyMs: number; flapFailureRate: number }
+  pump: {
+    phase: string; armed: Armed | null; fault: string | null; totalizerGallons: number
+    nozzleLifted: boolean; nozzleSeated: boolean; triggerHeld: boolean; selectedGrade: string | null; poured: boolean
+  }
+  network: { mode: string; latencyMs: number; lateResponseMs: number; flapFailureRate: number }
   pendingCompletions: { saleId: string; cents: number }[]
+  pending: Pending[]
+  openHolds: string[]
+  now: string
   limits: { maxCents: number; maxGallons: number; maxMinutes: number; maxGpm: number }
   prices: Record<string, string>
   ledgerOk: boolean
@@ -28,6 +38,11 @@ export const cards = ref<Card[]>([])
 export const connected = ref(false)
 export const flowTrace = reactive<number[]>([])
 
+// Host clock minus browser clock, so a countdown reads against the simulation's own time.
+let clockSkewMs = 0
+export const nowMs = ref(Date.now())
+setInterval(() => (nowMs.value = Date.now() + clockSkewMs), 250)
+
 let socket: WebSocket | null = null
 
 export function connect() {
@@ -40,6 +55,7 @@ export function connect() {
     switch (m.type) {
       case 'state':
         state.value = m
+        if (m.now) clockSkewMs = Date.parse(m.now) - Date.now()
         break
       case 'sale':
         if (state.value) state.value.sale = m
@@ -65,15 +81,29 @@ async function post(path: string, body?: unknown) {
 }
 
 export const api = {
-  presentCard: (name: string, grade: string) => post('/api/card', { name, grade }),
+  presentCard: (name: string) => post('/api/card', { name }),
+  selectGrade: (grade: string) => post('/api/grade', { grade }),
   lift: () => post('/api/nozzle/lift'),
+  seat: () => post('/api/nozzle/seat'),
+  unseat: () => post('/api/nozzle/unseat'),
+  squeeze: () => post('/api/trigger/squeeze'),
+  release: () => post('/api/trigger/release'),
   hang: () => post('/api/nozzle/hang'),
   cancel: () => post('/api/cancel'),
   reset: () => { flowTrace.splice(0); return post('/api/reset') },
   drain: () => post('/api/drain'),
-  network: (mode?: string, latencyMs?: number, flapFailureRate?: number) => post('/api/network', { mode, latencyMs, flapFailureRate }),
+  network: (mode?: string, latencyMs?: number, flapFailureRate?: number, lateResponseMs?: number) =>
+    post('/api/network', { mode, latencyMs, flapFailureRate, lateResponseMs }),
   attack: (kind: string, body?: unknown) => post(`/api/attack/${kind}`, body ?? {}),
   verifyLedger: async () => (await fetch(`${HOST}/api/ledger`)).json() as Promise<{ verify: number; totalizer: number }>,
 }
 
 export const dollars = (cents: number) => `$${(cents / 100).toFixed(2)}`
+
+/** Seconds left until the sale's armed deadline, or null when none is armed. */
+export function secondsLeft(sale: Sale | undefined, now: number): number | null {
+  if (!sale?.deadlineAt) return null
+  return Math.max(0, Math.round((Date.parse(sale.deadlineAt) - now) / 1000))
+}
+
+export const mmss = (s: number) => `${Math.floor(s / 60)}:${(s % 60).toString().padStart(2, '0')}`

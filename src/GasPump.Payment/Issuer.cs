@@ -60,7 +60,16 @@ public sealed class IssuerSimulator : IIssuer
     private readonly Lock _gate = new();
     private readonly Dictionary<string, Account> _accounts = new();
     private readonly Dictionary<string, Hold> _holds = new();
+    /// <summary>
+    /// Sale ids that were reversed before any hold arrived. A reversal that
+    /// outruns its own authorization is the late-network race; the tombstone
+    /// makes the late authorization land as a decline instead of an orphan hold.
+    /// </summary>
+    private readonly HashSet<string> _voided = new();
     private readonly TimeSpan _velocityWindow = TimeSpan.FromMinutes(10);
+
+    /// <summary>Holds the issuer still has open, by sale id. The books a driver would dispute.</summary>
+    public IReadOnlyCollection<string> OpenHolds { get { lock (_gate) return _holds.Keys.ToArray(); } }
 
     public bool Unavailable { get; set; }
 
@@ -90,6 +99,10 @@ public sealed class IssuerSimulator : IIssuer
         if (Unavailable) return IssuerDecision.Decline(DeclineReason.IssuerUnavailable, "issuer unavailable");
         lock (_gate)
         {
+            if (_voided.Contains(saleId))
+                return IssuerDecision.Decline(DeclineReason.DoNotHonor, "sale already voided by the terminal");
+            if (_holds.ContainsKey(saleId))
+                return IssuerDecision.Decline(DeclineReason.DoNotHonor, "duplicate authorization for an open sale");
             if (!_accounts.TryGetValue(card.Pan, out var acct))
                 return IssuerDecision.Decline(DeclineReason.UnknownCard, "no such account");
             if (acct.Status == AccountStatus.LostOrStolen)
@@ -131,7 +144,12 @@ public sealed class IssuerSimulator : IIssuer
     {
         lock (_gate)
         {
-            if (!_holds.Remove(saleId, out var hold)) return;   // already reversed or completed
+            if (!_holds.Remove(saleId, out var hold))
+            {
+                // Nothing to release yet. Remember the void so a late authorization for this sale is refused.
+                _voided.Add(saleId);
+                return;
+            }
             _accounts[hold.Pan].Available += hold.Amount;
         }
     }

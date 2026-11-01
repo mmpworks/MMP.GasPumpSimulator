@@ -1,6 +1,14 @@
 namespace GasPump.Payment;
 
-public enum NetworkMode { Up, Down, Timeout, Flapping }
+/// <summary>
+/// Up: answers after Latency. Down: refuses at once. Timeout: the request
+/// vanishes and the caller's own timeout fires. Flapping: a coin flip per call
+/// between Up and Timeout. Late: the request reaches the bank after Latency,
+/// so the bank acts on it, but the answer takes LateResponse to come back,
+/// longer than the caller is willing to wait. Late is the saga case: both
+/// sides did their part and neither knows the other did.
+/// </summary>
+public enum NetworkMode { Up, Down, Timeout, Flapping, Late }
 
 /// <summary>
 /// One object the UI can poke to make the wire misbehave. Latency applies in
@@ -11,10 +19,13 @@ public sealed class NetworkFaultPolicy
     private readonly Lock _gate = new();
     private NetworkMode _mode = NetworkMode.Up;
     private TimeSpan _latency = TimeSpan.FromMilliseconds(250);
+    private TimeSpan _lateResponse = TimeSpan.FromSeconds(45);
     private double _flapFailureRate = 0.5;
 
     public NetworkMode Mode { get { lock (_gate) return _mode; } set { lock (_gate) _mode = value; } }
     public TimeSpan Latency { get { lock (_gate) return _latency; } set { lock (_gate) _latency = value; } }
+    /// <summary>In Late mode, how long after the request leaves the answer comes back. Default 45 s against a 30 s host timeout.</summary>
+    public TimeSpan LateResponse { get { lock (_gate) return _lateResponse; } set { lock (_gate) _lateResponse = value; } }
     public double FlapFailureRate { get { lock (_gate) return _flapFailureRate; } set { lock (_gate) _flapFailureRate = Math.Clamp(value, 0, 1); } }
 }
 
@@ -75,6 +86,18 @@ public sealed class NetworkSimulator(NetworkFaultPolicy policy, TimeProvider clo
                 // The request leaves and nothing comes back. Wait out the caller's timeout.
                 await WaitAsync(timeout, ct);
                 return new NetworkResult<T>(NetworkOutcome.TimedOut, default);
+
+            case NetworkMode.Late:
+            {
+                // The bank hears us at Latency and acts. The answer crawls back over LateResponse. The caller's
+                // own timer will have fired long before, so this answer lands on a sale that already ended.
+                var reach = policy.Latency;
+                var late = policy.LateResponse;
+                await WaitAsync(reach, ct);
+                var value = issuerCall();
+                if (late > reach) await WaitAsync(late - reach, ct);
+                return new NetworkResult<T>(NetworkOutcome.Delivered, value);
+            }
 
             default:
                 var latency = policy.Latency;

@@ -19,12 +19,20 @@ public static class Contracts
             pump = new
             {
                 phase = sim.Pump.Phase.ToString(),
+                nozzleLifted = sim.Pump.NozzleLifted,
+                nozzleSeated = sim.Pump.NozzleSeated,
+                triggerHeld = sim.Pump.TriggerHeld,
+                selectedGrade = sim.Pump.SelectedGrade?.ToString(),
+                poured = sim.Pump.Poured,
                 armed = sim.Pump.Armed is { } a ? new { a.SaleId, ceilingCents = a.Ceiling.Cents, maxGallons = a.MaxVolume.Gallons, a.Clamped, a.ClampNote } : null,
                 fault = sim.Pump.LastFault,
                 totalizerGallons = sim.Totalizer.Total.Gallons,
             },
-            network = new { mode = sim.Network.Mode.ToString(), latencyMs = sim.Network.Latency.TotalMilliseconds, flapFailureRate = sim.Network.FlapFailureRate },
+            network = new { mode = sim.Network.Mode.ToString(), latencyMs = sim.Network.Latency.TotalMilliseconds, lateResponseMs = sim.Network.LateResponse.TotalMilliseconds, flapFailureRate = sim.Network.FlapFailureRate },
             pendingCompletions = sim.Gateway.PendingCompletions.Select(p => new { p.SaleId, cents = p.Final.Cents }),
+            pending = sim.Gateway.Pending.Select(p => new { p.SaleId, kind = p.Kind.ToString(), cents = p.Final.Cents }),
+            openHolds = sim.Issuer.OpenHolds,
+            now = sim.Clock.GetUtcNow(),
             limits = new
             {
                 maxCents = sim.Options.HardLimits.MaxMoneyPerSale.Cents,
@@ -50,6 +58,13 @@ public static class Contracts
         gpm = s.Flow.GallonsPerMinuteValue,
         s.Phase,
         s.LastMessage,
+        hold = s.Hold.ToString(),
+        end = s.End.ToString(),
+        notice = new { s.Notice.Headline, s.Notice.Detail, action = s.Notice.Action.ToString() },
+        s.GradeSelected,
+        s.NozzleOut,
+        s.NozzleSeated,
+        s.DeadlineAt,
     };
 
     public static object Log(LogLine l) => new { type = "log", at = l.At, l.Source, l.Message };

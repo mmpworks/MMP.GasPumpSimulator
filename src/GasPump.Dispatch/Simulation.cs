@@ -53,6 +53,7 @@ public sealed class Simulation : IDisposable
     private readonly NetworkSimulator _networkSim;
     private SaleStateMachine _sale;
     private IDisposable? _saleTimer;
+    private DateTimeOffset? _saleDeadline;
     private int _saleCounter;
     private int _inflightPayments;
 
@@ -102,13 +103,14 @@ public sealed class Simulation : IDisposable
     public HmacAuthorizationSigner Signer { get; }
     public string StrategyName => _dispatch.Name;
     public SimulationOptions Options => _options;
+    public TimeProvider Clock => _clock;
 
     /// <summary>Counters for a harness or a debugger: mailbox backlogs, host calls in flight, host calls parked on the clock.</summary>
     public string Counters => $"sale={_saleBox.Count} pump={_pumpBox.Count} payment={_paymentBox.Count} inflight={Volatile.Read(ref _inflightPayments)} waiting={_networkSim.WaitingOnClock}";
 
     public event Action<SaleSnapshot>? SaleChanged;
 
-    public SaleSnapshot Snapshot() { lock (_gate) return _sale.Snapshot(); }
+    public SaleSnapshot Snapshot() { lock (_gate) return _sale.Snapshot(_saleDeadline); }
     public string CurrentSaleId { get { lock (_gate) return _sale.SaleId; } }
     public string? LastToken { get { lock (_gate) return _sale.Token; } }
 
@@ -134,29 +136,53 @@ public sealed class Simulation : IDisposable
 
     // ----- Driver-facing actions. Each one is a message, never a direct call into a worker's state.
 
-    public string PresentCard(string cardName, Grade grade = Grade.Regular)
+    /// <summary>A grade given here is a preselection at the reader. The normal path leaves it null and the driver picks at the pump.</summary>
+    public string PresentCard(string cardName, Grade? grade = null)
     {
         string id;
         lock (_gate)
         {
-            if (_sale.State is not SaleState.Idle) _sale = NewSale();
+            if (_sale.State is not SaleState.Idle) ReplaceSale();
             id = _sale.SaleId;
         }
         _saleBox.Post(new SaleEvent.CardPresented(id, cardName, grade));
         return id;
     }
 
+    public void SelectGrade(Grade grade) => _pumpBox.Post(new PumpMessage.SelectGrade(grade));
     public void LiftNozzle() => _pumpBox.Post(new PumpMessage.Lift());
+    public void SeatNozzle() => _pumpBox.Post(new PumpMessage.Seat());
+    public void UnseatNozzle() => _pumpBox.Post(new PumpMessage.Unseat());
+    public void SqueezeTrigger() => _pumpBox.Post(new PumpMessage.Squeeze());
+    public void ReleaseTrigger() => _pumpBox.Post(new PumpMessage.Release());
     public void HangNozzle() => _pumpBox.Post(new PumpMessage.Hang());
+
+    /// <summary>The whole hand sequence a driver does at the pump: pick a grade, lift, seat, squeeze. For tests and scripted scenarios.</summary>
+    public void StartFueling(Grade grade = Grade.Regular)
+    {
+        SelectGrade(grade);
+        LiftNozzle();
+        SeatNozzle();
+        SqueezeTrigger();
+    }
     public void Cancel(string reason = "driver cancelled") => _saleBox.Post(new SaleEvent.Cancel(CurrentSaleId, reason));
     public void DrainPendingCompletions() => _paymentBox.Post(new PaymentMessage.DrainPending(CurrentSaleId));
 
     /// <summary>Start a fresh sale record. The old one stays in the log and the ledger.</summary>
     public void ResetSale()
     {
-        lock (_gate) _sale = NewSale();
+        lock (_gate) ReplaceSale();
         _pumpBox.Post(new PumpMessage.Stop("reset"));
         Publish();
+    }
+
+    /// <summary>Under _gate. Starts a fresh sale and drops the old sale's timer so it cannot fire into the new one.</summary>
+    private void ReplaceSale()
+    {
+        _saleTimer?.Dispose();
+        _saleTimer = null;
+        _saleDeadline = null;
+        _sale = NewSale();
     }
 
     // ----- Attack surface, for the tests and the UI. Every one of these goes through the same mailboxes an attacker would have to reach.
@@ -186,7 +212,7 @@ public sealed class Simulation : IDisposable
     public string AttackSignedOverLimit(Volume volume, Money money)
     {
         string id;
-        lock (_gate) { _sale = NewSale(); id = _sale.SaleId; }
+        lock (_gate) { ReplaceSale(); id = _sale.SaleId; }
         var token = Signer.Issue(id, _options.PumpId, money, volume, _clock.GetUtcNow(), TimeSpan.FromMinutes(5)).Serialize();
         // Skip the issuer entirely: push Approved straight into the sale, as a hacked EPS would.
         _saleBox.Post(new SaleEvent.CardPresented(id, "Good", Grade.Regular));
@@ -205,9 +231,42 @@ public sealed class Simulation : IDisposable
     private void HandleSaleEvent(SaleEvent e)
     {
         IReadOnlyList<SaleCommand> commands;
-        lock (_gate) commands = _sale.Apply(e);
+        lock (_gate)
+        {
+            if (e.SaleId != _sale.SaleId) { HandleOrphanEvent(e); return; }
+            commands = _sale.Apply(e);
+        }
         foreach (var c in commands) Execute(c);
         Publish();
+    }
+
+    /// <summary>
+    /// A money event for a sale the screen has already moved past. The driver
+    /// is gone or on a new sale, so the machine cannot carry it. A late approval
+    /// is the one that costs money: the bank holds funds for a sale nobody will
+    /// finish, so the reversal goes straight to the payment worker.
+    /// </summary>
+    private void HandleOrphanEvent(SaleEvent e)
+    {
+        switch (e)
+        {
+            case SaleEvent.Approved a:
+                Log.Write("sale", $"LATE approval {a.Ceiling} for finished sale {a.SaleId}; reversing the orphan hold (saga compensation)");
+                _paymentBox.Post(new PaymentMessage.Reverse(a.SaleId));
+                break;
+            case SaleEvent.Reversed:
+                Log.Write("sale", $"hold for earlier sale {e.SaleId} released");
+                break;
+            case SaleEvent.CompletionSent cs:
+                Log.Write("sale", $"completion {cs.Final} for earlier sale {e.SaleId} posted");
+                break;
+            case SaleEvent.ReversalQueued or SaleEvent.CompletionQueued or SaleEvent.Declined or SaleEvent.AuthorizationTimedOut:
+                Log.Write("sale", $"{e.GetType().Name} for earlier sale {e.SaleId} noted");
+                break;
+            default:
+                Log.Write("sale", $"dropped {e.GetType().Name} for other sale {e.SaleId}");
+                break;
+        }
     }
 
     private void Execute(SaleCommand c)
@@ -220,9 +279,6 @@ public sealed class Simulation : IDisposable
                 break;
             case SaleCommand.ArmPump ap:
                 _pumpBox.Post(new PumpMessage.Arm(ap.SaleId, ap.Token, ap.Grade));
-                break;
-            case SaleCommand.OpenValve ov:
-                _pumpBox.Post(new PumpMessage.Open(ov.SaleId));
                 break;
             case SaleCommand.CloseValve cv:
                 _pumpBox.Post(new PumpMessage.Close(cv.SaleId, "sale closed"));
@@ -238,10 +294,11 @@ public sealed class Simulation : IDisposable
                 {
                     _saleTimer?.Dispose();
                     _saleTimer = _dispatch.StartTimer("sale-timeout", at.After, _saleBox, () => new SaleEvent.Timeout(at.SaleId, at.State));
+                    _saleDeadline = _clock.GetUtcNow() + at.After;
                 }
                 break;
             case SaleCommand.CancelTimer:
-                lock (_gate) { _saleTimer?.Dispose(); _saleTimer = null; }
+                lock (_gate) { _saleTimer?.Dispose(); _saleTimer = null; _saleDeadline = null; }
                 break;
             case SaleCommand.Log lg:
                 Log.Write("sale", lg.Message);
@@ -260,8 +317,10 @@ public sealed class Simulation : IDisposable
                 else { Log.Write("pump", $"REFUSED arm for {arm.SaleId}: {reason}"); _saleBox.Post(new SaleEvent.PumpRefused(arm.SaleId, reason)); }
                 break;
 
-            case PumpMessage.Open:
-                // The sale machine says the nozzle is up and the sale is Fueling. The valve was opened at Lift.
+            case PumpMessage.SelectGrade sg:
+                var (gradeOk, gradeWhy) = Pump.SelectGrade(sg.Grade);
+                if (gradeOk) _saleBox.Post(new SaleEvent.GradeSelected(saleId, sg.Grade));
+                else Log.Write("pump", $"grade {sg.Grade} refused: {gradeWhy}");
                 break;
 
             case PumpMessage.Lift:
@@ -269,10 +328,31 @@ public sealed class Simulation : IDisposable
                 else Log.Write("pump", $"nozzle lifted while {Pump.Phase}, nothing happens");
                 break;
 
+            case PumpMessage.Seat:
+                if (Pump.SeatNozzle()) _saleBox.Post(new SaleEvent.NozzleSeated(saleId));
+                break;
+
+            case PumpMessage.Unseat:
+                var paused = Pump.UnseatNozzle();
+                if (Pump.Armed is not null || paused) _saleBox.Post(new SaleEvent.NozzleUnseated(saleId));
+                if (paused) _saleBox.Post(new SaleEvent.FlowPaused(saleId, "nozzle removed from fill point"));
+                break;
+
+            case PumpMessage.Squeeze:
+                var (flowOk, flowWhy, firstPour) = Pump.SqueezeTrigger();
+                if (!flowOk) Log.Write("pump", $"trigger ignored: {flowWhy}");
+                else _saleBox.Post(firstPour ? new SaleEvent.FlowStarted(saleId) : new SaleEvent.FlowResumed(saleId));
+                break;
+
+            case PumpMessage.Release:
+                if (Pump.ReleaseTrigger()) _saleBox.Post(new SaleEvent.FlowPaused(saleId, "trigger released"));
+                break;
+
             case PumpMessage.Hang:
-                var wasDispensing = Pump.Phase == PumpPhase.Dispensing;
-                Pump.HangNozzle();
-                if (wasDispensing) _saleBox.Post(new SaleEvent.NozzleHung(saleId));
+                var armedBefore = Pump.Armed is not null;
+                var ended = Pump.HangNozzle();
+                // Ends the delivery after a pour; before a pour the sale machine just notes it.
+                if (ended || armedBefore) _saleBox.Post(new SaleEvent.NozzleHung(saleId));
                 break;
 
             case PumpMessage.Close close:
@@ -301,7 +381,7 @@ public sealed class Simulation : IDisposable
                 {
                     _saleBox.Post(new SaleEvent.CeilingReached(saleId, t.Volume, t.Money));
                 }
-                else if (before == PumpPhase.Dispensing && t.Stopped)
+                else if ((before is PumpPhase.Dispensing or PumpPhase.Paused) && t.Stopped)
                 {
                     // Stopped for a non-ceiling reason inside Tick (max duration). Report as hung so the sale completes.
                     _saleBox.Post(new SaleEvent.NozzleHung(saleId));
@@ -353,14 +433,19 @@ public sealed class Simulation : IDisposable
 
                 case PaymentMessage.Reverse rv:
                     var reversed = await Gateway.ReverseAsync(rv.SaleId, _cts.Token);
-                    Log.Write("payment", reversed ? "hold reversed" : "reversal failed, host unreachable, will retry with completions");
-                    if (reversed) _saleBox.Post(new SaleEvent.Reversed(rv.SaleId));
+                    Log.Write("payment", reversed.Message);
+                    _saleBox.Post(reversed.Sent ? new SaleEvent.Reversed(rv.SaleId) : new SaleEvent.ReversalQueued(rv.SaleId));
                     break;
 
                 case PaymentMessage.DrainPending:
-                    Log.Write("payment", $"draining {Gateway.PendingCompletions.Count} queued completion(s)");
+                    Log.Write("payment", $"draining {Gateway.Pending.Count} queued advice(s)");
                     var sent = await Gateway.DrainPendingAsync(_cts.Token);
-                    Log.Write("payment", $"drained {sent} queued completion(s), {Gateway.PendingCompletions.Count} left");
+                    Log.Write("payment", $"drained {sent.Count} queued advice(s), {Gateway.Pending.Count} left");
+                    // Tell the sale where its money landed. The machine updates Hold; an orphan is logged.
+                    foreach (var advice in sent)
+                        _saleBox.Post(advice.Kind == PendingKind.Reversal
+                            ? new SaleEvent.Reversed(advice.SaleId)
+                            : new SaleEvent.CompletionSent(advice.SaleId, advice.Final));
                     break;
             }
         }
@@ -384,7 +469,7 @@ public sealed class Simulation : IDisposable
     private void Publish()
     {
         SaleSnapshot snap;
-        lock (_gate) snap = _sale.Snapshot();
+        lock (_gate) snap = _sale.Snapshot(_saleDeadline);
         SaleChanged?.Invoke(snap);
     }
 

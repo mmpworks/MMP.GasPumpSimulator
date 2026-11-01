@@ -75,11 +75,18 @@ public class PaymentTests
 
     private static (PaymentGateway Gateway, NetworkFaultPolicy Net, FakeTimeProvider Clock, IssuerSimulator Issuer) Gateway()
     {
+        var (gw, net, clock, issuer, _) = GatewayWithWire();
+        return (gw, net, clock, issuer);
+    }
+
+    private static (PaymentGateway Gateway, NetworkFaultPolicy Net, FakeTimeProvider Clock, IssuerSimulator Issuer, NetworkSimulator Wire) GatewayWithWire()
+    {
         var clock = new FakeTimeProvider(Now);
         var issuer = IssuerSimulator.WithTestCards();
         var net = new NetworkFaultPolicy();
-        var gw = new PaymentGateway(issuer, new NetworkSimulator(net, clock), new HmacAuthorizationSigner(new byte[32]), clock, "PUMP-07");
-        return (gw, net, clock, issuer);
+        var wire = new NetworkSimulator(net, clock);
+        var gw = new PaymentGateway(issuer, wire, new HmacAuthorizationSigner(new byte[32]), clock, "PUMP-07");
+        return (gw, net, clock, issuer, wire);
     }
 
     [Fact]
@@ -140,9 +147,72 @@ public class PaymentTests
         net.Mode = NetworkMode.Up;
         var drain = gw.DrainPendingAsync(CancellationToken.None);
         clock.Advance(TimeSpan.FromMilliseconds(250));
-        Assert.Equal(1, await drain);
+        Assert.Single(await drain);
         Assert.Empty(gw.PendingCompletions);
         Assert.Equal(Money.FromDollars(5000) - Money.FromDollars(30), issuer.AvailableBalance(card.Pan));
+    }
+
+    [Fact]
+    public async Task Reversal_that_cannot_reach_the_host_is_queued_once_and_drains_before_completions()
+    {
+        var (gw, net, clock, issuer) = Gateway();
+        var card = TestCards.Get("Good");
+        var before = issuer.AvailableBalance(card.Pan);
+        var pre = gw.PreAuthorizeAsync("S1", card, Hold, CancellationToken.None);
+        clock.Advance(TimeSpan.FromMilliseconds(250));
+        await pre;
+
+        net.Mode = NetworkMode.Down;
+        var r1 = gw.ReverseAsync("S1", CancellationToken.None);
+        clock.Advance(TimeSpan.FromMilliseconds(50));
+        Assert.True((await r1).Queued);
+        var r2 = gw.ReverseAsync("S1", CancellationToken.None);   // a retry must never double the queue
+        clock.Advance(TimeSpan.FromMilliseconds(50));
+        Assert.True((await r2).Queued);
+        Assert.Single(gw.PendingReversals);
+        Assert.Equal(before - Hold, issuer.AvailableBalance(card.Pan));
+
+        net.Mode = NetworkMode.Up;
+        var drain = gw.DrainPendingAsync(CancellationToken.None);
+        clock.Advance(TimeSpan.FromMilliseconds(250));
+        var sent = await drain;
+        Assert.Single(sent);
+        Assert.Equal(PendingKind.Reversal, sent[0].Kind);
+        Assert.Empty(gw.Pending);
+        Assert.Equal(before, issuer.AvailableBalance(card.Pan));
+    }
+
+    [Fact]
+    public void Reversal_that_arrives_before_its_authorization_voids_the_sale_at_the_issuer()
+    {
+        // The late-network race in the other order: our reversal beats our own authorization to the bank.
+        var issuer = IssuerSimulator.WithTestCards();
+        var card = TestCards.Get("Good");
+        var before = issuer.AvailableBalance(card.Pan);
+        issuer.Reverse("S1");
+        var late = issuer.Authorize("S1", card, Hold, Now);
+        Assert.False(late.Approved);
+        Assert.Contains("voided", late.Message);
+        Assert.Equal(before, issuer.AvailableBalance(card.Pan));
+        Assert.Empty(issuer.OpenHolds);
+    }
+
+    [Fact]
+    public async Task Late_mode_delivers_the_answer_after_the_caller_gave_up()
+    {
+        var (gw, net, clock, issuer, wire) = GatewayWithWire();
+        var card = TestCards.Get("Good");
+        net.Mode = NetworkMode.Late;
+        var task = gw.PreAuthorizeAsync("S1", card, Hold, CancellationToken.None);
+        clock.Advance(TimeSpan.FromMilliseconds(250));
+        // The issuer call and the second wait run on a pool continuation after Advance returns. Wait for the
+        // second timer to be parked on the clock before moving the clock again, or the test races itself.
+        Assert.True(SpinWait.SpinUntil(() => wire.WaitingOnClock == 1 && issuer.OpenHolds.Count == 1, TimeSpan.FromSeconds(5)), "late wait never parked");
+        clock.Advance(TimeSpan.FromSeconds(30));
+        Assert.False(task.IsCompleted);             // and we still have no answer at the 30 s mark
+        clock.Advance(TimeSpan.FromSeconds(15));
+        var r = await task;
+        Assert.True(r.Approved);
     }
 
     [Fact]

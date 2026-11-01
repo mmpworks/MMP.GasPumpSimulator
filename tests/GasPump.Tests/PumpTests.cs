@@ -34,6 +34,20 @@ public class PumpTests
         public string Token(string saleId, Money ceiling, Volume? max = null) =>
             Signer.Issue(saleId, "PUMP-07", ceiling, max ?? Volume.FromGallons(50), Clock.GetUtcNow(), TimeSpan.FromMinutes(5)).Serialize();
 
+        /// <summary>Arm, then the driver's hand sequence: grade, lift, seat, squeeze.</summary>
+        public ArmedAuthorization ArmAndPour(Money ceiling, Grade grade = Grade.Regular)
+        {
+            var (ok, reason, armed) = Pump.Arm("S1", Token("S1", ceiling));
+            Assert.True(ok, reason);
+            Assert.True(Pump.SelectGrade(grade).Ok);
+            Assert.True(Pump.LiftNozzle());
+            Assert.True(Pump.SeatNozzle());
+            var squeeze = Pump.SqueezeTrigger();
+            Assert.True(squeeze.Ok, squeeze.Reason);
+            Assert.True(squeeze.FirstPour);
+            return armed!;
+        }
+
         public List<PumpTick> RunToStop(int maxTicks = 20_000)
         {
             var trace = new List<PumpTick>();
@@ -45,6 +59,11 @@ public class PumpTests
                 if (t.Stopped) return trace;
             }
             throw new TimeoutException("pump never stopped");
+        }
+
+        public void Run(int ticks)
+        {
+            for (int i = 0; i < ticks; i++) { Clock.Advance(Tick); Pump.Tick(Tick); }
         }
     }
 
@@ -64,10 +83,8 @@ public class PumpTests
     public void Thirty_dollar_sale_lands_on_3000_cents_never_over_with_a_visible_taper()
     {
         var rig = new Rig();
-        var (ok, _, armed) = rig.Pump.Arm("S1", rig.Token("S1", Money.FromDollars(30)), Grade.Regular);
-        Assert.True(ok);
-        Assert.False(armed!.Clamped);
-        Assert.True(rig.Pump.LiftNozzle());
+        var armed = rig.ArmAndPour(Money.FromDollars(30));
+        Assert.False(armed.Clamped);
 
         var trace = rig.RunToStop();
 
@@ -101,8 +118,7 @@ public class PumpTests
     {
         var rig = new Rig();
         // $500 ceiling, 50 gallon cap. 50 gal of regular is $174.95, so volume wins.
-        rig.Pump.Arm("S1", rig.Token("S1", Money.FromDollars(500)), Grade.Regular);
-        rig.Pump.LiftNozzle();
+        rig.ArmAndPour(Money.FromDollars(500));
         var last = rig.RunToStop(40_000)[^1];
         Assert.Equal(Volume.FromGallons(50), last.Volume);
         Assert.Equal(17495, last.Money.Cents);
@@ -112,9 +128,8 @@ public class PumpTests
     public void Spoofed_pulses_during_dispensing_stop_the_pump_dead()
     {
         var rig = new Rig();
-        rig.Pump.Arm("S1", rig.Token("S1", Money.FromDollars(30)), Grade.Regular);
-        rig.Pump.LiftNozzle();
-        rig.Clock.Advance(Tick); rig.Pump.Tick(Tick);
+        rig.ArmAndPour(Money.FromDollars(30));
+        rig.Run(1);
         rig.Meter.InjectPulses(500);   // half a gallon in 100 ms, five times what the valve can pass
         rig.Clock.Advance(Tick);
         var t = rig.Pump.Tick(Tick);
@@ -138,6 +153,8 @@ public class PumpTests
     {
         var rig = new Rig();
         Assert.False(rig.Pump.LiftNozzle());
+        rig.Pump.SeatNozzle();
+        Assert.False(rig.Pump.SqueezeTrigger().Ok);
         var t = rig.Pump.Tick(Tick);
         Assert.Equal(Volume.Zero, t.Volume);
         Assert.Contains(rig.Ledger.Snapshot(), e => e.Kind == "nozzle.lift.ignored");
@@ -147,8 +164,7 @@ public class PumpTests
     public void Sale_stops_at_the_hard_duration_limit()
     {
         var rig = new Rig(HardLimits.Default with { MaxSaleDuration = TimeSpan.FromSeconds(2) });
-        rig.Pump.Arm("S1", rig.Token("S1", Money.FromDollars(500)), Grade.Regular);
-        rig.Pump.LiftNozzle();
+        rig.ArmAndPour(Money.FromDollars(500));
         var trace = rig.RunToStop();
         Assert.InRange(trace.Count, 19, 22);
         Assert.False(trace[^1].CeilingReached);
@@ -159,15 +175,122 @@ public class PumpTests
     public void Hang_mid_sale_closes_the_valve_and_keeps_the_money_so_far()
     {
         var rig = new Rig();
-        rig.Pump.Arm("S1", rig.Token("S1", Money.FromDollars(30)), Grade.Regular);
-        rig.Pump.LiftNozzle();
-        for (int i = 0; i < 50; i++) { rig.Clock.Advance(Tick); rig.Pump.Tick(Tick); }
+        rig.ArmAndPour(Money.FromDollars(30));
+        rig.Run(50);
         var before = rig.Pump.Money;
-        rig.Pump.HangNozzle();
+        Assert.True(rig.Pump.HangNozzle());
         Assert.Equal(PumpPhase.Stopped, rig.Pump.Phase);
         rig.Clock.Advance(Tick);
         var t = rig.Pump.Tick(Tick);
         Assert.Equal(before, t.Money);
         Assert.True(before > Money.Zero);
+    }
+
+    // ----- Interlocks: grade, seat, trigger.
+
+    [Fact]
+    public void Trigger_does_nothing_until_grade_lift_and_seat_are_all_true()
+    {
+        var rig = new Rig();
+        rig.Pump.Arm("S1", rig.Token("S1", Money.FromDollars(30)));
+
+        var r1 = rig.Pump.SqueezeTrigger();
+        Assert.False(r1.Ok); Assert.Contains("grade", r1.Reason);
+
+        rig.Pump.SelectGrade(Grade.Plus);
+        var r2 = rig.Pump.SqueezeTrigger();
+        Assert.False(r2.Ok); Assert.Contains("lift", r2.Reason);
+
+        rig.Pump.LiftNozzle();
+        var r3 = rig.Pump.SqueezeTrigger();
+        Assert.False(r3.Ok); Assert.Contains("tank", r3.Reason);
+
+        rig.Run(5);
+        Assert.Equal(Volume.Zero, rig.Pump.Volume);
+        Assert.Equal(PumpPhase.Armed, rig.Pump.Phase);
+
+        rig.Pump.SeatNozzle();
+        var r4 = rig.Pump.SqueezeTrigger();
+        Assert.True(r4.Ok);
+        Assert.True(r4.FirstPour);
+        rig.Run(5);
+        Assert.True(rig.Pump.Volume > Volume.Zero);
+        Assert.Equal(3, rig.Ledger.Snapshot().Count(e => e.Kind == "trigger.ignored"));
+    }
+
+    [Fact]
+    public void Release_pauses_and_squeeze_resumes_as_many_times_as_the_driver_likes()
+    {
+        var rig = new Rig();
+        rig.ArmAndPour(Money.FromDollars(30));
+        rig.Run(10);
+        var afterFirst = rig.Pump.Volume;
+
+        Assert.True(rig.Pump.ReleaseTrigger());
+        Assert.Equal(PumpPhase.Paused, rig.Pump.Phase);
+        rig.Run(10);
+        Assert.Equal(afterFirst, rig.Pump.Volume);   // nothing flows while paused
+
+        var again = rig.Pump.SqueezeTrigger();
+        Assert.True(again.Ok);
+        Assert.False(again.FirstPour);
+        rig.Run(10);
+        Assert.True(rig.Pump.Volume > afterFirst);
+
+        rig.Pump.ReleaseTrigger();
+        rig.Pump.SqueezeTrigger();
+        rig.Pump.ReleaseTrigger();
+        Assert.Equal(PumpPhase.Paused, rig.Pump.Phase);
+        Assert.Equal(3, rig.Ledger.Snapshot().Count(e => e.Kind == "valve.pause"));
+        Assert.Equal(0, rig.Ledger.Verify());
+    }
+
+    [Fact]
+    public void Pulling_the_nozzle_out_of_the_tank_stops_the_flow()
+    {
+        var rig = new Rig();
+        rig.ArmAndPour(Money.FromDollars(30));
+        rig.Run(5);
+        Assert.True(rig.Pump.UnseatNozzle());
+        Assert.Equal(PumpPhase.Paused, rig.Pump.Phase);
+        Assert.False(rig.Pump.SqueezeTrigger().Ok);   // still out of the tank
+        rig.Pump.SeatNozzle();
+        Assert.True(rig.Pump.SqueezeTrigger().Ok);
+    }
+
+    [Fact]
+    public void Hang_before_any_pour_does_not_end_the_sale()
+    {
+        var rig = new Rig();
+        rig.Pump.Arm("S1", rig.Token("S1", Money.FromDollars(30)));
+        rig.Pump.SelectGrade(Grade.Regular);
+        rig.Pump.LiftNozzle();
+        Assert.False(rig.Pump.HangNozzle());
+        Assert.Equal(PumpPhase.Armed, rig.Pump.Phase);
+        Assert.NotNull(rig.Pump.Armed);
+    }
+
+    [Fact]
+    public void Hang_after_a_paused_pour_ends_the_sale()
+    {
+        var rig = new Rig();
+        rig.ArmAndPour(Money.FromDollars(30));
+        rig.Run(5);
+        rig.Pump.ReleaseTrigger();
+        Assert.True(rig.Pump.HangNozzle());
+        Assert.Equal(PumpPhase.Stopped, rig.Pump.Phase);
+        Assert.Null(rig.Pump.Armed);
+    }
+
+    [Fact]
+    public void Grade_locks_after_the_first_pour()
+    {
+        var rig = new Rig();
+        rig.ArmAndPour(Money.FromDollars(30), Grade.Regular);
+        rig.Run(5);
+        rig.Pump.ReleaseTrigger();
+        var change = rig.Pump.SelectGrade(Grade.Premium);
+        Assert.False(change.Ok);
+        Assert.Equal(Grade.Regular, rig.Pump.SelectedGrade);
     }
 }

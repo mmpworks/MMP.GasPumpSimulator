@@ -4,13 +4,15 @@ public sealed record SaleTimeouts(
     TimeSpan Authorization,
     TimeSpan NozzleLift,
     TimeSpan MaxFueling,
-    TimeSpan Completion)
+    TimeSpan Completion,
+    TimeSpan Notice)
 {
     public static SaleTimeouts Default => new(
         Authorization: TimeSpan.FromSeconds(30),
         NozzleLift: TimeSpan.FromSeconds(120),
         MaxFueling: TimeSpan.FromMinutes(10),
-        Completion: TimeSpan.FromSeconds(30));
+        Completion: TimeSpan.FromSeconds(30),
+        Notice: TimeSpan.FromSeconds(30));
 }
 
 /// <summary>
@@ -19,7 +21,14 @@ public sealed record SaleTimeouts(
 /// timer, a socket, or a valve. That is what makes it testable with a list.
 ///
 /// Illegal transitions log and stay put. Each state arms one timeout when it
-/// is entered and cancels it when it is left.
+/// is entered and cancels it when it is left. Terminal states arm the notice
+/// timeout, and when it fires the screen clears to Idle for the next driver.
+///
+/// The sale is a saga. Each step toward "fuel for money" has a compensating
+/// step back: a hold is reversed, a completion is queued. The machine tracks
+/// where the money is in <see cref="Hold"/> apart from where the pump is in
+/// <see cref="State"/>, because the two drift apart when the bank link runs
+/// late, and the driver has to be told about the gap.
 /// </summary>
 public sealed class SaleStateMachine
 {
@@ -47,8 +56,21 @@ public sealed class SaleStateMachine
     public string Phase { get; private set; }
     public string? LastMessage { get; private set; }
     public string? Token { get; private set; }
+    public HoldStatus Hold { get; private set; }
+    public EndReason End { get; private set; }
+    public string? EndDetail { get; private set; }
+    public bool GradeSelected { get; private set; }
+    public bool NozzleOut { get; private set; }
+    public bool NozzleSeated { get; private set; }
 
-    public SaleSnapshot Snapshot() => new(SaleId, State, CardName, Grade, Ceiling, Volume, Money, Flow, Phase, LastMessage);
+    /// <summary>True while the bank still owes an answer about the driver's money.</summary>
+    public bool HoldUnsettled => Hold is HoldStatus.Requested or HoldStatus.Held or HoldStatus.ReleasePending or HoldStatus.SettlePending;
+
+    public static bool IsTerminal(SaleState s) =>
+        s is SaleState.Declined or SaleState.Cancelled or SaleState.Faulted or SaleState.StoreAndForward;
+
+    public SaleSnapshot Snapshot(DateTimeOffset? deadlineAt = null) =>
+        new(SaleId, State, CardName, Grade, Ceiling, Volume, Money, Flow, Phase, LastMessage, Hold, End, Notice(), GradeSelected, NozzleOut, NozzleSeated, deadlineAt);
 
     public IReadOnlyList<SaleCommand> Apply(SaleEvent e)
     {
@@ -56,37 +78,67 @@ public sealed class SaleStateMachine
             return [new SaleCommand.Log(SaleId, $"dropped event for other sale {e.SaleId}")];
 
         var commands = new List<SaleCommand>(4);
+
+        // Money events are legal in every state. They move Hold, and only Completing cares about them for State.
+        if (ApplyHoldEvent(e, commands)) return commands;
+
         // Cancel and Fault are legal from anywhere that is not already terminal.
         switch (e)
         {
-            case SaleEvent.Fault f:
-                return Transition(SaleState.Faulted, commands, $"FAULT: {f.Reason}", closeValve: true, reverse: State is SaleState.ReadyToPump or SaleState.Authorizing);
+            case SaleEvent.Fault f when !IsTerminal(State):
+                End = EndReason.PumpFault;
+                EndDetail = f.Reason;
+                if (Volume > Volume.Zero)
+                {
+                    // Fuel moved before the fault. The driver owes for it, so settle to the metered amount rather than reverse.
+                    commands.Add(new SaleCommand.SendCompletion(SaleId, Money));
+                    return Transition(SaleState.Faulted, commands, $"FAULT: {f.Reason}, settling {Money} for fuel already dispensed", closeValve: true);
+                }
+                return Transition(SaleState.Faulted, commands, $"FAULT: {f.Reason}", closeValve: true, reverse: Hold is HoldStatus.Held or HoldStatus.Requested);
             case SaleEvent.Cancel c when State is SaleState.CardRead or SaleState.Authorizing or SaleState.ReadyToPump:
-                return Transition(SaleState.Cancelled, commands, $"cancelled: {c.Reason}", reverse: State is SaleState.Authorizing or SaleState.ReadyToPump);
+                End = EndReason.DriverCancelled;
+                EndDetail = c.Reason;
+                return Transition(SaleState.Cancelled, commands, $"cancelled: {c.Reason}", reverse: Hold is HoldStatus.Held or HoldStatus.Requested);
             case SaleEvent.Timeout t when t.InState != State:
                 commands.Add(new SaleCommand.Log(SaleId, $"stale timeout for {t.InState} ignored in {State}"));
                 return commands;
+            case SaleEvent.Timeout when IsTerminal(State) && HoldUnsettled:
+                // The driver may still be reading. Keep the screen until the bank has confirmed where the money went.
+                commands.Add(new SaleCommand.ArmTimer(SaleId, State, _timeouts.Notice));
+                commands.Add(new SaleCommand.Log(SaleId, $"screen held, hold is {Hold}"));
+                return commands;
+            case SaleEvent.Timeout when IsTerminal(State):
+                return Transition(SaleState.Idle, commands, "screen cleared for the next driver");
         }
 
         switch (State, e)
         {
             case (SaleState.Idle, SaleEvent.CardPresented cp):
                 CardName = cp.CardName;
-                Grade = cp.Grade;
-                commands.Add(new SaleCommand.RequestAuthorization(SaleId, cp.CardName, cp.Grade, _hold));
+                Grade = cp.Grade ?? Grade.Regular;
+                GradeSelected = cp.Grade is not null;
+                Hold = HoldStatus.Requested;
+                commands.Add(new SaleCommand.RequestAuthorization(SaleId, cp.CardName, Grade, _hold));
                 return Transition(SaleState.Authorizing, commands, $"card {cp.CardName}, hold {_hold}", timeout: _timeouts.Authorization);
 
             case (SaleState.Authorizing, SaleEvent.Approved a):
                 Ceiling = a.Ceiling;
                 Token = a.Token;
-                commands.Add(new SaleCommand.ArmPump(SaleId, a.Token, Grade));
+                Hold = HoldStatus.Held;
+                commands.Add(new SaleCommand.ArmPump(SaleId, a.Token, GradeSelected ? Grade : null));
                 return Transition(SaleState.ReadyToPump, commands, $"approved, ceiling {a.Ceiling}", timeout: _timeouts.NozzleLift);
 
             case (SaleState.Authorizing, SaleEvent.Declined d):
+                Hold = HoldStatus.None;
+                End = EndReason.CardDeclined;
+                EndDetail = d.Message;
                 return Transition(SaleState.Declined, commands, $"declined {d.ReasonCode}: {d.Message}");
 
             case (SaleState.Authorizing, SaleEvent.AuthorizationTimedOut):
             case (SaleState.Authorizing, SaleEvent.Timeout):
+                // The bank may still have heard us. Reverse whatever it holds; the reversal is idempotent on their side.
+                End = EndReason.BankSilent;
+                EndDetail = "the bank did not answer in time";
                 return Transition(SaleState.Declined, commands, "authorization timed out", reverse: true);
 
             case (SaleState.ReadyToPump, SaleEvent.PumpArmed pa):
@@ -96,14 +148,46 @@ public sealed class SaleStateMachine
                 return commands;
 
             case (SaleState.ReadyToPump, SaleEvent.PumpRefused pr):
+                End = EndReason.SecurityRefusal;
+                EndDetail = pr.Reason;
                 return Transition(SaleState.Faulted, commands, $"pump refused: {pr.Reason}", reverse: true);
 
+            // Before the first drop the driver can take as long as the lift timer allows to pick a grade, lift, and seat.
+            case (SaleState.ReadyToPump, SaleEvent.GradeSelected gs):
+                Grade = gs.Grade;
+                GradeSelected = true;
+                commands.Add(new SaleCommand.Log(SaleId, $"grade {gs.Grade} selected"));
+                return commands;
+
             case (SaleState.ReadyToPump, SaleEvent.NozzleLifted):
-                commands.Add(new SaleCommand.OpenValve(SaleId));
-                return Transition(SaleState.Fueling, commands, "nozzle lifted", timeout: _timeouts.MaxFueling);
+                NozzleOut = true;
+                commands.Add(new SaleCommand.Log(SaleId, "nozzle lifted, waiting for grade, seat, and trigger"));
+                return commands;
+
+            case (SaleState.ReadyToPump, SaleEvent.NozzleSeated):
+                NozzleSeated = true;
+                commands.Add(new SaleCommand.Log(SaleId, "nozzle seated in fill point"));
+                return commands;
+
+            case (SaleState.ReadyToPump, SaleEvent.NozzleUnseated):
+                NozzleSeated = false;
+                return commands;
+
+            case (SaleState.ReadyToPump, SaleEvent.NozzleHung):
+                // No pour yet, so the sale stays armed. The lift timer still runs.
+                NozzleOut = false;
+                NozzleSeated = false;
+                commands.Add(new SaleCommand.Log(SaleId, "nozzle hung before any pour, still armed"));
+                return commands;
+
+            case (SaleState.ReadyToPump, SaleEvent.FlowStarted):
+                Phase = "full";
+                return Transition(SaleState.Fueling, commands, "first pour, valve open", timeout: _timeouts.MaxFueling);
 
             case (SaleState.ReadyToPump, SaleEvent.Timeout):
-                return Transition(SaleState.Cancelled, commands, "no nozzle lift, hold reversed", reverse: true);
+                End = EndReason.NoNozzleLift;
+                EndDetail = $"fueling did not start within {_timeouts.NozzleLift.TotalSeconds:0} s";
+                return Transition(SaleState.Cancelled, commands, "no pour started, hold reversed", reverse: true);
 
             case (SaleState.Fueling, SaleEvent.Progress p):
                 Volume = p.Volume;
@@ -112,38 +196,54 @@ public sealed class SaleStateMachine
                 Phase = p.Phase;
                 return commands;
 
+            case (SaleState.Fueling, SaleEvent.FlowPaused fp):
+                Flow = FlowRate.Zero;
+                Phase = "paused";
+                commands.Add(new SaleCommand.Log(SaleId, $"flow paused: {fp.Reason}, {Volume} for {Money} so far"));
+                return commands;
+
+            case (SaleState.Fueling, SaleEvent.NozzleSeated):
+                NozzleSeated = true;
+                return commands;
+
+            case (SaleState.Fueling, SaleEvent.NozzleUnseated):
+                NozzleSeated = false;
+                return commands;
+
+            case (SaleState.Fueling, SaleEvent.FlowResumed):
+                Phase = "full";
+                commands.Add(new SaleCommand.Log(SaleId, "flow resumed"));
+                return commands;
+
+            case (SaleState.Fueling, SaleEvent.GradeSelected):
+                commands.Add(new SaleCommand.Log(SaleId, "grade change refused after the first pour"));
+                return commands;
+
             case (SaleState.Fueling, SaleEvent.CeilingReached cr):
                 Volume = cr.Volume;
                 Money = cr.Money;
                 Flow = FlowRate.Zero;
                 Phase = "ceiling";
                 commands.Add(new SaleCommand.CloseValve(SaleId));
-                return Finish(commands, "ceiling reached");
+                return Finish(commands, "ceiling reached", EndReason.Completed);
 
             case (SaleState.Fueling, SaleEvent.NozzleHung):
                 Flow = FlowRate.Zero;
                 Phase = "hung";
+                NozzleOut = false;
+                NozzleSeated = false;
                 commands.Add(new SaleCommand.CloseValve(SaleId));
-                return Finish(commands, "nozzle hung");
+                return Finish(commands, "nozzle hung", EndReason.Completed);
 
             case (SaleState.Fueling, SaleEvent.Timeout):
                 commands.Add(new SaleCommand.CloseValve(SaleId));
-                return Finish(commands, "max fueling time, valve closed");
-
-            case (SaleState.Completing, SaleEvent.CompletionSent cs):
-                return Transition(SaleState.Idle, commands, $"completion sent for {cs.Final}");
-
-            case (SaleState.Completing, SaleEvent.CompletionQueued cq):
-                return Transition(SaleState.StoreAndForward, commands, $"host down, completion for {cq.Final} queued");
+                return Finish(commands, "max fueling time, valve closed", EndReason.MaxFuelingTime);
 
             case (SaleState.Completing, SaleEvent.Timeout):
-                return Transition(SaleState.StoreAndForward, commands, "completion timed out, queued");
-
-            case (SaleState.Completing, SaleEvent.Reversed):
-            case (SaleState.Declined, SaleEvent.Reversed):
-            case (SaleState.Cancelled, SaleEvent.Reversed):
-                commands.Add(new SaleCommand.Log(SaleId, "hold reversed"));
-                return commands;
+                // The completion is in flight and late. The gateway will queue it if the host never answers; if the
+                // host does answer, CompletionSent lands in StoreAndForward and settles the hold there.
+                Hold = HoldStatus.SettlePending;
+                return Transition(SaleState.StoreAndForward, commands, "completion late, will post when the bank answers", timeout: _timeouts.Notice);
 
             default:
                 commands.Add(new SaleCommand.Log(SaleId, $"illegal: {e.GetType().Name} in {State}, ignored"));
@@ -151,11 +251,73 @@ public sealed class SaleStateMachine
         }
     }
 
-    private IReadOnlyList<SaleCommand> Finish(List<SaleCommand> commands, string why)
+    /// <summary>
+    /// The saga's compensation table. Returns true when the event was a money
+    /// event and has been handled. A late answer from the bank is the case that
+    /// matters: the pump has already told the driver "no", so an approval that
+    /// arrives now must be reversed, never armed.
+    /// </summary>
+    private bool ApplyHoldEvent(SaleEvent e, List<SaleCommand> commands)
     {
+        switch (e)
+        {
+            case SaleEvent.Approved late when State != SaleState.Authorizing:
+                // Late approval after we gave up. The bank holds money for a sale we already ended. Give it back.
+                Hold = HoldStatus.Held;
+                commands.Add(new SaleCommand.Reverse(SaleId));
+                commands.Add(new SaleCommand.Log(SaleId, $"LATE approval {late.Ceiling} arrived in {State}; token discarded, hold reversed (saga compensation)"));
+                return true;
+
+            case SaleEvent.Declined when State != SaleState.Authorizing:
+                if (Hold == HoldStatus.Requested) Hold = HoldStatus.None;
+                commands.Add(new SaleCommand.Log(SaleId, $"late decline arrived in {State}, nothing held"));
+                return true;
+
+            case SaleEvent.AuthorizationTimedOut when State != SaleState.Authorizing:
+                commands.Add(new SaleCommand.Log(SaleId, $"late network failure arrived in {State}, ignored"));
+                return true;
+
+            case SaleEvent.Reversed:
+                Hold = HoldStatus.Released;
+                commands.Add(new SaleCommand.Log(SaleId, "hold released by the bank"));
+                return true;
+
+            case SaleEvent.ReversalQueued:
+                Hold = HoldStatus.ReleasePending;
+                commands.Add(new SaleCommand.Log(SaleId, "bank unreachable, release queued, will post when the link returns"));
+                return true;
+
+            case SaleEvent.CompletionSent cs when State == SaleState.Completing:
+                Hold = HoldStatus.Settled;
+                Transition(SaleState.Idle, commands, $"completion sent for {cs.Final}");
+                return true;
+
+            case SaleEvent.CompletionSent cs:
+                Hold = HoldStatus.Settled;
+                commands.Add(new SaleCommand.Log(SaleId, $"completion for {cs.Final} posted late, hold settled"));
+                return true;
+
+            case SaleEvent.CompletionQueued cq when State == SaleState.Completing:
+                Hold = HoldStatus.SettlePending;
+                Transition(SaleState.StoreAndForward, commands, $"host down, completion for {cq.Final} queued", timeout: _timeouts.Notice);
+                return true;
+
+            case SaleEvent.CompletionQueued:
+                if (Hold != HoldStatus.Settled) Hold = HoldStatus.SettlePending;
+                commands.Add(new SaleCommand.Log(SaleId, "completion queued"));
+                return true;
+        }
+        return false;
+    }
+
+    private IReadOnlyList<SaleCommand> Finish(List<SaleCommand> commands, string why, EndReason end)
+    {
+        End = end;
         if (Volume == Volume.Zero)
         {
             // No fuel moved. A completion for zero is wrong; the hold must be reversed in full.
+            End = EndReason.DriverCancelled;
+            EndDetail = "no fuel was dispensed";
             return Transition(SaleState.Cancelled, commands, $"{why}, no fuel, hold reversed", reverse: true);
         }
         commands.Add(new SaleCommand.SendCompletion(SaleId, Money));
@@ -173,12 +335,75 @@ public sealed class SaleStateMachine
         commands.Insert(0, new SaleCommand.CancelTimer(SaleId));
         if (closeValve) commands.Add(new SaleCommand.CloseValve(SaleId));
         if (reverse) commands.Add(new SaleCommand.Reverse(SaleId));
+        // Terminal states show the notice for a while, then clear for the next driver.
+        if (timeout is null && IsTerminal(to)) timeout = _timeouts.Notice;
         if (timeout is { } t) commands.Add(new SaleCommand.ArmTimer(SaleId, to, t));
         commands.Add(new SaleCommand.Log(SaleId, $"{State} -> {to}: {message}"));
         State = to;
         LastMessage = message;
-        if (to is SaleState.Idle or SaleState.Declined or SaleState.Cancelled or SaleState.Faulted or SaleState.StoreAndForward)
+        if (to is SaleState.Idle || IsTerminal(to))
             Phase = to.ToString().ToLowerInvariant();
         return commands;
     }
+
+    /// <summary>
+    /// The screen text, derived from state, hold, and end reason. A pure
+    /// function of the machine, so the same facts always produce the same words.
+    /// </summary>
+    public DriverNotice Notice()
+    {
+        var holdLine = Hold switch
+        {
+            HoldStatus.Released => "Nothing was charged to your card.",
+            HoldStatus.ReleasePending => "A temporary hold may show on your card. It releases automatically when our bank link returns.",
+            HoldStatus.Requested or HoldStatus.Held => "Any temporary hold on your card is being released.",
+            HoldStatus.Settled => $"Your card was charged {Money}.",
+            HoldStatus.SettlePending => $"Your card will be charged {Money} when our bank link returns.",
+            _ => "",
+        };
+
+        switch (State)
+        {
+            case SaleState.Idle:
+                return new("Insert or tap your card", "Select a grade after approval.", DriverAction.None);
+            case SaleState.Authorizing:
+                return new("Contacting your bank", $"Most approvals take a few seconds. We stop waiting after {_timeouts.Authorization.TotalSeconds:0} s.", DriverAction.Wait);
+            case SaleState.ReadyToPump:
+            {
+                var leave = $"If you leave, the pump cancels after {_timeouts.NozzleLift.TotalSeconds:0} s and releases the hold.";
+                var step = !GradeSelected ? "Select a grade."
+                    : !NozzleOut ? "Lift the nozzle."
+                    : !NozzleSeated ? "Put the nozzle in your tank."
+                    : "Squeeze the trigger to begin.";
+                return new($"Approved for up to {Ceiling}", Join(step, leave), DriverAction.LiftNozzle);
+            }
+            case SaleState.Fueling when Phase == "paused":
+                return new($"Paused at {Money}", Join(NozzleSeated ? "Squeeze the trigger to continue." : "Put the nozzle back in the tank and squeeze to continue.", "Hang up the nozzle to finish."), DriverAction.HangToStop);
+            case SaleState.Fueling:
+                return new("Fueling", "Let go of the trigger to pause. Hang up the nozzle to finish. The pump stops by itself at your limit.", DriverAction.HangToStop);
+            case SaleState.Completing:
+                return new($"Finishing: {Money}", "Settling with your bank. This usually takes a few seconds.", DriverAction.Wait);
+            case SaleState.StoreAndForward:
+                return new($"Done: {Volume} for {Money}", $"Our bank link is slow or down. {holdLine} Take your receipt. You may go.", DriverAction.Leave);
+        }
+
+        // Terminal failures. Headline says what happened; detail says where the money is and what to do.
+        return End switch
+        {
+            EndReason.CardDeclined => new("Card declined", Join(Sentence(EndDetail), holdLine, "Use a different card, or see the attendant."), DriverAction.UseAnotherCard),
+            EndReason.BankSilent => new("Bank did not answer", Join("No fuel was dispensed.", holdLine, "Try again here, or use another pump."), DriverAction.TryAgain),
+            EndReason.NoNozzleLift => new("Sale cancelled", Join("The nozzle was not lifted in time.", holdLine, "Start again when ready."), DriverAction.TryAgain),
+            EndReason.DriverCancelled => new("Sale cancelled", Join(Sentence(EndDetail), holdLine, "Start again when ready."), DriverAction.TryAgain),
+            EndReason.PumpFault => new("Pump out of service", Join(Sentence(EndDetail), holdLine, "Please use another pump."), DriverAction.UseAnotherPump),
+            EndReason.SecurityRefusal => new("Pump refused the sale", Join(Sentence(EndDetail), holdLine, "Please use another pump and tell the attendant."), DriverAction.SeeAttendant),
+            EndReason.MaxFuelingTime => new("Time limit reached", Join("The pump stopped at its time limit.", holdLine), DriverAction.Leave),
+            _ => new(State.ToString(), holdLine, DriverAction.None),
+        };
+    }
+
+    /// <summary>Capitalise a reason and end it with a period, or return empty for nothing.</summary>
+    private static string Sentence(string? s) =>
+        string.IsNullOrEmpty(s) ? "" : char.ToUpperInvariant(s[0]) + s[1..].TrimEnd('.') + ".";
+
+    private static string Join(params string[] parts) => string.Join(' ', parts.Where(p => p.Length > 0));
 }

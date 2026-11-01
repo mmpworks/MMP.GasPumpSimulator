@@ -10,7 +10,9 @@ A simulator of a pay-at-the-pump fuel dispenser, on .NET 10, with an Electron fr
 2. **Security.** The pump controller is the authority over fuel. It arms only from a signed authorization it can verify. It clamps every ceiling to hard limits it owns. It keeps a hash-chained event ledger and a sealed totalizer. A hacked chain upstream cannot turn a $30 sale into 600 gallons.
 3. **Card failures.** Insufficient funds with partial approval, expired card, lost or stolen, wrong PIN on debit, velocity limit, issuer down, network timeout, network flapping, completion while the host is down.
 4. **The pump.** Hydraulics, meter, flow controller. With a $30 ceiling the flow runs full until the last 20 percent, then tapers down, and the final drop lands on the ceiling to the cent, never over.
-5. **Concurrency.** Three workers, pump, sale, and payment, talk through bounded mailboxes. How the workers run is a Strategy. Today: dedicated threads. Also today: Task and Channel. Later: MMP.AsyncProxy state machines. Tests run the same sale under every strategy.
+5. **Failover.** The sale is a saga. When the bank link runs late or dies, every hold is reversed or every completion queued, and the driver's screen says where the money is and what to do next: try again, use another pump, use another card, see the attendant, or go. An abandoned authorization cancels itself.
+6. **The nozzle.** Grade, lift, seat, trigger. Fuel flows only with all four. Stop and start at will. Hang after a pour ends the sale.
+7. **Concurrency.** Three workers, pump, sale, and payment, talk through bounded mailboxes. How the workers run is a Strategy. Today: dedicated threads. Also today: Task and Channel. Later: MMP.AsyncProxy state machines. Tests run the same sale under every strategy.
 
 ## Why
 
@@ -20,7 +22,9 @@ The research note answered "how does a gas pump take a card". This repo answers 
 
 Kill condition: all true on one date, written here.
 
-1. `dotnet test` green. Count on 2026-10-31: 80 of 80, 0 failures in 15 consecutive full runs. Sign-off date: ___.
+1. `dotnet test` green. Count on 2026-10-31: 80 of 80, 0 failures in 15 consecutive full runs. Count on 2026-11-01 after the saga and interlock slice: 108 of 108. Sign-off date: ___.
+7. (2026-11-01) Under `NetworkMode.Late`, a sale ends Declined, the pump never arms, and the issuer shows no open hold, under both strategies. The driver's screen names the failure and the next step at every terminal state.
+8. (2026-11-01) No fuel moves until grade, lift, seat, and trigger are all present. Release pauses, squeeze resumes, hang after a pour completes the sale.
 2. The same end-to-end sale passes under both dispatch strategies, from one test with a theory over strategies.
 3. A $30 sale at $3.499 per gallon ends at 3000 cents, never 3001, under both strategies, with the taper visible in the flow-rate trace (full, then falling, then stop).
 4. Every attack in `docs/threat-model.md` has a test that fails without its control and passes with it.
@@ -54,6 +58,12 @@ Kill condition: all true on one date, written here.
 | 13 | Network faults | A `NetworkFaultPolicy` the UI can set: latency, timeout, refuse, flap with a percentage | One object, one place to inject trouble. |
 | 14 | Host-down completions | Completions queue in a store-and-forward list and drain when the network returns | The research note's `StoreAndForward` state. |
 | 15 | Licence and repo | MIT, `mmpworks/MMP.GasPumpSimulator`, private | Steve said private. |
+| 16 | Saga shape (2026-11-01) | The sale machine tracks `HoldStatus` apart from `SaleState`. Every forward money step has a compensation: reverse the hold, queue the completion. The gateway's store-and-forward list is the compensation log and holds reversals as well as completions. | Steve: failover must be graceful when the network runs late. The two parties cannot see each other, so the machine must know where the money is independent of where the pump is. |
+| 17 | Late answers | `NetworkMode.Late`: the bank acts at the latency, the answer returns after `LateResponse` (45 s default) against a 30 s host timeout. A late `Approved` is reversed, never armed. A late approval for a replaced sale is reversed by the simulation directly. The issuer voids a sale id whose reversal arrived before its authorization. | This is the saga case nobody tests without a fault injector. |
+| 18 | Driver notice | `DriverNotice(Headline, Detail, Action)` is a pure function of state, hold, and end reason. Actions: Wait, LiftNozzle, HangToStop, Leave, TryAgain, UseAnotherCard, UseAnotherPump, SeeAttendant. `DeadlineAt` on the snapshot drives a live countdown. | Steve: the driver must know what happened and whether to start over or go to the next pump. |
+| 19 | Self-cancel | Approved with no pour for 120 s cancels and reverses. A finished screen clears to Idle after 30 s, except while the bank still owes an answer about the hold. | Steve: an abandoned authorization must cancel itself. |
+| 20 | Nozzle interlocks | Fuel flows only with grade selected, nozzle lifted, nozzle seated in a fill point, and trigger held. Release and squeeze any number of times. Grade locks at the first drop. Hang after any pour ends the delivery. Hang before any pour changes nothing. `Fueling` starts at the first pour, never at the lift. | Steve, 2026-11-01: grade and fill-point sensor before any pour; stop and start many times; harness return after a pour ends the delivery. |
+| 21 | Fault with fuel poured | Settle for the metered amount. Fault before fuel reverses. | The old shape left the hold on after a mid-sale fault. |
 
 ## Program design
 
@@ -82,7 +92,8 @@ docs/                  prd.md, threat-model.md, architecture.md
 Build order:
 
 1. Slice 1 (done 2026-10-31): Core, Payment, Security, Pump, Dispatch with both strategies, 80 tests. Host with WebSocket. Electron app with the pump face, card panel, fault toggles, attack buttons, ledger view, event log. Verified live: Electron spawned the host, the socket connected, a partial-approval sale fueled, a pulse spoof faulted the pump.
-2. Slice 2: AsyncProxy strategy once MMP.AsyncProxy is referenced. Scenario scripting. Receipt and completion timing rules.
+2. Slice 1b (done 2026-11-01): saga compensation (late approval, queued reversal, issuer void), `NetworkMode.Late`, driver notice with countdown, notice timeout, nozzle interlocks (grade, seat, trigger, pause and resume), fault settles for fuel poured. 108 tests. App shows the notice banner, hold badge, bank-owes line, grade and nozzle and trigger controls, Late mode.
+3. Slice 2: AsyncProxy strategy once MMP.AsyncProxy is referenced. Scenario scripting. Receipt and completion timing rules.
 
 ## Open items
 

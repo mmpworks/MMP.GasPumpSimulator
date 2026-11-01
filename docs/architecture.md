@@ -44,22 +44,54 @@ stateDiagram-v2
     [*] --> Idle
     Idle --> Authorizing : CardPresented<br/>→ RequestAuthorization, 30 s timer
     Authorizing --> ReadyToPump : Approved<br/>→ ArmPump, 120 s timer
-    Authorizing --> Declined : Declined / Timeout<br/>→ Reverse on timeout
-    ReadyToPump --> Fueling : NozzleLifted<br/>→ OpenValve, 10 min timer
+    Authorizing --> Declined : Declined
+    Authorizing --> Declined : Timeout<br/>→ Reverse (bank may have heard us)
+    ReadyToPump --> ReadyToPump : GradeSelected / NozzleLifted / NozzleSeated / NozzleHung<br/>(no pour yet, timer keeps running)
+    ReadyToPump --> Fueling : FlowStarted<br/>(first trigger squeeze), 10 min timer
     ReadyToPump --> Cancelled : Timeout<br/>→ Reverse
     ReadyToPump --> Faulted : PumpRefused<br/>→ Reverse
-    Fueling --> Completing : CeilingReached / NozzleHung<br/>→ CloseValve, SendCompletion
+    Fueling --> Fueling : FlowPaused / FlowResumed<br/>(trigger released, squeezed again)
+    Fueling --> Completing : CeilingReached / NozzleHung<br/>→ CloseValve, SendCompletion, 30 s timer
     Fueling --> Cancelled : NozzleHung with zero volume<br/>→ Reverse
-    Fueling --> Faulted : Fault<br/>→ CloseValve
+    Fueling --> Faulted : Fault<br/>→ CloseValve, SendCompletion for fuel poured
     Completing --> Idle : CompletionSent
     Completing --> StoreAndForward : CompletionQueued / Timeout
-    Declined --> [*]
-    Cancelled --> [*]
-    Faulted --> [*]
-    StoreAndForward --> [*]
+    Declined --> Idle : Timeout (30 s notice)<br/>only once the hold is settled or released
+    Cancelled --> Idle : Timeout (30 s notice)
+    Faulted --> Idle : Timeout (30 s notice)
+    StoreAndForward --> Idle : Timeout (30 s notice)
 ```
 
 `SaleStateMachine.Apply` takes one event and returns a list of commands. It never does I/O. The simulation executes the commands by posting messages. That split is what makes the machine testable with a list and swappable under any dispatch strategy.
+
+### The nozzle, as the driver uses it
+
+Fuel flows only when four things are true at once, and the pump controller owns all four: the pump is armed from a verified token, a grade is selected, the nozzle is off the harness and seated in a fill point (tank or can), and the trigger is held.
+
+1. **Lift** takes the nozzle off the harness. Nothing opens.
+2. **Seat** is the fill-point sensor. Nothing opens.
+3. **Squeeze** opens the valve if every interlock passes. The first squeeze is the first pour, and `Fueling` begins here, never at the lift.
+4. **Release** shuts the valve. The sale stays open. Squeeze again as often as you like. The grade is locked after the first drop.
+5. **Hang** after any pour ends the delivery. Hang before any pour changes nothing; the 120 s timer will cancel the sale if the driver has walked off.
+
+### The sale as a saga
+
+A sale is a sequence of steps across two parties who cannot see each other's state: the pump, and the bank at the far end of a network that can run late. Each step has a compensating step, and the machine tracks where the money is (`HoldStatus`) apart from where the pump is (`SaleState`).
+
+| Step | Forward | Compensation | Who runs it |
+|---|---|---|---|
+| 1 | Pre-authorize a hold | Reverse the hold | Payment worker, on a `Reverse` command |
+| 2 | Arm the pump from the token | Disarm, close the valve | Pump worker |
+| 3 | Dispense fuel | None. Fuel does not come back. The sale settles for what moved. | |
+| 4 | Complete for the real amount | Queue the completion if the bank is unreachable | Gateway store-and-forward |
+
+Three cases where the two parties disagree, and what the machine does:
+
+1. **The bank answers late.** The pump gave up at 30 s and told the driver "bank did not answer". The approval lands at 45 s on a `Declined` sale. The machine never arms from it. It issues a `Reverse` and logs the late approval. If the driver has already started a new sale, the late approval is for a sale id the machine no longer holds, so the simulation sends the reversal straight to the payment worker. Either way the hold comes off.
+2. **The reversal cannot reach the bank.** The gateway queues it in the same store-and-forward list as completions, once per sale, and drains it when any later call succeeds. The sale shows `ReleasePending`, and the notice tells the driver the hold releases automatically.
+3. **The reversal outruns the authorization.** Both were in flight on a slow link, and the reversal arrived first. The issuer records a void for that sale id, so the late authorization is declined and never places a hold.
+
+The driver sees all of this on the pump's screen as a `DriverNotice`: one headline, one line of detail that says where the money is, and one next step (`TryAgain`, `UseAnotherPump`, `UseAnotherCard`, `SeeAttendant`, `Leave`). A finished screen clears to `Idle` after 30 s, but only once the hold is settled or released, so a driver never walks away from a screen that still says the bank owes an answer.
 
 ## The dispatch strategy
 
@@ -126,6 +158,19 @@ Verified in this order, and the order matters: format, signature, pump id, time 
 ## The ledger
 
 Each entry: `seq | at | kind | detail | prevHash | hash` where `hash = SHA-256(seq|at|kind|detail|prevHash)`. `Verify` walks the chain and returns the first broken sequence number or 0. The totalizer's running total is written on every valve close, so the books can be checked against the meter even if sale records were erased.
+
+## Timers, and what each one protects
+
+| Timer | Default | Fires when | Then |
+|---|---|---|---|
+| Authorization | 30 s | The bank has not answered | Decline, reverse, tell the driver to try again or use another pump |
+| Nozzle lift | 120 s | Approved, but no pour has started | Cancel, reverse, screen says the sale was cancelled |
+| Max fueling | 10 min | Fueling, including pauses | Close the valve, settle for what moved |
+| Completion | 30 s | The completion has not been acknowledged | Store-and-forward, driver may leave |
+| Notice | 30 s | A finished screen has been shown | Clear to Idle, unless the hold is still unsettled, then wait another 30 s |
+| Hard duration | 10 min | Owned by the pump, checked every tick | Stop, whatever the sale machine thinks |
+
+The driver sees the live countdown on the pump face. The simulation stamps `DeadlineAt` on every snapshot when a timer is armed.
 
 ## Timing
 

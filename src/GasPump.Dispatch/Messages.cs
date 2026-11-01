@@ -3,13 +3,23 @@ using GasPump.Payment;
 
 namespace GasPump.Dispatch;
 
-/// <summary>What the sale worker sends the pump worker. Note what is missing: there is no SetCeiling.</summary>
+/// <summary>What the sale worker and the driver send the pump worker. Note what is missing: there is no SetCeiling.</summary>
 public abstract record PumpMessage
 {
-    public sealed record Arm(string SaleId, string Token, Grade Grade) : PumpMessage;
-    public sealed record Open(string SaleId) : PumpMessage;
+    public sealed record Arm(string SaleId, string Token, Grade? Grade) : PumpMessage;
     public sealed record Close(string SaleId, string Reason) : PumpMessage;
+    public sealed record SelectGrade(Grade Grade) : PumpMessage;
+    /// <summary>Nozzle off the harness.</summary>
     public sealed record Lift : PumpMessage;
+    /// <summary>Spout in a tank or can; the fill-point sensor closed.</summary>
+    public sealed record Seat : PumpMessage;
+    /// <summary>Spout pulled out of the fill point.</summary>
+    public sealed record Unseat : PumpMessage;
+    /// <summary>Trigger held: open the valve if every interlock allows it.</summary>
+    public sealed record Squeeze : PumpMessage;
+    /// <summary>Trigger let go: shut the valve, keep the sale open.</summary>
+    public sealed record Release : PumpMessage;
+    /// <summary>Nozzle back on the harness. Ends the delivery after any pour.</summary>
     public sealed record Hang : PumpMessage;
     public sealed record Tick(TimeSpan Dt) : PumpMessage;
     public sealed record Stop(string Reason) : PumpMessage;

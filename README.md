@@ -6,15 +6,17 @@ A pay-at-the-pump fuel dispenser, simulated. Present a card, get a two-phase aut
 
 ## What it covers
 
-1. **Payment.** Luhn and expiry at the terminal. A simulated issuer with named test cards: `Good`, `LowBalance` (partial approval), `InsufficientFunds`, `Expired`, `Stolen`, `Frozen`, `Velocity`, `DebitGoodPin`, `DebitBadPin`. A network you can set to Up, Down, Timeout, or Flapping. Pre-authorization hold, completion for the real amount, reversal when no fuel moved, store-and-forward when the host is down at completion.
+1. **Payment.** Luhn and expiry at the terminal. A simulated issuer with named test cards: `Good`, `LowBalance` (partial approval), `InsufficientFunds`, `Expired`, `Stolen`, `Frozen`, `Velocity`, `DebitGoodPin`, `DebitBadPin`. A network you can set to Up, Down, Timeout, Flapping, or Late (the bank acts, the answer comes back after the pump gave up). Pre-authorization hold, completion for the real amount, reversal when no fuel moved, store-and-forward when the host is down at completion.
 2. **Security.** The pump controller is the authority over fuel. It arms only from an HMAC-signed token it verifies itself, single-use by nonce, bound to its own pump id and a time window. Every ceiling is clamped to hard limits the pump owns: 50 gallons, $500, 10 minutes, 12 gal/min. There is no "set limit" message to attack. A hash-chained ledger records every arm, open, close, refusal, and fault. A sealed totalizer only goes up. Pulses the valve could not have passed stop the pump dead.
 3. **The pump.** Hydraulics, meter, taper. With a $30 ceiling the flow is full to $24, falls in a straight line to an 8 percent creep, and the last slice is clamped so the money lands on 3000 cents and never 3001.
-4. **Concurrency.** Three workers, sale, pump, and payment, pass messages through bounded mailboxes and share no state. How they run is a Strategy: `ThreadedDispatch` is a thread per worker with blocking queues. `ChannelDispatch` is a Task per worker over bounded channels. The third slot is for MMP.AsyncProxy state machines. One end-to-end test runs the same sale under every strategy.
+4. **The nozzle.** Fuel flows only with a grade selected, the nozzle off the harness and seated in a tank or can, and the trigger held. Let go to pause, squeeze to resume, as often as you like. Once anything has poured, hanging the nozzle ends the sale. Hang before any pour and nothing changes; walk away and the pump cancels itself at 120 s.
+5. **Failover.** The sale is a saga. When the bank link runs late or dies, every hold is reversed or every completion queued, never lost. A late approval that arrives after the pump gave up is reversed, never armed. The pump's screen says what happened, where your money is, and what to do: try again, use another pump, use another card, see the attendant, or go. The screen clears for the next driver after 30 s, but not while the bank still owes an answer.
+6. **Concurrency.** Three workers, sale, pump, and payment, pass messages through bounded mailboxes and share no state. How they run is a Strategy: `ThreadedDispatch` is a thread per worker with blocking queues. `ChannelDispatch` is a Task per worker over bounded channels. The third slot is for MMP.AsyncProxy state machines. One end-to-end test runs the same sale under every strategy.
 
 ## Run it
 
 ```
-dotnet test                       # 80 tests, about 11 s, on a fake clock
+dotnet test                       # 108 tests, about 17 s, on a fake clock
 cd app && npm install && npm run build && npx electron .
 ```
 
@@ -38,11 +40,40 @@ A pulse spoof of 2000 pulses during a sale:
 Faulted  $7.81  pump Faulted  "pulser reported 2017 pulses in one tick, valve could pass at most 60"  ledgerOk True
 ```
 
+## The late bank
+
+Set the host link to **Late** and present a card. The bank hears the request at 250 ms and puts a $30 hold on. The pump waits 30 s, gives up, tells the driver "Bank did not answer. No fuel was dispensed. Try again here, or use another pump", and sends a reversal. At 45 s the approval finally arrives on a sale that already ended. The pump never arms from it. It reverses again. The hold badge walks `hold requested` → `release queued` → `hold released`, and the issuer's open-hold list ends empty.
+
+Against the running host with channel dispatch, Late answer set to 32 s, 2026-11-01. `openHolds` is the issuer's own book; `hold` is what the pump knows:
+
+```
+t+  1s  Authorizing  hold=Requested  openHolds=['S0001']  | Contacting your bank -> Wait
+t+ 29s  Authorizing  hold=Requested  openHolds=['S0001']  | Contacting your bank -> Wait
+t+ 31s  Declined     hold=Requested  openHolds=[]         | Bank did not answer -> TryAgain      (our reversal reached the bank at 30.25 s)
+t+ 33s  Declined     hold=Held       openHolds=[]         | Bank did not answer -> TryAgain      (late approval arrived; never armed; reversed again)
+t+ 65s  Declined     hold=Released   openHolds=[]         | Bank did not answer -> TryAgain      (the reversal's own late answer came back)
+notice detail: No fuel was dispensed. Nothing was charged to your card. Try again here, or use another pump.
+```
+
+The pump's `hold` lags the bank's book by one late round trip. That lag is why the screen says "any hold is being released" rather than "nothing was charged" until the bank confirms it.
+
+The nozzle interlocks, same session. Lift, seat, and squeeze with no grade chosen moved nothing. Grade, squeeze, release, squeeze, hang:
+
+```
+t+  3s  ReadyToPump  pump=Armed       $0.00  0.000 gal   [pump] trigger ignored: select a grade first
+t+  6s  Fueling      pump=Dispensing  $2.00  0.527 gal   first pour, valve open
+t+  9s  Fueling      pump=Paused      $2.13  0.561 gal   flow paused: trigger released
+t+ 12s  Fueling      pump=Dispensing  $4.20  1.105 gal   flow resumed
+t+ 13s  Idle         pump=Stopped     $4.26  1.122 gal   nozzle hung, completion $4.26 sent, hold=Settled
+```
+
+Pull the link **Down** instead and the reversal itself cannot get through. It goes into the same store-and-forward queue as completions, the screen says "A temporary hold may show on your card. It releases automatically when our bank link returns", and **Drain queued** sends it when the link is back. The tests `Late_approval_is_reversed_not_armed_and_the_card_ends_untouched` and `Bank_unreachable_after_timeout_queues_the_reversal_and_releases_when_the_link_returns` run both under each dispatch strategy.
+
 ## The 600-gallon case
 
 In 2018 a Detroit station lost about 600 gallons in 90 minutes while the clerk could not stop the pump. The research behind this repo put the fix in one sentence: the reader protects the card, the controller protects the fuel. Two trust boundaries. This simulator builds the second one.
 
-Press "Signed token: 600 gal, $2000" in the app. That token is signed with the real key, which models an upstream that is fully compromised. The pump authority verifies the signature, then clamps the ceiling to its own limits: 50 gallons, $500. The ledger shows `arm.ok ... clamped from $2000.00/600.000 gal to $500.00/50.000 gal`. Lift the nozzle and it stops at 50.000 gallons and $174.95. The test `Signed_600_gallon_token_is_clamped_to_50_gallons_and_500_dollars` runs that under both dispatch strategies.
+Press "Signed token: 600 gal, $2000" in the app, pick a grade, lift, put the nozzle in the tank, and squeeze. That token is signed with the real key, which models an upstream that is fully compromised. The pump authority verifies the signature, then clamps the ceiling to its own limits: 50 gallons, $500. The ledger shows `arm.ok ... clamped from $2000.00/600.000 gal to $500.00/50.000 gal`. Lift the nozzle and it stops at 50.000 gallons and $174.95. The test `Signed_600_gallon_token_is_clamped_to_50_gallons_and_500_dollars` runs that under both dispatch strategies.
 
 `docs/threat-model.md` lists every attack and the test that proves its control.
 

@@ -39,9 +39,14 @@ app.MapGet("/api/cards", () => Results.Json(TestCards.ByName.Select(kv => new { 
 app.MapGet("/api/log", (int? after) => Results.Json(sim.Log.Snapshot().Skip(after ?? 0).Select(Contracts.Log), json));
 app.MapGet("/api/ledger", () => Results.Json(new { verify = sim.Ledger.Verify(), totalizer = sim.Totalizer.Total.Gallons, entries = sim.Ledger.Snapshot() }, json));
 
-app.MapPost("/api/card", (CardRequest r) => Results.Json(new { saleId = sim.PresentCard(r.Name, r.Grade ?? Grade.Regular) }, json));
+app.MapPost("/api/card", (CardRequest r) => Results.Json(new { saleId = sim.PresentCard(r.Name, r.Grade) }, json));
+app.MapPost("/api/grade", (GradeRequest r) => { sim.SelectGrade(r.Grade); return Results.Ok(); });
 app.MapPost("/api/nozzle/lift", () => { sim.LiftNozzle(); return Results.Ok(); });
+app.MapPost("/api/nozzle/seat", () => { sim.SeatNozzle(); return Results.Ok(); });
+app.MapPost("/api/nozzle/unseat", () => { sim.UnseatNozzle(); return Results.Ok(); });
 app.MapPost("/api/nozzle/hang", () => { sim.HangNozzle(); return Results.Ok(); });
+app.MapPost("/api/trigger/squeeze", () => { sim.SqueezeTrigger(); return Results.Ok(); });
+app.MapPost("/api/trigger/release", () => { sim.ReleaseTrigger(); return Results.Ok(); });
 app.MapPost("/api/cancel", () => { sim.Cancel(); return Results.Ok(); });
 app.MapPost("/api/reset", () => { sim.ResetSale(); return Results.Ok(); });
 app.MapPost("/api/drain", () => { sim.DrainPendingCompletions(); return Results.Ok(); });
@@ -50,8 +55,9 @@ app.MapPost("/api/network", (NetworkRequest r) =>
 {
     if (r.Mode is { } m) sim.Network.Mode = m;
     if (r.LatencyMs is { } l) sim.Network.Latency = TimeSpan.FromMilliseconds(l);
+    if (r.LateResponseMs is { } late) sim.Network.LateResponse = TimeSpan.FromMilliseconds(late);
     if (r.FlapFailureRate is { } f) sim.Network.FlapFailureRate = f;
-    sim.Log.Write("network", $"mode {sim.Network.Mode}, latency {sim.Network.Latency.TotalMilliseconds} ms");
+    sim.Log.Write("network", $"mode {sim.Network.Mode}, latency {sim.Network.Latency.TotalMilliseconds} ms, late answer {sim.Network.LateResponse.TotalSeconds} s");
     return Results.Ok();
 });
 
@@ -86,5 +92,6 @@ sim.Log.Write("host", $"listening on http://localhost:5177 with {sim.StrategyNam
 app.Run();
 
 record CardRequest(string Name, Grade? Grade);
-record NetworkRequest(NetworkMode? Mode, int? LatencyMs, double? FlapFailureRate);
+record GradeRequest(Grade Grade);
+record NetworkRequest(NetworkMode? Mode, int? LatencyMs, int? LateResponseMs, double? FlapFailureRate);
 record AttackRequest(long? Cents, decimal? Gallons, long? Pulses);
