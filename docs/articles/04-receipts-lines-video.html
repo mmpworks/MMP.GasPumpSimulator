@@ -1,0 +1,595 @@
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
+<title>Receipts, Lines, and a Video Player</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Source+Sans+3:ital,wght@0,400;0,600;1,400&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: one 70ch reading column. Code and diagrams may widen to 96ch. Amber marks the dispenser, blue marks the station, green marks the hypothetical part. */
+:root{
+  --bg:#f6f3ec; --fg:#201e1a; --muted:#6a635a; --rule:#d9d2c5; --panel:#fffdf8;
+  --amber:#b4660a; --amber-soft:#f9e7cd; --blue:#2a5c9b; --blue-soft:#dbe6f5; --green:#2f7a4a; --green-soft:#dcefe1;
+  --code-bg:#1c1e23; --code-fg:#e6e3dc; --kw:#f0a53c; --str:#9ed58b; --cmt:#8d939e; --type:#80c4ee;
+  --display:"Barlow Condensed","Arial Narrow",Arial,sans-serif;
+  --body:"Source Sans 3",system-ui,-apple-system,Segoe UI,sans-serif;
+  --mono:"IBM Plex Mono",Consolas,"Courier New",monospace;
+}
+@media (prefers-color-scheme: dark){ :root:not([data-theme="light"]){
+  --bg:#14161a; --fg:#e8e4db; --muted:#a69e90; --rule:#2c3038; --panel:#1b1e24;
+  --amber:#e8a24a; --amber-soft:#35260f; --blue:#82b1e6; --blue-soft:#162638; --green:#7fc79a; --green-soft:#14301d;
+  --code-bg:#0e1013; --code-fg:#e6e3dc; color-scheme:dark } }
+:root[data-theme="dark"]{
+  --bg:#14161a; --fg:#e8e4db; --muted:#a69e90; --rule:#2c3038; --panel:#1b1e24;
+  --amber:#e8a24a; --amber-soft:#35260f; --blue:#82b1e6; --blue-soft:#162638; --green:#7fc79a; --green-soft:#14301d;
+  --code-bg:#0e1013; --code-fg:#e6e3dc; color-scheme:dark }
+
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:0 4rem}
+main{max-width:70ch;margin:0 auto}
+.wide{max-width:96ch;margin-left:auto;margin-right:auto}
+h1,h2,h3{font-family:var(--display);text-wrap:balance;line-height:1.05;margin:0}
+h1{font-size:clamp(2.6rem,7vw,4.2rem);font-weight:700;letter-spacing:-.01em}
+h2{font-size:2rem;font-weight:600;margin-top:3.2rem;padding-top:1.2rem;border-top:3px solid var(--rule)}
+h3{font-size:1.35rem;font-weight:600;margin-top:1.8rem}
+p{margin:.9rem 0}
+.eyebrow{font-family:var(--mono);font-size:.78rem;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+header{padding-block:3rem 1.5rem}
+header p.lede{font-size:1.2rem;color:var(--muted);max-width:60ch}
+.tag{display:inline-block;font-family:var(--mono);font-size:.72rem;letter-spacing:.06em;text-transform:uppercase;padding:.15rem .5rem;border-radius:3px;margin-right:.4rem}
+.tag.d{background:var(--amber-soft);color:var(--amber)}
+.tag.s{background:var(--blue-soft);color:var(--blue)}
+.tag.n{background:var(--green-soft);color:var(--green)}
+.tag.b{background:var(--rule);color:var(--fg)}
+.where{font-family:var(--mono);font-size:.85rem;color:var(--muted);margin:.2rem 0 1rem}
+pre.code{background:var(--code-bg);color:var(--code-fg);font-family:var(--mono);font-size:.84rem;line-height:1.5;
+  padding:1rem 1.1rem;border-radius:6px;overflow-x:auto;margin:1rem 0;tab-size:4}
+pre.code code{font-family:inherit}
+pre.code.sketch{border-left:4px solid var(--green)}
+.kw{color:var(--kw)} .str{color:var(--str)} .cmt{color:var(--cmt);font-style:italic} .ty{color:var(--type)}
+figure{margin:1.4rem 0}
+figure pre.mermaid{background:var(--panel);border:1px solid var(--rule);border-radius:6px;padding:1rem;overflow-x:auto}
+figcaption{font-size:.9rem;color:var(--muted);margin-top:.5rem}
+table{border-collapse:collapse;width:100%;font-size:.93rem;margin:1rem 0}
+th,td{text-align:left;padding:.5rem .6rem;border-bottom:1px solid var(--rule);vertical-align:top}
+th{font-family:var(--display);font-size:1.05rem;font-weight:600}
+td code,p code,li code{font-family:var(--mono);font-size:.85em;background:var(--panel);border:1px solid var(--rule);padding:0 .3em;border-radius:3px}
+.scroll{overflow-x:auto}
+aside.rule{border-left:4px solid var(--amber);background:var(--panel);padding:.8rem 1rem;margin:1.2rem 0;border-radius:0 6px 6px 0}
+aside.rule.n{border-left-color:var(--green)}
+aside.rule.s{border-left-color:var(--blue)}
+aside.rule p{margin:.3rem 0}
+ol,ul{padding-left:1.3rem} li{margin:.3rem 0}
+a{color:var(--blue)} a:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
+nav.toc{font-size:.95rem;columns:2;column-gap:2rem;margin:1.5rem 0}
+nav.toc a{text-decoration:none;display:block;padding:.15rem 0}
+.ok{color:var(--green);font-weight:600} .edit{color:var(--amber);font-weight:600} .new{color:var(--blue);font-weight:600}
+pre.receipt{font-family:var(--mono);font-size:.9rem;background:var(--panel);border:1px dashed var(--rule);padding:1rem 1.2rem;max-width:34ch;margin:1rem auto;white-space:pre}
+@media (max-width:520px){nav.toc{columns:1} body{font-size:16px}}
+</style>
+
+<main>
+<header>
+  <div class="eyebrow">MMP.GasPumpSimulator · article 4 · 2026-11-01</div>
+  <h1>Receipts, lines, and a video player</h1>
+  <p class="lede">Three more asks for the detergent example:</p>
+  <ul>
+    <li>The bank wants the charges itemized.</li>
+    <li>The driver wants to print an itemized receipt for a short while after hanging up the nozzle.</li>
+    <li>A video should play when fueling starts, from a player that lives apart from everything else.</li>
+  </ul>
+  <p class="lede">Two seams carry all three. Below is the code that proves them. The features that sit on top are sketches.</p>
+  <p><span class="tag n">Hypothetical</span> code in green-edged blocks is a sketch. <span class="tag d">Dispenser</span><span class="tag s">Station</span> mark real code.</p>
+</header>
+
+<nav class="toc" aria-label="Sections">
+  <a href="#asks">1. The three asks</a>
+  <a href="#lines">2. Charge lines, from the pump to the bank</a>
+  <a href="#receipt">3. The receipt and its time limit</a>
+  <a href="#telemetry">4. Capabilities: telemetry on its own worker</a>
+  <a href="#video">5. The video player, as a sketch</a>
+  <a href="#touched">6. What changed and what stayed</a>
+  <a href="#money">7. What the bank now sees</a>
+</nav>
+
+<h2 id="asks">1. The three asks</h2>
+<ol>
+  <li><strong>The bank gets an itemized breakdown</strong> of the charges along with the completion. It uses that for:
+    <ul>
+      <li>record-keeping,</li>
+      <li>the dispute desk.</li>
+    </ul>
+  </li>
+  <li><strong>The driver can print an itemized receipt</strong> at the end. The offer lasts only a little while after the nozzle goes back in the boot.</li>
+  <li><strong>A video plays when pumping starts.</strong> The player runs apart from everything else. If it crashes, the sale, the pump, and the money never notice.</li>
+</ol>
+<p>The first two are one fact with two readers. Think of a store receipt: the shop keeps a copy and the customer takes a copy, and both copies match.</p>
+<p>The third is a new kind of part. It is a listener that reads the station's telemetry and may never write back.</p>
+<p>Each ask needed a seam the code didn't have this morning. Both seams landed in commit <code>16cdbc4</code>. The suite is 275 of 275 at <code>ebbf956</code>.</p>
+
+<h2 id="lines">2. Charge lines, from the pump to the bank</h2>
+<p><span class="tag b">Both</span>The pump itemizes the money where it prices it. The breakdown then rides beside the total through every hop the total already made. Nothing recomputes it. The receipt and the settlement read the same list.</p>
+<p class="where">src/GasPump.Core/Units.cs · Sale.cs · SaleStateMachine.cs · src/GasPump.Pump/PumpController.cs · src/GasPump.Payment/PaymentGateway.cs · Issuer.cs · src/GasPump.Dispatch/JournalRecords.cs</p>
+<pre class="code"><code>// One line of a sale's charges: fuel, a fee, a discount. Code is stable and machine-readable;
+// Description is for the receipt. The bank receives the list with the completion and the
+// driver can print it, so the two always agree with each other and with the total.
+public sealed record ChargeLine(string Code, string Description, Money Amount)
+{
+    public const string Fuel = "FUEL";
+    public static Money Total(IEnumerable&lt;ChargeLine&gt; lines) { /* sum */ }
+}
+
+public interface IPriceSchedule
+{
+    Money CentsFor(Grade grade, Volume volume);
+    Volume MaxVolumeFor(Grade grade, Money money);
+    string Display(Grade grade);
+
+    // The same money as CentsFor, broken into the lines a receipt and a settlement carry.
+    // The board answers with one fuel line; a schedule that wraps it adds its own.
+    IReadOnlyList&lt;ChargeLine&gt; Lines(Grade grade, Volume volume) =&gt;
+        [new ChargeLine(ChargeLine.Fuel, $"{grade} {volume} at {Display(grade)}/gal", CentsFor(grade, volume))];
+}</code></pre>
+<figure class="wide">
+<pre class="mermaid">
+flowchart LR
+  P[PumpController.Tick: Money, Lines = schedule.Lines] --> E[SaleEvent.Progress / CeilingReached: Lines]
+  E -- TCP --> S[SaleStateMachine: Lines, Charges]
+  S --> C[SaleCommand.SendCompletion: Final, Lines]
+  C --> I[PaymentGateway.Intend: PendingAdvice with Lines]
+  I --> J[(state.json: JournalPending.Lines, JournalSale.Lines)]
+  I --> D[DrainPendingAsync]
+  D --> B[IIssuer.Complete: saleId, final, lines]
+  B --> R[(bank: Settlement per sale)]
+  S --> V[SaleSnapshot.Charges: the receipt]
+  J -. restart .-> RC[RecoveryPlan: CompletionResent carries Lines]
+  RC --> D
+  style P fill:#f9e7cd,stroke:#b4660a,color:#111
+  style E fill:#f9e7cd,stroke:#b4660a,color:#111
+  style R fill:#dbe6f5,stroke:#2a5c9b,color:#111
+  style V fill:#dbe6f5,stroke:#2a5c9b,color:#111
+</pre>
+<figcaption>One list, priced once at the pump, journaled before the wire, settled at the bank, printed at the pump. A crash between any two boxes resends the same lines.</figcaption>
+</figure>
+<p>Along the way, the sale machine keeps the last breakdown the pump sent. An old pump may send none. Then the machine falls back to one fuel line, so an old dispenser process still settles cleanly.</p>
+<pre class="code"><code>// SaleStateMachine
+public IReadOnlyList&lt;ChargeLine&gt; Lines { get; private set; } = [];
+
+// The lines the completion and the receipt carry. A pump that sent no breakdown gets one fuel line for the money.
+public IReadOnlyList&lt;ChargeLine&gt; Charges =&gt;
+    Lines.Count &gt; 0 ? Lines : Money == Money.Zero ? [] : [new ChargeLine(ChargeLine.Fuel, $"{Grade} {Volume}", Money)];
+
+// in Finish and FaultSale:
+commands.Add(new SaleCommand.SendCompletion(SaleId, Money, Charges));</code></pre>
+<p>The compensation log (the queue of undo steps) keeps the lines too. Two advices (messages waiting for the bank) count as the same when two things match:</p>
+<ul>
+  <li>the sale id,</li>
+  <li>the kind.</li>
+</ul>
+<p>The lines can differ. The queue still never holds two advices for one sale.</p>
+<pre class="code"><code>public sealed record PendingAdvice(string SaleId, PendingKind Kind, Money Final, IReadOnlyList&lt;ChargeLine&gt;? Lines = null)
+{
+    public bool SameAs(PendingAdvice other) =&gt; SaleId == other.SaleId &amp;&amp; Kind == other.Kind;
+}
+
+// DrainPendingAsync, the one send path:
+? await _network.SendAsync(() =&gt; { _issuer.Complete(next.SaleId, next.Final, next.Lines ?? []); return true; }, _options.HostTimeout, ct)</code></pre>
+<p>The bank keeps whatever it's sent. A real issuer would do two things with the lines:</p>
+<ul>
+  <li>print them on the statement,</li>
+  <li>hand them to the dispute desk.</li>
+</ul>
+<pre class="code"><code>public interface IIssuer
+{
+    void Complete(string saleId, Money final);
+    // Complete with the charges itemized for the bank's record. An issuer that keeps no itemization settles the total.
+    void Complete(string saleId, Money final, IReadOnlyList&lt;ChargeLine&gt; lines) =&gt; Complete(saleId, final);
+    // ...
+}
+
+public sealed record Settlement(string SaleId, Money Final, IReadOnlyList&lt;ChargeLine&gt; Lines);
+
+// IssuerSimulator
+public void Complete(string saleId, Money final, IReadOnlyList&lt;ChargeLine&gt; lines)
+{
+    lock (_gate)
+    {
+        if (!_holds.Remove(saleId, out var hold)) return;   // duplicate completion, idempotent
+        _accounts[hold.Pan].Available += hold.Amount - Money.Min(final, hold.Amount);
+        _settlements[saleId] = new Settlement(saleId, final, lines);
+    }
+}</code></pre>
+<h3>The proof</h3>
+<pre class="code"><code>[Theory] [MemberData(nameof(SimHarness.Strategies), MemberType = typeof(SimHarness))]
+public void The_bank_receives_the_charges_itemized_and_the_receipt_reads_the_same_lines(string strategy)
+{
+    using var h = new SimHarness(strategy, ThirtyDollarHold);
+    h.Sim.PresentCard("Good");
+    h.AdvanceUntilState(SaleState.ReadyToPump, TimeSpan.FromSeconds(5));
+    Assert.Empty(h.State.Charges);   // nothing to itemize before fuel moves
+
+    h.Sim.StartFueling();
+    h.AdvanceUntil(() =&gt; h.State.State is SaleState.Completing or SaleState.Idle, TimeSpan.FromMinutes(3));
+    h.AdvanceUntilState(SaleState.Idle, TimeSpan.FromSeconds(5));
+
+    // What the driver can print: the same lines the pump priced, summing to the money on the screen.
+    var receipt = h.State.Charges;
+    Assert.Single(receipt);
+    Assert.Equal(ChargeLine.Fuel, receipt[0].Code);
+    Assert.Equal(h.State.Money, ChargeLine.Total(receipt));
+
+    // What the bank kept: the same lines, under the same sale id, summing to the settled amount.
+    var settlement = Assert.Single(h.Sim.Issuer.Settlements);
+    Assert.Equal(h.State.SaleId, settlement.SaleId);
+    Assert.Equal(Money.FromDollars(30), settlement.Final);
+    Assert.Equal(receipt, settlement.Lines);
+}</code></pre>
+<p>At the pump, every tick's lines add up to its money. A wrapping schedule can add a second line, and the controller never knows:</p>
+<pre class="code"><code>Assert.All(trace.Where(t =&gt; t.Volume &gt; Volume.Zero), t =&gt; Assert.Equal(t.Money, ChargeLine.Total(t.Lines)));
+Assert.Equal(2, last.Lines.Count);
+Assert.Equal(ChargeLine.Fuel, last.Lines[0].Code);
+Assert.Equal("ADDITIVE", last.Lines[1].Code);
+Assert.Equal(fee, last.Lines[1].Amount);</code></pre>
+
+<h2 id="receipt">3. The receipt and its time limit</h2>
+<p><span class="tag s">Station</span>The receipt is a pure function of the sale snapshot. Same snapshot in, same text out. The snapshot already carries:</p>
+<ul>
+  <li>the charges,</li>
+  <li>the tender,</li>
+  <li>where the money is,</li>
+  <li>when the screen will clear.</li>
+</ul>
+<p>The time limit on the offer is a timer the sale already runs.</p>
+<p>Here is the clock, step by step:</p>
+<ol>
+  <li>The nozzle hangs up.</li>
+  <li>The sale goes to Completing.</li>
+  <li>The bank answers, and the sale goes to Idle.</li>
+  <li>The terminal screen holds for the notice timeout (30 seconds by default). Then it clears for the next driver.</li>
+</ol>
+<p>If the bank still owes an answer, the screen holds longer, on purpose. <code>SaleSnapshot.DeadlineAt</code> is the moment the screen clears, and the receipt offer ends with it. A longer window would be one field on <code>SaleTimeouts</code>.</p>
+<pre class="code sketch"><code>// GasPump.Core/Receipt.cs (sketch). Pure: snapshot in, text out.
+public sealed record Receipt(string SaleId, string PumpId, DateTimeOffset At, IReadOnlyList&lt;ChargeLine&gt; Lines, Money Total, Tender Tender, HoldStatus Hold, Money ChangeDue)
+{
+    public static Receipt? From(SaleSnapshot s, string pumpId, DateTimeOffset now)
+    {
+        // Offer window: the sale has ended, fuel moved, and the screen has not cleared yet.
+        var ended = s.State is SaleState.Completing or SaleState.StoreAndForward or SaleState.Faulted || (s.State == SaleState.Idle &amp;&amp; s.Charges.Count &gt; 0);
+        if (!ended || s.Charges.Count == 0) return null;
+        if (s.DeadlineAt is { } deadline &amp;&amp; now &gt; deadline) return null;      // the offer has expired with the screen
+        return new(s.SaleId, pumpId, now, s.Charges, ChargeLine.Total(s.Charges), s.Tender, s.Hold, s.ChangeDue);
+    }
+
+    public string Print() { /* fixed-width lines, one per charge, total, hold status in words */ }
+}
+
+// GasPump.Host/Program.cs (sketch): one endpoint, one state code when the offer is over.
+app.MapGet("/api/receipt", () =&gt;
+    Receipt.From(Sim().Snapshot(), Sim().Options.PumpId, clock.GetUtcNow()) is { } r
+        ? Results.Text(r.Print(), "text/plain")
+        : Results.StatusCode(410));   // Gone: the screen cleared, the offer with it
+
+// Ledger, so the audit shows the receipt was issued:
+Ledger.Append("receipt.printed", $"{r.SaleId} {r.Total} {r.Lines.Count} lines");</code></pre>
+<pre class="receipt">PUMP-07          2026-11-01 14:22
+Sale S0007       Credit ····4242
+---------------------------------
+FUEL  Regular 8.146 gal
+      at $3.499/gal         28.50
+ADDITIVE detergent 32 oz     1.50
+---------------------------------
+TOTAL                      $30.00
+Hold settled. Thank you.</pre>
+<p>The "Print receipt" button on the pump face reads <code>lines</code> and <code>deadlineAt</code> from the sale message the host already sends. It hides itself when the deadline passes. The UI contract gained one field for this, in commit <code>16cdbc4</code>.</p>
+
+<h2 id="telemetry">4. Capabilities: telemetry on its own worker</h2>
+<p><span class="tag s">Station</span>A video player is a new kind of part. It reads what the station knows and must never be able to change it. Think of a customer watching the shop through a window: they can look, but they can't reach in. So the seam is a listener with:</p>
+<ul>
+  <li>no return value,</li>
+  <li>no handle,</li>
+  <li>its own worker,</li>
+  <li>its own bounded mailbox (a slip tray with a fixed size).</li>
+</ul>
+<p>The host enforces three isolation rules:</p>
+<ol>
+  <li>A full mailbox drops the message and counts it, so a slow capability never blocks the sale worker.</li>
+  <li>A capability that throws is switched off for the rest of the run, and the log says so.</li>
+  <li>A capability never receives a handle to anything it could change.</li>
+</ol>
+<p class="where">src/GasPump.Dispatch/Capabilities.cs · Simulation.cs</p>
+<pre class="code"><code>// A listener on the station's telemetry. A capability reads; it never writes to the sale,
+// the pump, or the bank. It has no return value and no way to post a message back.
+public interface IStationCapability
+{
+    string Name { get; }
+    void OnSaleEvent(SaleEvent e);                 // one sale event, after the sale machine applied it
+    void OnPumpView(DispenserView v) { }           // one view of the pump, as the dispenser sent it
+}
+
+// Isolation, in three rules. A full mailbox drops the message and counts it, so a slow
+// capability never blocks the sale worker. A capability that throws is switched off for
+// the rest of the run and the log says so. A capability never receives a handle to
+// anything it could change.
+public sealed class CapabilityHost(IDispatchStrategy dispatch, IEventLog log)
+{
+    public void Register(IStationCapability capability)
+    {
+        var slot = new Slot(capability, dispatch.CreateMailbox&lt;object&gt;($"capability:{capability.Name}", MailboxCapacity));
+        slot.Worker = dispatch.StartWorker($"capability:{capability.Name}", slot.Inbox, m =&gt; Deliver(slot, m));
+        lock (_gate) _slots.Add(slot);
+    }
+
+    private void Fan(object message)
+    {
+        foreach (var slot in Snapshot())
+        {
+            if (slot.Disabled) continue;
+            if (slot.Inbox.TryPost(message)) continue;
+            // The sale worker never waits on a capability, because a driver is standing at the hose.
+            if (Interlocked.Increment(ref slot.Dropped) == 1) log.Warn("capability", "{Name} mailbox full, dropping telemetry", ("Name", slot.Capability.Name));
+        }
+    }
+
+    private void Deliver(Slot slot, object message)
+    {
+        if (slot.Disabled) return;
+        try
+        {
+            switch (message)
+            {
+                case SaleEvent e: slot.Capability.OnSaleEvent(e); break;
+                case DispenserView v: slot.Capability.OnPumpView(v); break;
+            }
+        }
+        catch (Exception ex)
+        {
+            slot.Disabled = true;
+            log.Error("capability", "{Name} threw {Type}: {Message}; switched off for this run", /* ... */);
+        }
+    }
+}
+
+// Simulation: two lines feed it.
+_link.ViewChanged += v =&gt; Capabilities.Publish(v);
+// at the end of HandleSaleEvent:
+Capabilities.Publish(e);</code></pre>
+<figure class="wide">
+<pre class="mermaid">
+flowchart LR
+  SW[sale worker] -- SaleEvent --> CH[CapabilityHost.Fan]
+  DL[dispenser link] -- DispenserView --> CH
+  CH -- TryPost --> M1[(mailbox: video, 256)]
+  CH -- TryPost --> M2[(mailbox: loyalty, 256)]
+  M1 --> W1[worker: video]
+  M2 --> W2[worker: loyalty]
+  W1 --> V[PumpStartVideo.OnSaleEvent]
+  W2 --> L[LoyaltyPrompt.OnSaleEvent]
+  V -. throws .-> X[switched off, logged]
+  style CH fill:#dbe6f5,stroke:#2a5c9b,color:#111
+  style V fill:#dcefe1,stroke:#2f7a4a,color:#111
+  style L fill:#dcefe1,stroke:#2f7a4a,color:#111
+</pre>
+<figcaption>Arrows point one way. No arrow leaves a capability toward the sale worker, because the interface has nothing to carry one.</figcaption>
+</figure>
+<h3>The proof</h3>
+<pre class="code"><code>private sealed class Bomb : IStationCapability
+{
+    public string Name =&gt; "bomb";
+    public void OnSaleEvent(SaleEvent e) { if (e is SaleEvent.FlowStarted) throw new InvalidOperationException("video player crashed"); }
+}
+
+[Theory] [MemberData(nameof(SimHarness.Strategies), MemberType = typeof(SimHarness))]
+public void A_capability_sees_the_telemetry_on_its_own_worker_and_one_that_throws_cannot_touch_the_sale(string strategy)
+{
+    using var h = new SimHarness(strategy, ThirtyDollarHold);
+    var recorder = new Recorder();
+    h.Sim.Capabilities.Register(recorder);
+    h.Sim.Capabilities.Register(new Bomb());
+
+    // ... a full sale ...
+
+    // The sale finished as if nothing were attached.
+    Assert.Equal(3000, h.State.Money.Cents);
+    Assert.Equal(HoldStatus.Settled, h.State.Hold);
+    Assert.Equal(0, h.Sim.Ledger.Verify());
+
+    // The recorder saw fueling start once, and the pump views as they came.
+    Assert.Equal(1, recorder.FlowStarts);
+    Assert.True(recorder.Views &gt; 0);
+    Assert.Equal(0, h.Sim.Capabilities.DroppedFor("recorder"));
+
+    // The bomb went off once, was switched off, and the log says so.
+    Assert.Equal(["bomb"], h.Sim.Capabilities.Disabled);
+    Assert.Contains(h.Sim.Log.Snapshot(), l =&gt; l.Source == "capability" &amp;&amp; l.Message.Contains("switched off"));
+}</code></pre>
+<p>The test runs under all three dispatch strategies. The capability worker is one of these, depending on the row:</p>
+<ul>
+  <li>a thread,</li>
+  <li>a task,</li>
+  <li>an AsyncProxy state machine.</li>
+</ul>
+<p>The isolation holds in each.</p>
+
+<h2 id="video">5. The video player, as a sketch</h2>
+<p><span class="tag n">Hypothetical</span>Take "apart from everything else" literally: the player is another process. The capability has two jobs:</p>
+<ul>
+  <li>start the player on <code>FlowStarted</code>,</li>
+  <li>stop it when the sale ends.</li>
+</ul>
+<p>If the player hangs or dies, the capability notices on the next event. Nothing else does.</p>
+<pre class="code sketch"><code>// GasPump.Host/PumpStartVideo.cs (sketch)
+public sealed class PumpStartVideo(string playerPath, string clipPath, IEventLog log) : IStationCapability
+{
+    public string Name =&gt; "video";
+    private Process? _player;
+
+    public void OnSaleEvent(SaleEvent e)
+    {
+        switch (e)
+        {
+            case SaleEvent.FlowStarted:
+                Stop();
+                // The player runs in its own process and window, with no handle back into ours. A crash there stays there.
+                _player = Process.Start(new ProcessStartInfo(playerPath, $"-fs -autoexit \"{clipPath}\"") { UseShellExecute = false });
+                log.Write("video", "playing {Clip} for {SaleId}", ("Clip", clipPath), ("SaleId", e.SaleId));
+                break;
+            case SaleEvent.NozzleHung or SaleEvent.CeilingReached or SaleEvent.Fault or SaleEvent.Cancel:
+                Stop();
+                break;
+        }
+    }
+
+    private void Stop()
+    {
+        try { if (_player is { HasExited: false }) _player.Kill(); } catch (Exception) { /* the player is a separate process; a failed kill is ignored */ }
+        _player = null;
+    }
+}
+
+// GasPump.Host/Program.cs (sketch): registration is one line, from configuration.
+if (Environment.GetEnvironmentVariable("GASPUMP_VIDEO_PLAYER") is { } player)
+    host.Current.Capabilities.Register(new PumpStartVideo(player, clipPath, log));</code></pre>
+<p>In the Electron app the same capability could open a second <code>BrowserWindow</code> on the forecourt display instead. It would send that window one message. Either way the sale worker never knows there is a screen.</p>
+<aside class="rule s">
+<p><strong>Why a capability instead of a WebSocket client.</strong> The host already streams every event on <code>/ws</code>, so an outside program could watch that. A capability is for a part that ships with the station. It has to start and stop with the station. Both routes read the same telemetry, and neither can write.</p>
+</aside>
+
+<h2 id="touched">6. What changed and what stayed</h2>
+<div class="scroll">
+<table>
+<thead><tr><th>For</th><th>Class</th><th>Change</th><th>Why</th></tr></thead>
+<tbody>
+<tr><td rowspan="6">Itemized charges</td><td><code>ChargeLine</code>, <code>IPriceSchedule.Lines</code></td><td class="new">New</td><td>The breakdown is priced where the total is priced.</td></tr>
+<tr><td><code>Progress</code>, <code>CeilingReached</code>, <code>SendCompletion</code>, <code>PendingAdvice</code>, <code>PaymentMessage.Complete</code>, <code>JournalSale</code>, <code>JournalPending</code>, <code>RecoveryOutcome</code></td><td class="edit">One optional field each</td><td>The list rides beside the total on every hop that already carried the total. Old journals and old dispensers still load, because the field is optional.</td></tr>
+<tr><td><code>SaleStateMachine</code></td><td class="edit">Keeps the last lines</td><td><code>Charges</code> falls back to one fuel line for a pump that sent none.</td></tr>
+<tr><td><code>IIssuer</code>, <code>IssuerSimulator</code></td><td class="edit">One overload, one dictionary</td><td>The bank keeps a <code>Settlement</code> per sale.</td></tr>
+<tr><td><code>PumpAuthority</code>, <code>HardLimits</code>, <code>Hydraulics</code>, <code>Meter</code>, <code>Totalizer</code>, <code>SaleTimeouts</code>, the hold logic</td><td class="ok">Untouched</td><td>A breakdown is a description of money, never a limit on it.</td></tr>
+<tr><td><code>Receipt</code>, <code>/api/receipt</code>, print button</td><td class="new">New (sketch)</td><td>A pure function of the snapshot and an endpoint that says Gone after the deadline.</td></tr>
+<tr><td rowspan="3">Video player</td><td><code>IStationCapability</code>, <code>CapabilityHost</code></td><td class="new">New</td><td>Listener with no handle back, own worker, own mailbox, switched off on throw.</td></tr>
+<tr><td><code>Simulation</code></td><td class="edit">Three lines</td><td>Create the host, feed it sale events and pump views.</td></tr>
+<tr><td><code>PumpStartVideo</code></td><td class="new">New (sketch)</td><td>Starts and stops another process. Registered from configuration in one line.</td></tr>
+</tbody>
+</table>
+</div>
+
+<h2 id="money">7. What the bank now sees</h2>
+<p><span class="tag s">Station</span>Until today the completion was one number. Now it's that number plus the list that explains it. The number itself didn't change, so these all run as before:</p>
+<ul>
+  <li>the hold,</li>
+  <li>the partial-approval rule,</li>
+  <li>the clamp,</li>
+  <li>the reversal path,</li>
+  <li>the recovery table.</li>
+</ul>
+<p>What changed is what the bank can answer when a driver calls.</p>
+<div class="scroll">
+<table>
+<thead><tr><th>Step</th><th>Before</th><th>Now</th></tr></thead>
+<tbody>
+<tr><td>Completion</td><td><code>Complete(saleId, $30.00)</code></td><td><code>Complete(saleId, $30.00, [FUEL $28.50, ADDITIVE $1.50])</code>. The sum is checked at the pump on every tick and by the tests at the bank.</td></tr>
+<tr><td>Dispute</td><td>"You were charged $30.00 at pump 7."</td><td>"You were charged $28.50 for 8.146 gal of Regular and $1.50 for the additive you selected at 14:19:03." The ledger has the selection and every valve switch; the custody chain seals them.</td></tr>
+<tr><td>Crash before the bank answered</td><td>The journal held the total; recovery resent it.</td><td>The journal holds the lines; recovery resends the same lines. The receipt the driver printed and the settlement the bank keeps still match.</td></tr>
+<tr><td>Cash</td><td>Change at the till from the total.</td><td>Same. The till owes change on the total; the lines are for the receipt.</td></tr>
+<tr><td>Taxes and reporting</td><td>Fuel revenue was reconstructed from the ledger.</td><td>Fuel and additive are separate lines with stable codes. The back office sums by code. No reconstruction.</td></tr>
+</tbody>
+</table>
+</div>
+<p class="eyebrow">Source: E:\dev\MMP.GasPumpSimulator at commits 16cdbc4 (lines, capabilities) and ebbf956 (hose seam). 275 dotnet tests and 9 Playwright specs pass. Companions: Gas Pump Patterns, Gas Pump Security and Audit, Adding Fuel Detergent.</p>
+</main>
+
+<script>
+(function(){
+  var re = /(\/\/[^\n]*|\/\*[^*]*\*\/)|(\$?"(?:[^"\\\n]|\\.)*")|\b(public|private|static|sealed|readonly|record|struct|class|interface|enum|abstract|override|event|async|await|return|new|var|if|else|switch|case|when|is|not|and|or|out|lock|using|foreach|while|true|false|null|void|bool|long|string|int|decimal|this|yield|default|throw|try|catch|in|const|ref|break)\b|\b([A-Z][A-Za-z0-9]*)\b/g;
+  function esc(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+  document.querySelectorAll('pre.code code').forEach(function(el){
+    var src = el.textContent, out = '', last = 0, m;
+    re.lastIndex = 0;
+    while ((m = re.exec(src)) !== null) {
+      out += esc(src.slice(last, m.index));
+      if (m[1]) out += '<span class="cmt">'+esc(m[1])+'</span>';
+      else if (m[2]) out += '<span class="str">'+esc(m[2])+'</span>';
+      else if (m[3]) out += '<span class="kw">'+esc(m[3])+'</span>';
+      else out += '<span class="ty">'+esc(m[4])+'</span>';
+      last = re.lastIndex;
+    }
+    out += esc(src.slice(last));
+    el.innerHTML = out;
+  });
+})();
+</script>
+
+<!--claude-mermaid-runtime-begin:3477-->
+<style>.mermaid-diagram{margin-block:4px}.mermaid-diagram svg{display:block;margin:0 auto;max-width:100%;height:auto}</style>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11.16.1/dist/mermaid.min.js"></script>
+<script>(function(){
+var CFG={"palettes":{"light":{"surface":"#f4efe4","text":"#42392e","line":"#8a7f6d","border":"#7a6c52","bg":"#fffdf8"},"dark":{"surface":"#262b34","text":"#f2f3f5","line":"#a8adb8","border":"#9aa4b8","bg":"#1f232b"}}};
+if(typeof mermaid==='undefined')return;
+var pres=Array.prototype.slice.call(document.querySelectorAll('pre.mermaid')).filter(function(p){if(p.hasAttribute('data-claude-mermaid-claimed'))return false;p.setAttribute('data-claude-mermaid-claimed','1');return true;});
+if(!pres.length)return;
+var mq=window.matchMedia?window.matchMedia('(prefers-color-scheme: dark)'):null;
+var root=document.documentElement;
+var items=pres.map(function(pre){
+var mount=document.createElement('div');mount.className='mermaid-diagram';
+return {pre:pre,mount:mount,src:pre.textContent||''};
+});
+var seq=0;
+var renderGen=0;
+var lastKey='';
+function pageBg(fallback){
+var els=[document.body,document.documentElement];
+for(var i=0;i<els.length;i++){
+var c=els[i]&&getComputedStyle(els[i]).backgroundColor;
+if(c&&c!=='transparent'&&c!=='rgba(0, 0, 0, 0)')return c;
+}
+return fallback;
+}
+function render(){
+var theme=root.getAttribute('data-theme');
+var dark=theme==='dark'||(!!(mq&&mq.matches)&&theme!=='light');
+var pal=dark?CFG.palettes.dark:CFG.palettes.light;
+var bg=pageBg(pal.bg);
+var key=(dark?'d':'l')+'|'+bg;
+if(key===lastKey)return;
+lastKey=key;
+var gen=++renderGen;
+var font=getComputedStyle(document.body).fontFamily||'sans-serif';
+var nat={useMaxWidth:false};
+mermaid.initialize({
+startOnLoad:false,securityLevel:'strict',theme:'base',
+flowchart:nat,sequence:nat,er:nat,state:nat,class:nat,pie:nat,
+gantt:nat,journey:nat,timeline:nat,gitGraph:nat,mindmap:nat,xyChart:nat,
+quadrantChart:nat,sankey:nat,c4:nat,requirement:nat,block:nat,
+packet:nat,kanban:nat,architecture:nat,radar:nat,
+themeVariables:{background:bg,mainBkg:pal.surface,primaryColor:pal.surface,
+primaryTextColor:pal.text,lineColor:pal.line,primaryBorderColor:pal.border,
+nodeBorder:pal.border,clusterBorder:pal.border,edgeLabelBackground:bg,
+clusterBkg:'rgba(127,127,127,0.07)',titleColor:pal.text,
+darkMode:dark,rowOdd:bg,rowEven:'rgba(127,127,127,0.07)',
+attributeBackgroundColorOdd:bg,attributeBackgroundColorEven:'rgba(127,127,127,0.07)',
+fontSize:'16px',fontFamily:font},
+themeCSS:'.node rect, .node circle, .node polygon, .node path, .cluster rect { stroke-width: 2px; }'
+});
+items.forEach(function(it){
+var id='claude-mermaid-'+seq++;
+mermaid.render(id,it.src).then(function(r){
+if(gen!==renderGen)return;
+var prev=it.pre.previousElementSibling;
+if(prev&&prev.className==='mermaid-diagram'&&prev!==it.mount)return;
+it.mount.innerHTML=r.svg;
+if(!it.mount.parentNode)it.pre.parentNode.insertBefore(it.mount,it.pre);
+it.pre.style.display='none';
+},function(){
+var scratch=document.getElementById(id);
+if(scratch)scratch.parentNode.removeChild(scratch);
+scratch=document.getElementById('d'+id);
+if(scratch)scratch.parentNode.removeChild(scratch);
+if(gen!==renderGen)return;
+if(it.mount.parentNode)it.mount.parentNode.removeChild(it.mount);
+it.pre.style.display='';
+});
+});
+}
+render();
+if(mq&&mq.addEventListener)mq.addEventListener('change',render);
+if(typeof MutationObserver!=='undefined')new MutationObserver(render).observe(root,{attributes:true,attributeFilter:['data-theme']});
+})();</script>
+<!--claude-mermaid-runtime-end-->
+
+</body></html>

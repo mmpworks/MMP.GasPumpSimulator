@@ -1,0 +1,694 @@
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
+<title>Waiting Without a Thread</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Source+Sans+3:ital,wght@0,400;0,600;1,400&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+:root{
+  --bg:#f6f3ec; --fg:#201e1a; --muted:#6a635a; --rule:#d9d2c5; --panel:#fffdf8;
+  --amber:#b4660a; --amber-soft:#f9e7cd; --blue:#2a5c9b; --blue-soft:#dbe6f5; --green:#2f7a4a; --green-soft:#dcefe1; --red:#a33a2a; --red-soft:#f6ddd8;
+  --code-bg:#1c1e23; --code-fg:#e6e3dc; --kw:#f0a53c; --str:#9ed58b; --cmt:#8d939e; --type:#80c4ee;
+  --display:"Barlow Condensed","Arial Narrow",Arial,sans-serif;
+  --body:"Source Sans 3",system-ui,-apple-system,Segoe UI,sans-serif;
+  --mono:"IBM Plex Mono",Consolas,"Courier New",monospace;
+}
+@media (prefers-color-scheme: dark){ :root:not([data-theme="light"]){
+  --bg:#14161a; --fg:#e8e4db; --muted:#a69e90; --rule:#2c3038; --panel:#1b1e24;
+  --amber:#e8a24a; --amber-soft:#35260f; --blue:#82b1e6; --blue-soft:#162638; --green:#7fc79a; --green-soft:#14301d; --red:#e07b6a; --red-soft:#3a1a16;
+  --code-bg:#0e1013; --code-fg:#e6e3dc; color-scheme:dark } }
+:root[data-theme="dark"]{
+  --bg:#14161a; --fg:#e8e4db; --muted:#a69e90; --rule:#2c3038; --panel:#1b1e24;
+  --amber:#e8a24a; --amber-soft:#35260f; --blue:#82b1e6; --blue-soft:#162638; --green:#7fc79a; --green-soft:#14301d; --red:#e07b6a; --red-soft:#3a1a16;
+  --code-bg:#0e1013; --code-fg:#e6e3dc; color-scheme:dark }
+
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:0 4rem}
+main{max-width:70ch;margin:0 auto}
+.wide{max-width:96ch;margin-left:auto;margin-right:auto}
+h1,h2,h3{font-family:var(--display);text-wrap:balance;line-height:1.05;margin:0}
+h1{font-size:clamp(2.6rem,7vw,4.2rem);font-weight:700;letter-spacing:-.01em}
+h2{font-size:2rem;font-weight:600;margin-top:3.2rem;padding-top:1.2rem;border-top:3px solid var(--rule)}
+h3{font-size:1.35rem;font-weight:600;margin-top:1.8rem}
+p{margin:.9rem 0}
+.eyebrow{font-family:var(--mono);font-size:.78rem;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+header{padding-block:3rem 1.5rem}
+header p.lede{font-size:1.2rem;color:var(--muted);max-width:60ch}
+.where{font-family:var(--mono);font-size:.85rem;color:var(--muted);margin:.2rem 0 1rem}
+pre.code{background:var(--code-bg);color:var(--code-fg);font-family:var(--mono);font-size:.84rem;line-height:1.5;
+  padding:1rem 1.1rem;border-radius:6px;overflow-x:auto;margin:1rem 0;tab-size:4}
+pre.code code{font-family:inherit}
+pre.code.il{font-size:.78rem}
+.kw{color:var(--kw)} .str{color:var(--str)} .cmt{color:var(--cmt);font-style:italic} .ty{color:var(--type)}
+figure{margin:1.4rem 0}
+figure pre.mermaid{background:var(--panel);border:1px solid var(--rule);border-radius:6px;padding:1rem;overflow-x:auto}
+figure svg{width:100%;height:auto;display:block;background:var(--panel);border:1px solid var(--rule);border-radius:6px}
+figcaption{font-size:.9rem;color:var(--muted);margin-top:.5rem}
+table{border-collapse:collapse;width:100%;font-size:.93rem;margin:1rem 0}
+th,td{text-align:left;padding:.5rem .6rem;border-bottom:1px solid var(--rule);vertical-align:top}
+th{font-family:var(--display);font-size:1.05rem;font-weight:600}
+td code,p code,li code{font-family:var(--mono);font-size:.85em;background:var(--panel);border:1px solid var(--rule);padding:0 .3em;border-radius:3px}
+.scroll{overflow-x:auto}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:1rem}
+.two h3{margin-top:.4rem}
+@media (max-width:900px){.two{grid-template-columns:1fr}}
+aside.rule{border-left:4px solid var(--amber);background:var(--panel);padding:.8rem 1rem;margin:1.2rem 0;border-radius:0 6px 6px 0}
+aside.rule.s{border-left-color:var(--blue)} aside.rule.n{border-left-color:var(--green)}
+aside.rule p{margin:.3rem 0}
+ol,ul{padding-left:1.3rem} li{margin:.3rem 0}
+a{color:var(--blue)} a:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
+nav.toc{font-size:.95rem;columns:2;column-gap:2rem;margin:1.5rem 0}
+nav.toc a{text-decoration:none;display:block;padding:.15rem 0}
+.plain{background:var(--panel);border:1px solid var(--rule);border-radius:6px;padding:.7rem 1rem;margin:1rem 0}
+.plain strong{font-family:var(--display);font-size:1.05rem;letter-spacing:.02em}
+svg text{font-family:var(--body);fill:var(--fg)}
+svg .t{font-family:var(--display);font-weight:600}
+svg .m{fill:var(--muted);font-size:11px}
+svg .mono{font-family:var(--mono);font-size:11px}
+svg .box{fill:var(--panel);stroke:var(--rule);stroke-width:1.5}
+svg .amber{stroke:var(--amber)} svg .amberfill{fill:var(--amber-soft)}
+svg .blue{stroke:var(--blue)} svg .bluefill{fill:var(--blue-soft)}
+svg .green{stroke:var(--green)} svg .greenfill{fill:var(--green-soft)}
+svg .red{stroke:var(--red)} svg .redfill{fill:var(--red-soft)}
+svg .wire{stroke:var(--muted);stroke-width:2;fill:none}
+svg .dash{stroke-dasharray:5 4}
+@media (max-width:520px){nav.toc{columns:1} body{font-size:16px}}
+</style>
+
+<main>
+<header>
+  <div class="eyebrow">MMP.GasPumpSimulator · article 6 · 2026-11-02</div>
+  <h1>Waiting without a thread</h1>
+  <p class="lede">The pump simulator runs its three workers three different ways, and one of them is a copy of C#'s <code>async</code> and <code>await</code> built by hand, in a library called MMP.AsyncProxy, out of parts that existed in 2008. This article explains how that works at a tenth grade level: what a thread really costs, how a method can stop in the middle and pick up later, how a mailbox wakes a sleeping worker without anyone standing there, and where the saved threads, memory, and CPU cycles go. At the end it puts the machine our library builds beside the machine the modern C# compiler builds, down to the IL, so you can see they are the same shape.</p>
+</header>
+
+<nav class="toc" aria-label="Sections">
+  <a href="#problem">1. Three ways to wait</a>
+  <a href="#thread">2. What a thread costs</a>
+  <a href="#bookmark">3. A method with a bookmark</a>
+  <a href="#handoff">4. How the mailbox wakes the worker</a>
+  <a href="#parts">5. The parts, and their modern names</a>
+  <a href="#shift">6. The shift, step by step</a>
+  <a href="#savings">7. Where the savings are</a>
+  <a href="#problems">8. Which thread problems go away, and which stay</a>
+  <a href="#il">9. The same machine, in IL</a>
+  <a href="#proof">10. The proof</a>
+  <a href="#read">11. Where to start reading</a>
+</nav>
+
+<h2 id="problem">1. Three ways to wait</h2>
+<p>A worker in the simulator is a loop: wait for a slip in the in-tray, handle it, wait again. The slips arrive a few times a second during a sale and never for minutes at a time between sales. So the loop spends almost all of its life waiting. The question this article is about is simple: <strong>what does the worker hold while it waits?</strong></p>
+<p>The simulator has three answers, picked at startup. Everything above them is the same code.</p>
+<ol>
+  <li><strong>A thread.</strong> <code>ThreadedDispatch</code>. Each worker gets its own thread, and the thread sits inside <code>BlockingCollection.Take()</code> until a slip arrives. Simple, and the way it was done in 2008.</li>
+  <li><strong>The compiler's state machine.</strong> <code>ChannelDispatch</code>. Each worker is an <code>async</code> method that <code>await</code>s a channel. When the channel is empty the method stops, gives its thread back, and holds nothing but a small object. The C# compiler wrote the machinery for that in 2012.</li>
+  <li><strong>A hand-built state machine.</strong> <code>AsyncProxyDispatch</code>. The same idea as number 2, written without the <code>async</code> keyword, using a C# 2 iterator and a library that supplies the rest. Every piece would compile on .NET 3.5.</li>
+</ol>
+<p>Numbers 2 and 3 do the same thing. Number 3 is here so you can see how number 2 works with the lid off. If you understand number 3, you understand <code>await</code>.</p>
+
+<h2 id="thread">2. What a thread costs</h2>
+<div class="plain"><strong>Short version.</strong> A thread is a worker with their own desk, chair, and filing cabinet. A parked thread is a desk nobody is sitting at that still takes up floor space and still gets a visit from the manager every time the manager walks the room.</div>
+
+<p>A thread is the operating system's unit of running code. To make one, the system sets aside three things:</p>
+<ul>
+  <li><strong>A stack.</strong> Memory for the thread's local variables and call chain. On Windows the default reservation for a .NET thread is about one megabyte. Most of it is never touched, but it is spoken for.</li>
+  <li><strong>A kernel object.</strong> The system's own record of the thread: its state, its priority, its place in the scheduler's lists.</li>
+  <li><strong>A slot in the scheduler.</strong> The scheduler is the part of the system that decides which thread runs on which CPU core, and for how long.</li>
+</ul>
+<p>When a thread waits inside <code>Take()</code>, it is <strong>blocked</strong>. It runs no code, but the stack is still reserved, the kernel object still exists, and the scheduler still knows about it. When a slip finally arrives, the system has to perform a <strong>context switch</strong>: save whatever was running on that core, load the waiting thread's registers and stack pointer, and jump to it. A switch costs on the order of microseconds, which sounds like nothing until you do it thousands of times a second.</p>
+
+<figure class="wide">
+<svg viewBox="0 0 900 330" role="img" aria-labelledby="s1t s1d">
+  <title id="s1t">Three parked threads versus three parked state machines</title>
+  <desc id="s1d">Left: three worker threads each with a one megabyte stack, all blocked waiting. Right: three small state machine objects holding a bookmark, with no thread, and a shared pool of a few threads that only run when a message arrives.</desc>
+  <text x="20" y="30" class="t" font-size="18">Threaded: one parked thread per worker</text>
+  <g>
+    <rect x="20" y="50" width="130" height="200" rx="8" class="box red redfill"/>
+    <text x="85" y="75" text-anchor="middle" font-size="14">sale thread</text>
+    <text x="85" y="95" text-anchor="middle" class="m">~1 MB stack reserved</text>
+    <text x="85" y="113" text-anchor="middle" class="m">kernel object</text>
+    <text x="85" y="131" text-anchor="middle" class="m">scheduler slot</text>
+    <text x="85" y="230" text-anchor="middle" class="mono">BLOCKED in Take()</text>
+    <rect x="165" y="50" width="130" height="200" rx="8" class="box red redfill"/>
+    <text x="230" y="75" text-anchor="middle" font-size="14">payment thread</text>
+    <text x="230" y="95" text-anchor="middle" class="m">~1 MB stack reserved</text>
+    <text x="230" y="113" text-anchor="middle" class="m">kernel object</text>
+    <text x="230" y="131" text-anchor="middle" class="m">scheduler slot</text>
+    <text x="230" y="230" text-anchor="middle" class="mono">BLOCKED in Take()</text>
+    <rect x="310" y="50" width="130" height="200" rx="8" class="box red redfill"/>
+    <text x="375" y="75" text-anchor="middle" font-size="14">pump thread</text>
+    <text x="375" y="95" text-anchor="middle" class="m">~1 MB stack reserved</text>
+    <text x="375" y="113" text-anchor="middle" class="m">kernel object</text>
+    <text x="375" y="131" text-anchor="middle" class="m">scheduler slot</text>
+    <text x="375" y="230" text-anchor="middle" class="mono">BLOCKED in Take()</text>
+  </g>
+  <text x="20" y="290" class="m">3 workers = 3 threads. 3000 workers = 3000 threads, about 3 GB of reserved stack, and a scheduler walking 3000 entries.</text>
+
+  <line x1="470" y1="40" x2="470" y2="300" class="wire dash"/>
+
+  <text x="490" y="30" class="t" font-size="18">AsyncProxy: a bookmark per worker, no thread</text>
+  <g font-size="13">
+    <rect x="490" y="50" width="120" height="58" rx="8" class="box green greenfill"/>
+    <text x="550" y="73" text-anchor="middle">sale machine</text>
+    <text x="550" y="92" text-anchor="middle" class="m">state = 1, waiting</text>
+    <rect x="625" y="50" width="120" height="58" rx="8" class="box green greenfill"/>
+    <text x="685" y="73" text-anchor="middle">payment machine</text>
+    <text x="685" y="92" text-anchor="middle" class="m">state = 1, waiting</text>
+    <rect x="760" y="50" width="120" height="58" rx="8" class="box green greenfill"/>
+    <text x="820" y="73" text-anchor="middle">pump machine</text>
+    <text x="820" y="92" text-anchor="middle" class="m">state = 1, waiting</text>
+    <text x="685" y="130" text-anchor="middle" class="m">a few hundred bytes each: the fields of the loop, and which step it stopped at</text>
+    <rect x="520" y="160" width="330" height="90" rx="8" class="box blue bluefill"/>
+    <text x="685" y="185" text-anchor="middle" font-size="14">the thread pool</text>
+    <text x="685" y="205" text-anchor="middle" class="m">a handful of threads, about one per core, shared by everything</text>
+    <text x="685" y="223" text-anchor="middle" class="m">a pool thread runs a machine only while it has a slip to handle</text>
+    <text x="685" y="241" text-anchor="middle" class="m">no thread is reserved for a worker that is waiting</text>
+  </g>
+  <text x="490" y="290" class="m">3 workers = 3 small objects. 3000 workers = 3000 small objects and the same handful of pool threads.</text>
+</svg>
+<figcaption>The left side pays for a desk per worker whether or not anyone is working. The right side pays for a sticky note per worker and shares the desks.</figcaption>
+</figure>
+
+<p>For three workers, a thread each is fine. The simulator keeps <code>ThreadedDispatch</code> because it is the simplest to read and the best fit for a call that truly blocks, like a bank request on a 2008 library with no asynchronous version. The savings matter when workers multiply: a forecourt controller with forty dispensers, a server with thousands of connections. The way to get there is to stop holding a thread while you wait.</p>
+
+<h2 id="bookmark">3. A method with a bookmark</h2>
+<div class="plain"><strong>Short version.</strong> A normal method is a recipe you read top to bottom without stopping. An iterator is the same recipe with a bookmark. You can read a step, put the bookmark in, close the book, and come back later to the next step with everything you had in your hands still there.</div>
+
+<p>Here is the whole trick behind <code>await</code>, and it is older than <code>await</code>. In 2005, C# 2 added <code>yield return</code>. You write a method that returns a sequence, and every time it says <code>yield return x</code>, it hands out <code>x</code> and <strong>stops</strong>. When the caller asks for the next item, the method <strong>resumes</strong> on the line after the <code>yield</code>, with all its local variables intact.</p>
+<p>The compiler makes that possible by rewriting your method into a class. The class has one field per local variable, one field for "which step am I on", and one method, <code>MoveNext</code>, that is your code chopped into pieces with a <code>switch</code> at the top that jumps to the right piece. The compiler has been doing this since 2005. It is a state machine, and the compiler wrote it for you.</p>
+
+<figure class="wide">
+<svg viewBox="0 0 900 300" role="img" aria-labelledby="s2t s2d">
+  <title id="s2t">A method chopped into steps with a bookmark</title>
+  <desc id="s2d">On the left, the worker loop as the programmer wrote it with a yield return in the middle. On the right, the class the compiler built: a state field, fields for the locals, and a MoveNext with a switch that jumps to step 0 or step 1.</desc>
+  <text x="20" y="30" class="t" font-size="18">What you write</text>
+  <rect x="20" y="45" width="400" height="230" rx="8" class="box"/>
+  <g class="mono" font-size="12">
+    <text x="35" y="72">IEnumerable&lt;IFuture&gt; Loop(box, handle)</text>
+    <text x="35" y="90">{</text>
+    <text x="50" y="108">while (!_stopping)</text>
+    <text x="50" y="126">{</text>
+    <text x="65" y="144">var next = box.DequeueAsync();</text>
+    <text x="65" y="162" fill="var(--amber)">yield return Futures.Observe(next);   ◄ bookmark</text>
+    <text x="65" y="180">if (next.IsCanceled) yield break;</text>
+    <text x="65" y="198">handle(next.Result);</text>
+    <text x="50" y="216">}</text>
+    <text x="35" y="234">}</text>
+  </g>
+  <path d="M430 160 L470 160" class="wire" marker-end="url(#a6)"/>
+  <text x="450" y="150" text-anchor="middle" class="m">compiler</text>
+  <text x="490" y="30" class="t" font-size="18">What the compiler builds</text>
+  <rect x="490" y="45" width="390" height="230" rx="8" class="box green greenfill"/>
+  <g class="mono" font-size="12">
+    <text x="505" y="72">class &lt;Loop&gt;d__5 : IEnumerator&lt;IFuture&gt;</text>
+    <text x="505" y="90">{</text>
+    <text x="520" y="108">int    &lt;&gt;1__state;      // the bookmark</text>
+    <text x="520" y="126">IFuture &lt;&gt;2__current;   // what was yielded</text>
+    <text x="520" y="144">Mailbox box; Action handle;  // the locals</text>
+    <text x="520" y="162">IFuture&lt;T&gt; &lt;next&gt;5__2;  // a local that crosses the yield</text>
+    <text x="520" y="186">bool MoveNext()</text>
+    <text x="520" y="204">{</text>
+    <text x="535" y="222">switch (&lt;&gt;1__state) { case 0: ... case 1: ... }</text>
+    <text x="535" y="240">// run until the next yield, set state, return</text>
+    <text x="520" y="258">}</text>
+  </g>
+  <defs><marker id="a6" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--muted)"/></marker></defs>
+</svg>
+<figcaption>The field named state is the bookmark. The locals became fields so they survive between calls. This is the real class name from the Release build of the simulator.</figcaption>
+</figure>
+
+<p>Now the one-line insight that MMP.AsyncProxy is built on: <strong>a method that pauses at each <code>yield</code> and a method that pauses at each <code>await</code> need the same machine.</strong> Both save the locals, record where they stopped, and return. The only thing <code>await</code> adds is <em>who calls <code>MoveNext</code> next</em>. With <code>yield</code>, the caller pulls the next item whenever it likes. With <code>await</code>, the thing you were waiting for calls <code>MoveNext</code> when it finishes. So the library's job is small: take an iterator that yields <em>futures</em> (promises of a value), and arrange for each future to call <code>MoveNext</code> when it completes.</p>
+
+<pre class="code"><code>// MMP.AsyncProxy/Iterate/IteratorStateMachine.cs: the last tenth that turns an iterator into async.
+public void MoveNext()
+{
+    try
+    {
+        while (true)
+        {
+            // Coming back from a suspend? Observe the step we parked on.
+            if (_pending != null) { IAwaiter finished = _pending; _pending = null; finished.GetResult(); }
+
+            // Ask the iterator for its next future. No more? The method is done.
+            if (!_steps.MoveNext()) { _steps.Dispose(); _builder.SetResult(_return.Value); return; }
+
+            IFuture step = _steps.Current;
+            IAwaiter awaiter = step.GetAwaiter();
+
+            // Fast path: the future is already done, so no suspend. Keep going in this loop.
+            if (awaiter.IsCompleted) { awaiter.GetResult(); continue; }
+
+            // Slow path: park here. The builder will call MoveNext again when the future completes.
+            _pending = awaiter;
+            IteratorStateMachine&lt;T&gt; self = this;
+            _builder.AwaitOnCompleted(ref awaiter, ref self);
+            return;
+        }
+    }
+    catch (Exception ex) { _steps.Dispose(); _builder.SetException(ex); }
+}</code></pre>
+<p class="where">E:\dev\MMP.AsyncProxy\src\MMP.AsyncProxy\Iterate\IteratorStateMachine{T}.cs</p>
+
+<p>Read it as a clerk working a to-do list. Pull the next item. If it is already done, cross it off and pull the next. If it is not done, write "call me when this finishes" on it and go home. There is no thread standing at the desk while the item is out. When the item finishes, whoever finished it calls the clerk back, and the clerk picks up the list where the bookmark is.</p>
+
+<h2 id="handoff">4. How the mailbox wakes the worker</h2>
+<div class="plain"><strong>Short version.</strong> An empty in-tray hands the worker an IOU instead of a slip. When a slip finally arrives, the person dropping it off cashes the IOU, and that is what wakes the worker up, on whatever thread happens to be free.</div>
+
+<p>In the threaded design the mailbox is a <code>BlockingCollection</code> and the worker's thread sleeps inside it. In the AsyncProxy design the mailbox is a plain queue plus one <strong>promise</strong>. A promise is a box that will hold a value later; the matching <strong>future</strong> is the read-only view of that box you hand to whoever is waiting.</p>
+
+<pre class="code"><code>// GasPump.Dispatch/AsyncProxyDispatch.cs, the mailbox
+public IFuture&lt;T&gt; DequeueAsync()
+{
+    lock (_lock)
+    {
+        if (_closed) return Canceled();
+        if (_items.Count &gt; 0)
+        {
+            var ready = new Promise&lt;T&gt;(true);
+            ready.SetResult(_items.Dequeue());   // already done: the fast path, no suspend
+            return ready.Future;
+        }
+        _waiting = new Promise&lt;T&gt;(true);          // empty: hand out an IOU
+        return _waiting.Future;
+    }
+}
+
+public bool TryPost(T item)
+{
+    Promise&lt;T&gt;? wake = null;
+    lock (_lock)
+    {
+        if (_closed) return false;
+        if (_waiting is { } w) { _waiting = null; wake = w; }     // someone is waiting: pay the IOU
+        else if (_items.Count &gt;= capacity) return false;         // full: the sender waits
+        else _items.Enqueue(item);
+        Interlocked.Increment(ref _pending);
+    }
+    // Outside the lock. The promise runs continuations on the pool, so this returns right away.
+    wake?.TrySetResult(item);
+    return true;
+}</code></pre>
+
+<figure class="wide">
+<pre class="mermaid">
+sequenceDiagram
+  participant W as Worker machine<br/>(no thread of its own)
+  participant M as Mailbox
+  participant S as Sender<br/>(timer, UI, other worker)
+  participant P as Thread pool
+  W->>M: DequeueAsync()
+  Note over M: queue empty, make a Promise, keep it as _waiting
+  M-->>W: pending Future
+  Note over W: yield return future. Park: write the bookmark, return. No thread is held.
+  S->>M: TryPost(slip)
+  Note over M: _waiting is set, so hand the slip to the promise
+  M->>P: promise.TrySetResult(slip) queues the continuation
+  P->>W: MoveNext() on a free pool thread
+  Note over W: resume after the yield, handle(slip), loop, DequeueAsync again
+</pre>
+<figcaption>Nobody waits. The sender finishes posting in microseconds. The worker runs only while there is a slip in its hand.</figcaption>
+</figure>
+
+<p>Two details carry the weight here.</p>
+<ul>
+  <li><strong>The promise is built with <code>runContinuationsAsync = true</code>.</strong> When the sender pays the IOU, the worker's code does not run on the sender's thread. It is queued to the thread pool. That keeps the sender fast and keeps a lock held by the sender from ever being held while the worker runs. The modern name for this flag is <code>TaskCreationOptions.RunContinuationsAsynchronously</code>.</li>
+  <li><strong>The handoff happens outside the lock.</strong> <code>TryPost</code> takes the waiting promise out from under the lock and completes it after letting go. A callback that takes its own lock can never deadlock against the mailbox's.</li>
+</ul>
+
+<h2 id="parts">5. The parts, and their modern names</h2>
+<p>Everything in MMP.AsyncProxy is a copy of something in the modern runtime, written in C# 3 so it compiles on .NET 3.5. The names were chosen so the match is obvious.</p>
+<div class="scroll">
+<table>
+<thead><tr><th>In MMP.AsyncProxy</th><th>In .NET today</th><th>What it is</th></tr></thead>
+<tbody>
+<tr><td><code>Promise&lt;T&gt;</code></td><td><code>TaskCompletionSource&lt;T&gt;</code></td><td>The box the answer gets put in. You keep it; you hand out its future.</td></tr>
+<tr><td><code>IFuture&lt;T&gt;</code></td><td><code>Task&lt;T&gt;</code></td><td>The read-only view of the box. Wait on it, or ask to be called when it fills.</td></tr>
+<tr><td><code>FutureAwaiter&lt;T&gt;</code></td><td><code>TaskAwaiter&lt;T&gt;</code></td><td>What an await talks to: is it done, call me when it is, give me the result.</td></tr>
+<tr><td><code>AsyncMethodBuilder&lt;T&gt;</code></td><td><code>AsyncTaskMethodBuilder&lt;T&gt;</code></td><td>Starts the machine, parks it on an awaiter, completes the future at the end.</td></tr>
+<tr><td><code>IteratorStateMachine&lt;T&gt;</code></td><td>the class the C# compiler emits for an <code>async</code> method</td><td>The <code>MoveNext</code> loop above. Ours drives a C# 2 iterator; the compiler's is the method itself, rewritten.</td></tr>
+<tr><td><code>yield return future;</code></td><td><code>await task;</code></td><td>The bookmark.</td></tr>
+<tr><td><code>AsyncProxy.Run(Loop(...))</code></td><td>calling an <code>async</code> method</td><td>Build the machine, start it, hand back its future.</td></tr>
+</tbody>
+</table>
+</div>
+
+<h2 id="shift">6. The shift, step by step</h2>
+<p>Here is the same worker loop under the two designs, and what changes at each line.</p>
+<div class="two">
+<div>
+<h3>Thread per worker</h3>
+<pre class="code"><code>// ThreadedDispatch.cs
+_thread = new Thread(() =&gt;
+{
+    foreach (var item in box.Queue
+                 .GetConsumingEnumerable(_stop.Token))
+    {
+        // the thread sleeps inside Take() between items
+        handle(item);
+    }
+});
+_thread.Start();</code></pre>
+<ul>
+  <li>One thread made at startup, alive until Dispose.</li>
+  <li>Between slips the thread is blocked in the kernel.</li>
+  <li>Each slip costs a context switch to wake this thread.</li>
+  <li>Simple to debug: the call stack is the whole story.</li>
+</ul>
+</div>
+<div>
+<h3>Hand-built state machine</h3>
+<pre class="code"><code>// AsyncProxyDispatch.cs
+_loop = AsyncProxy.Run(Loop(box, handle, owner));
+
+IEnumerable&lt;IFuture&gt; Loop(...)
+{
+    while (!_stopping)
+    {
+        var next = box.DequeueAsync();
+        yield return Futures.Observe(next);   // park
+        if (next.IsCanceled || next.IsFaulted || _stopping) yield break;
+        handle(next.Result);
+    }
+}</code></pre>
+<ul>
+  <li>No thread made. One small object holds the loop's state.</li>
+  <li>Between slips nothing runs and nothing is reserved.</li>
+  <li>Each slip costs a pool work item, not a kernel wake-up.</li>
+  <li>Harder to debug: the stack shows the pool, and the "where was I" lives in a field.</li>
+</ul>
+</div>
+</div>
+
+<p>Notice what did not change. Still one message at a time, because the loop is sequential. Still no shared state between workers. Still a bounded mailbox that makes a flood wait. The three rules every strategy keeps are kept here by the shape of the loop, not by a lock.</p>
+
+<h2 id="savings">7. Where the savings are</h2>
+<div class="scroll">
+<table>
+<thead><tr><th>Resource</th><th>Thread per worker</th><th>State machine per worker</th><th>Why</th></tr></thead>
+<tbody>
+<tr><td>Threads while idle</td><td>one per worker</td><td>zero</td><td>A parked machine is an object, not a thread. Pool threads go back to the pool.</td></tr>
+<tr><td>Memory while idle</td><td>about 1 MB reserved stack per worker, plus a kernel object</td><td>a few hundred bytes per worker: the loop's fields and one pending promise</td><td>The locals that cross the yield became fields. Nothing else is kept.</td></tr>
+<tr><td>Cost to deliver one slip</td><td>a kernel wake-up and a context switch to a specific thread</td><td>a queue push to the pool and a run on whichever thread is free</td><td>The pool thread is already running and warm in cache. No specific thread has to be found and woken.</td></tr>
+<tr><td>Scaling to thousands of workers</td><td>thousands of threads; the scheduler and memory give out first</td><td>thousands of small objects; the pool stays the size of the machine</td><td>Work is proportional to messages, not to workers.</td></tr>
+<tr><td>A call that truly blocks (a 2008 bank library)</td><td>fine: it blocks its own thread and nobody else waits</td><td>bad: it would block a pool thread that everything shares</td><td>This is why <code>PrefersBlockingIo</code> exists. The payment worker blocks under threads and continues on a callback under the other two.</td></tr>
+<tr><td>Allocation per message</td><td>none beyond the message</td><td>one promise when the mailbox was empty; none when a slip was already waiting</td><td>The fast path in <code>DequeueAsync</code> hands back a completed future and the machine never parks.</td></tr>
+</tbody>
+</table>
+</div>
+
+<p>The summary: for three workers the two columns cost about the same and the thread version is easier to read. The state machine wins the moment workers outnumber cores by a lot, or the moment a worker spends most of its time waiting, which a pump worker does. The simulator keeps all three so the trade is visible instead of argued about.</p>
+
+<h2 id="problems">8. Which thread problems go away, and which stay</h2>
+<p>People sometimes say async "removes threading problems." It removes some and leaves others, and knowing which is the difference between a safe design and a lucky one.</p>
+<h3>Gone, because there is no parked thread</h3>
+<ul>
+  <li><strong>Thread exhaustion.</strong> You cannot run out of threads for idle workers, because idle workers hold none.</li>
+  <li><strong>Blocking deadlocks of the "I am waiting for you and you are waiting for me" kind that involve a thread sleeping in a kernel wait.</strong> Nothing sleeps in a kernel wait. A wait is a note on a promise.</li>
+  <li><strong>Wake-up cost.</strong> No context switch to a specific sleeping thread per message.</li>
+</ul>
+<h3>Still there, and handled by the actor rules, not by async</h3>
+<ul>
+  <li><strong>Races on shared state.</strong> Two machines resumed on two pool threads at once can still stomp on a shared field. The simulator avoids this by the rule that workers share nothing and pass messages. Async did not buy that; the design did.</li>
+  <li><strong>Reentrancy.</strong> A continuation can run while you still hold a lock if you complete a promise inside the lock. The mailbox completes outside the lock and the promise queues to the pool, which is why that is written down twice in the code.</li>
+  <li><strong>Lost exceptions.</strong> A faulted future nobody observes is a silent failure. The loop wraps each dequeue in <code>Futures.Observe</code> and checks <code>IsFaulted</code> so a closed mailbox ends the loop instead of throwing into nowhere.</li>
+  <li><strong>Debugging.</strong> The stack trace of a resumed machine shows the pool, not your code's history. The library copies the first stack trace into the exception's data before rethrowing, because .NET 3.5 had no other way to keep it.</li>
+</ul>
+
+<aside class="rule s"><p><strong>The one-sentence rule.</strong> Async decides <em>what a worker holds while it waits</em>. The actor rules decide <em>what a worker may touch while it runs</em>. You need both, and they are different decisions.</p></aside>
+
+<h2 id="il">9. The same machine, in IL</h2>
+<p>Steve asked a sharp question: is the code the compiler emits for <code>async</code> really the same shape as what the C# 2 iterator plus the library produce? Here is the evidence from this very build. <code>GasPump.Dispatch.dll</code> was compiled in Release and decompiled with ILSpy 10.0.1. The Channel worker is a real <code>async</code> lambda, so the modern compiler built its machine. The AsyncProxy worker is an iterator, so the C# 2 machinery built its machine. Both are shown with the sugar turned off (<code>-lv CSharp1</code> for the iterator so <code>yield</code> is not re-sugared, <code>-lv CSharp4</code> for the async one so <code>await</code> is not).</p>
+
+<div class="two">
+<div>
+<h3>Iterator machine (AsyncProxy worker)</h3>
+<pre class="code"><code>// decompiled, CSharp1, Release build
+private sealed class &lt;Loop&gt;d__5 : IEnumerable&lt;IFuture&gt;, IEnumerator&lt;IFuture&gt;, IDisposable
+{
+    private int &lt;&gt;1__state;            // the bookmark
+    private IFuture &lt;&gt;2__current;      // the future just yielded
+    private Mailbox&lt;T&gt; box;             // hoisted parameter
+    private Action&lt;T&gt; handle;           // hoisted parameter
+    private AsyncProxyDispatch owner;   // hoisted parameter
+    private IFuture&lt;T&gt; &lt;next&gt;5__2;      // local that crosses the yield
+
+    private bool MoveNext()
+    {
+        int num = &lt;&gt;1__state;
+        switch (num)
+        {
+        default: return false;
+        case 0:  &lt;&gt;1__state = -1; break;          // first run
+        case 1:                                   // resumed after the yield
+            &lt;&gt;1__state = -1;
+            if (&lt;next&gt;5__2.IsCanceled || ...) return false;
+            try { handle(&lt;next&gt;5__2.Result); }
+            finally { box.Handled(); ... }
+            &lt;next&gt;5__2 = null;
+            break;
+        }
+        if (!worker._stopping)
+        {
+            &lt;next&gt;5__2 = box.DequeueAsync();
+            &lt;&gt;2__current = Futures.Observe(&lt;next&gt;5__2);
+            &lt;&gt;1__state = 1;                       // park at step 1
+            return true;
+        }
+        return false;
+    }
+}</code></pre>
+</div>
+<div>
+<h3>Async machine (Channel worker)</h3>
+<pre class="code"><code>// decompiled, CSharp4, Release build
+private struct &lt;&lt;-ctor&gt;b__0&gt;d : IAsyncStateMachine
+{
+    public int &lt;&gt;1__state;                        // the bookmark
+    public AsyncTaskMethodBuilder &lt;&gt;t__builder;   // starts, parks, completes
+    public &lt;&gt;c__DisplayClass3_0 &lt;&gt;4__this;        // hoisted captures: box, handle, owner
+    private IAsyncEnumerator&lt;T&gt; &lt;&gt;7__wrap1;       // local that crosses an await
+    private ValueTaskAwaiter&lt;bool&gt; &lt;&gt;u__1;        // the awaiter we parked on
+    private ValueTaskAwaiter &lt;&gt;u__2;
+
+    private void MoveNext()
+    {
+        int num = &lt;&gt;1__state;
+        try
+        {
+            if (num != 0)
+            {
+                if (num == 1) { awaiter = &lt;&gt;u__2; ... goto IL_01a0; }   // resumed after await 1
+                &lt;&gt;7__wrap1 = box.Channel.Reader.ReadAllAsync(token).GetAsyncEnumerator();
+            }
+            ...
+            awaiter2 = &lt;&gt;7__wrap1.MoveNextAsync().GetAwaiter();
+            if (!awaiter2.IsCompleted)
+            {
+                num = (&lt;&gt;1__state = 0);               // park at step 0
+                &lt;&gt;u__1 = awaiter2;
+                &lt;&gt;t__builder.AwaitUnsafeOnCompleted(ref awaiter2, ref this);
+                return;
+            }
+            ...
+            handle(current);
+        }
+        catch (Exception e) { &lt;&gt;1__state = -2; &lt;&gt;t__builder.SetException(e); return; }
+        &lt;&gt;1__state = -2;
+        &lt;&gt;t__builder.SetResult();
+    }
+}</code></pre>
+</div>
+</div>
+
+<p>Line them up and the skeleton is identical:</p>
+<ul>
+  <li>a field named <code>&lt;&gt;1__state</code> holding which step the method is parked at, with the same conventions: <code>-1</code> running, <code>-2</code> finished, <code>0</code> and up for each parking spot;</li>
+  <li>every local that has to survive a pause hoisted into a field, with the compiler's slot number in the name (<code>&lt;next&gt;5__2</code>, <code>&lt;&gt;7__wrap1</code>);</li>
+  <li>one <code>MoveNext</code> that reads the state, jumps to the right piece, runs until the next pause, writes the new state, and returns.</li>
+</ul>
+<p>And the one difference, which is the whole of what <code>async</code> adds. The iterator's <code>MoveNext</code> returns <code>true</code> and leaves the future in <code>&lt;&gt;2__current</code> for someone else to deal with. The async machine's <code>MoveNext</code> deals with it itself: it asks the awaiter whether it is done, and if not it hands <em>itself</em> to the builder (<code>AwaitUnsafeOnCompleted(ref awaiter, ref this)</code>) so the awaiter can call <code>MoveNext</code> again later. MMP.AsyncProxy's <code>IteratorStateMachine</code> is that missing paragraph, written once and reused for every iterator you hand it.</p>
+
+<p>Down at the IL level the resemblance is plainer still, because the names fall away and only the moves are left. Both methods open the same way: load the state field into a local, branch on it.</p>
+
+<div class="two">
+<div>
+<h3>Iterator MoveNext, first instructions</h3>
+<pre class="code il"><code>.method private final hidebysig newslot virtual
+    instance bool MoveNext () cil managed
+// Code size: 218 (0xda)
+IL_0000: ldarg.0
+IL_0001: ldfld  int32 '&lt;Loop&gt;d__5'&lt;!T&gt;::'&lt;&gt;1__state'
+IL_0006: stloc.0
+IL_0007: ldarg.0
+IL_0008: ldfld  Worker`1 '&lt;Loop&gt;d__5'&lt;!T&gt;::'&lt;&gt;4__this'
+IL_000d: stloc.1
+IL_000e: ldloc.0
+IL_000f: brfalse.s IL_0017      // state 0: first run
+IL_0011: ldloc.0
+IL_0012: ldc.i4.1
+IL_0013: beq.s IL_004e          // state 1: resume after the yield
+IL_0015: ldc.i4.0
+IL_0016: ret                    // any other state: finished
+IL_0017: ldarg.0
+IL_0018: ldc.i4.m1
+IL_0019: stfld  int32 '&lt;&gt;1__state'   // mark running
+...
+IL_0045: ldarg.0
+IL_0046: ldc.i4.1
+IL_0047: stfld  int32 '&lt;&gt;1__state'   // park at 1
+IL_004c: ldc.i4.1
+IL_004d: ret</code></pre>
+</div>
+<div>
+<h3>Async MoveNext, first instructions</h3>
+<pre class="code il"><code>.method private final hidebysig newslot virtual
+    instance void MoveNext () cil managed
+// Code size: 524 (0x20c)
+IL_0000: ldarg.0
+IL_0001: ldfld  int32 '&lt;&lt;-ctor&gt;b__0&gt;d'&lt;!T&gt;::'&lt;&gt;1__state'
+IL_0006: stloc.0
+IL_0007: ldarg.0
+IL_0008: ldfld  DisplayClass3_0 '&lt;&lt;-ctor&gt;b__0&gt;d'&lt;!T&gt;::'&lt;&gt;4__this'
+IL_000d: stloc.1
+.try
+{
+  IL_0013: ldloc.0
+  IL_0014: brfalse.s IL_0064    // state 0: resume after await 0
+  IL_0016: ldloc.0
+  IL_0017: ldc.i4.1
+  IL_0018: beq IL_0183          // state 1: resume after await 1
+  IL_001d: ...                  // otherwise: first run, open the reader
+  ...
+  // at each await: if (!awaiter.IsCompleted) { state = n; store awaiter;
+  //   builder.AwaitUnsafeOnCompleted(ref awaiter, ref this); ret }
+}
+catch [System.Runtime]System.Exception
+{
+  // state = -2; builder.SetException(e); ret
+}</code></pre>
+</div>
+</div>
+<p class="where">Decompiled 2026-11-02 from src/GasPump.Dispatch/bin/Release/net10.0/GasPump.Dispatch.dll with ilspycmd 10.0.1 (-lv CSharp1, -lv CSharp4, -il). Names, offsets, and code sizes are as printed; long type names are shortened for the page.</p>
+
+<p>Same opening: <code>ldarg.0</code>, <code>ldfld &lt;&gt;1__state</code>, <code>stloc.0</code>, then a branch on the state. Same parking move: store the new state, return. The async version is wrapped in a <code>.try</code> so that any exception becomes a faulted task instead of escaping, and it is a <code>struct</code> so that a method that never actually waits allocates nothing. Those are refinements on the same machine, and they are the same refinements the AsyncProxy repo documents against its hand-written sample in <code>docs/compiler-vs-handwritten.md</code>.</p>
+
+<h2 id="proof">10. The proof</h2>
+<p>The claim is that the three strategies behave the same. The test suite runs the whole sale under each one, with a fake clock, and the happy-path trace test prints the same event list three times:</p>
+<pre class="code"><code>Passed  HappyPathTraceTests.The_happy_path_hits_the_events_in_this_order(strategy: "threaded")
+Passed  HappyPathTraceTests.The_happy_path_hits_the_events_in_this_order(strategy: "channel")
+Passed  HappyPathTraceTests.The_happy_path_hits_the_events_in_this_order(strategy: "asyncproxy")
+
+events:  CardPresented &gt; CodeEntered &gt; Approved &gt; PumpArmed &gt; GradeSelected &gt; NozzleLifted
+         &gt; SpoutInserted &gt; FlowStarted &gt; Progress &gt; FlowPaused &gt; FlowResumed &gt; Progress
+         &gt; NozzleHung &gt; CompletionSent</code></pre>
+<p>Under the AsyncProxy strategy, no worker owns a thread. The pool runs a machine when a slip lands and nothing otherwise. The one place the strategies are allowed to differ is the payment worker's bank call, and the difference is written in one <code>if</code> on <code>PrefersBlockingIo</code>.</p>
+
+<h2 id="read">11. Where to start reading</h2>
+<ol>
+  <li><code>E:\dev\MMP.AsyncProxy\README.md</code>. The same method three ways: with <code>async</code>, as an iterator, and as the hand-written machine the compiler would emit.</li>
+  <li><code>E:\dev\MMP.AsyncProxy\docs\compiler-vs-handwritten.md</code>. The compiler's output beside the hand-written class, row by row.</li>
+  <li><code>src/MMP.AsyncProxy/Iterate/IteratorStateMachine{T}.cs</code>. Ninety lines. The whole of what <code>await</code> adds to <code>yield</code>.</li>
+  <li><code>src/MMP.AsyncProxy/Core/Promise{T}.cs</code>. Where continuations are stored and run, and why they run outside the lock.</li>
+  <li><code>E:\dev\MMP.GasPumpSimulator\src\GasPump.Dispatch\AsyncProxyDispatch.cs</code>. The mailbox as a promise and the worker as an iterator. Read it beside <code>ThreadedDispatch.cs</code>.</li>
+</ol>
+
+<p class="eyebrow">Source: E:\dev\MMP.GasPumpSimulator at main 95b8191 and E:\dev\MMP.AsyncProxy v0.1.0. 322 dotnet tests and 10 Playwright specs pass. Companions: Gas Pump Patterns, Gas Pump Security and Audit, Adding Fuel Detergent, Receipts, Lines, and a Video Player, One Perfect Sale.</p>
+</main>
+
+<script>
+(function(){
+  var re = /(\/\/[^\n]*|\/\*[^*]*\*\/)|(\$?"(?:[^"\\\n]|\\.)*")|\b(public|private|static|sealed|readonly|record|struct|class|interface|enum|abstract|override|event|async|await|return|new|var|if|else|switch|case|when|is|not|and|or|out|lock|using|foreach|while|true|false|null|void|bool|long|string|int|decimal|this|yield|default|throw|try|catch|finally|in|const|ref|break|continue|goto)\b|\b([A-Z][A-Za-z0-9]*)\b/g;
+  function esc(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+  document.querySelectorAll('pre.code:not(.il) code').forEach(function(el){
+    var src = el.textContent, out = '', last = 0, m;
+    re.lastIndex = 0;
+    while ((m = re.exec(src)) !== null) {
+      out += esc(src.slice(last, m.index));
+      if (m[1]) out += '<span class="cmt">'+esc(m[1])+'</span>';
+      else if (m[2]) out += '<span class="str">'+esc(m[2])+'</span>';
+      else if (m[3]) out += '<span class="kw">'+esc(m[3])+'</span>';
+      else out += '<span class="ty">'+esc(m[4])+'</span>';
+      last = re.lastIndex;
+    }
+    out += esc(src.slice(last));
+    el.innerHTML = out;
+  });
+})();
+</script>
+
+<!--claude-mermaid-runtime-begin:3477-->
+<style>.mermaid-diagram{margin-block:4px}.mermaid-diagram svg{display:block;margin:0 auto;max-width:100%;height:auto}</style>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11.16.1/dist/mermaid.min.js"></script>
+<script>(function(){
+var CFG={"palettes":{"light":{"surface":"#f4efe4","text":"#42392e","line":"#8a7f6d","border":"#7a6c52","bg":"#fffdf8"},"dark":{"surface":"#262b34","text":"#f2f3f5","line":"#a8adb8","border":"#9aa4b8","bg":"#1f232b"}}};
+if(typeof mermaid==='undefined')return;
+var pres=Array.prototype.slice.call(document.querySelectorAll('pre.mermaid')).filter(function(p){if(p.hasAttribute('data-claude-mermaid-claimed'))return false;p.setAttribute('data-claude-mermaid-claimed','1');return true;});
+if(!pres.length)return;
+var mq=window.matchMedia?window.matchMedia('(prefers-color-scheme: dark)'):null;
+var root=document.documentElement;
+var items=pres.map(function(pre){
+var mount=document.createElement('div');mount.className='mermaid-diagram';
+return {pre:pre,mount:mount,src:pre.textContent||''};
+});
+var seq=0;
+var renderGen=0;
+var lastKey='';
+function pageBg(fallback){
+var els=[document.body,document.documentElement];
+for(var i=0;i<els.length;i++){
+var c=els[i]&&getComputedStyle(els[i]).backgroundColor;
+if(c&&c!=='transparent'&&c!=='rgba(0, 0, 0, 0)')return c;
+}
+return fallback;
+}
+function render(){
+var theme=root.getAttribute('data-theme');
+var dark=theme==='dark'||(!!(mq&&mq.matches)&&theme!=='light');
+var pal=dark?CFG.palettes.dark:CFG.palettes.light;
+var bg=pageBg(pal.bg);
+var key=(dark?'d':'l')+'|'+bg;
+if(key===lastKey)return;
+lastKey=key;
+var gen=++renderGen;
+var font=getComputedStyle(document.body).fontFamily||'sans-serif';
+var nat={useMaxWidth:false};
+mermaid.initialize({
+startOnLoad:false,securityLevel:'strict',theme:'base',
+flowchart:nat,sequence:nat,er:nat,state:nat,class:nat,pie:nat,
+gantt:nat,journey:nat,timeline:nat,gitGraph:nat,mindmap:nat,xyChart:nat,
+quadrantChart:nat,sankey:nat,c4:nat,requirement:nat,block:nat,
+packet:nat,kanban:nat,architecture:nat,radar:nat,
+themeVariables:{background:bg,mainBkg:pal.surface,primaryColor:pal.surface,
+primaryTextColor:pal.text,lineColor:pal.line,primaryBorderColor:pal.border,
+nodeBorder:pal.border,clusterBorder:pal.border,edgeLabelBackground:bg,
+clusterBkg:'rgba(127,127,127,0.07)',titleColor:pal.text,
+darkMode:dark,rowOdd:bg,rowEven:'rgba(127,127,127,0.07)',
+attributeBackgroundColorOdd:bg,attributeBackgroundColorEven:'rgba(127,127,127,0.07)',
+fontSize:'16px',fontFamily:font},
+themeCSS:'.node rect, .node circle, .node polygon, .node path, .cluster rect { stroke-width: 2px; }'
+});
+items.forEach(function(it){
+var id='claude-mermaid-'+seq++;
+mermaid.render(id,it.src).then(function(r){
+if(gen!==renderGen)return;
+var prev=it.pre.previousElementSibling;
+if(prev&&prev.className==='mermaid-diagram'&&prev!==it.mount)return;
+it.mount.innerHTML=r.svg;
+if(!it.mount.parentNode)it.pre.parentNode.insertBefore(it.mount,it.pre);
+it.pre.style.display='none';
+},function(){
+var scratch=document.getElementById(id);
+if(scratch)scratch.parentNode.removeChild(scratch);
+scratch=document.getElementById('d'+id);
+if(scratch)scratch.parentNode.removeChild(scratch);
+if(gen!==renderGen)return;
+if(it.mount.parentNode)it.mount.parentNode.removeChild(it.mount);
+it.pre.style.display='';
+});
+});
+}
+render();
+if(mq&&mq.addEventListener)mq.addEventListener('change',render);
+if(typeof MutationObserver!=='undefined')new MutationObserver(render).observe(root,{attributes:true,attributeFilter:['data-theme']});
+})();</script>
+<!--claude-mermaid-runtime-end-->
+
+</body></html>
