@@ -1,0 +1,969 @@
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
+<title>Gas Pump Patterns</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Source+Sans+3:ital,wght@0,400;0,600;1,400&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: one 70ch reading column. Code and diagrams may widen to 96ch. Amber marks the dispenser, blue marks the station, as in the app. */
+:root{
+  --bg:#f6f3ec; --fg:#201e1a; --muted:#6a635a; --rule:#d9d2c5; --panel:#fffdf8;
+  --amber:#b4660a; --amber-soft:#f9e7cd; --blue:#2a5c9b; --blue-soft:#dbe6f5;
+  --code-bg:#1c1e23; --code-fg:#e6e3dc; --kw:#f0a53c; --str:#9ed58b; --cmt:#8d939e; --type:#80c4ee;
+  --display:"Barlow Condensed","Arial Narrow",Arial,sans-serif;
+  --body:"Source Sans 3",system-ui,-apple-system,Segoe UI,sans-serif;
+  --mono:"IBM Plex Mono",Consolas,"Courier New",monospace;
+}
+@media (prefers-color-scheme: dark){ :root:not([data-theme="light"]){
+  --bg:#14161a; --fg:#e8e4db; --muted:#a69e90; --rule:#2c3038; --panel:#1b1e24;
+  --amber:#e8a24a; --amber-soft:#35260f; --blue:#82b1e6; --blue-soft:#162638;
+  --code-bg:#0e1013; --code-fg:#e6e3dc; color-scheme:dark } }
+:root[data-theme="dark"]{
+  --bg:#14161a; --fg:#e8e4db; --muted:#a69e90; --rule:#2c3038; --panel:#1b1e24;
+  --amber:#e8a24a; --amber-soft:#35260f; --blue:#82b1e6; --blue-soft:#162638;
+  --code-bg:#0e1013; --code-fg:#e6e3dc; color-scheme:dark }
+
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:0 4rem}
+main{max-width:70ch;margin:0 auto}
+.wide{max-width:96ch;margin-left:auto;margin-right:auto}
+h1,h2,h3{font-family:var(--display);text-wrap:balance;line-height:1.05;margin:0}
+h1{font-size:clamp(2.6rem,7vw,4.2rem);font-weight:700;letter-spacing:-.01em}
+h2{font-size:2rem;font-weight:600;margin-top:3.2rem;padding-top:1.2rem;border-top:3px solid var(--rule)}
+h3{font-size:1.35rem;font-weight:600;margin-top:1.8rem}
+p{margin:.9rem 0}
+.eyebrow{font-family:var(--mono);font-size:.78rem;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+header{padding-block:3rem 1.5rem}
+header p.lede{font-size:1.2rem;color:var(--muted);max-width:60ch}
+.tag{display:inline-block;font-family:var(--mono);font-size:.72rem;letter-spacing:.06em;text-transform:uppercase;padding:.15rem .5rem;border-radius:3px;margin-right:.4rem}
+.tag.d{background:var(--amber-soft);color:var(--amber)}
+.tag.s{background:var(--blue-soft);color:var(--blue)}
+.tag.b{background:var(--rule);color:var(--fg)}
+.where{font-family:var(--mono);font-size:.85rem;color:var(--muted);margin:.2rem 0 1rem}
+pre.code{background:var(--code-bg);color:var(--code-fg);font-family:var(--mono);font-size:.84rem;line-height:1.5;
+  padding:1rem 1.1rem;border-radius:6px;overflow-x:auto;margin:1rem 0;tab-size:4}
+pre.code code{font-family:inherit}
+.kw{color:var(--kw)} .str{color:var(--str)} .cmt{color:var(--cmt);font-style:italic} .ty{color:var(--type)}
+figure{margin:1.4rem 0}
+figure pre.mermaid{background:var(--panel);border:1px solid var(--rule);border-radius:6px;padding:1rem;overflow-x:auto}
+figcaption{font-size:.9rem;color:var(--muted);margin-top:.5rem}
+table{border-collapse:collapse;width:100%;font-size:.93rem;margin:1rem 0}
+th,td{text-align:left;padding:.5rem .6rem;border-bottom:1px solid var(--rule);vertical-align:top}
+th{font-family:var(--display);font-size:1.05rem;font-weight:600}
+td code,p code,li code{font-family:var(--mono);font-size:.85em;background:var(--panel);border:1px solid var(--rule);padding:0 .3em;border-radius:3px}
+.scroll{overflow-x:auto}
+aside.rule{border-left:4px solid var(--amber);background:var(--panel);padding:.8rem 1rem;margin:1.2rem 0;border-radius:0 6px 6px 0}
+aside.rule.s{border-left-color:var(--blue)}
+aside.rule.n{border-left-color:var(--green)}
+aside.rule p{margin:.3rem 0}
+ol,ul{padding-left:1.3rem} li{margin:.3rem 0}
+a{color:var(--blue)} a:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
+nav.toc{font-size:.95rem;columns:2;column-gap:2rem;margin:1.5rem 0}
+nav.toc a{text-decoration:none;display:block;padding:.15rem 0}
+@media (max-width:520px){nav.toc{columns:1} body{font-size:16px}}
+@media (prefers-reduced-motion: reduce){*{scroll-behavior:auto}}
+</style>
+
+<main>
+<header>
+  <div class="eyebrow">MMP.GasPumpSimulator · article 1 of 2 · 2026-11-01</div>
+  <h1>The patterns inside a pay-at-pump dispenser</h1>
+  <p class="lede">A fuel dispenser has to move money and fuel at the same time, over links that fail. Here are the patterns the simulator uses to keep the two in step, with the code behind each one and a picture of where it sits.</p>
+  <p><span class="tag d">Dispenser</span><span class="tag s">Station</span><span class="tag b">Both</span> Each pattern carries a tag for the side of the wire it lives on.</p>
+</header>
+
+<nav class="toc" aria-label="Sections">
+  <a href="#map">1. The map</a>
+  <a href="#strategy">2. Strategy: three ways to run a worker</a>
+  <a href="#actor">3. Actors and mailboxes</a>
+  <a href="#fsm">4. State machine that returns commands</a>
+  <a href="#saga">5. The sale as a saga, and what a saga is</a>
+  <a href="#wal">6. Write-ahead compensation log</a>
+  <a href="#idem">7. Idempotent receiver and tombstone</a>
+  <a href="#values">8. Value objects in whole units</a>
+  <a href="#ports">9. One port, two adapters</a>
+  <a href="#recovery">10. Journal and a pure recovery table</a>
+  <a href="#observer">11. Observer with replay</a>
+  <a href="#derive">12. Derive, don't store</a>
+  <a href="#authority">13. Decide at the authoritative boundary</a>
+  <a href="#table">14. The table</a>
+</nav>
+
+<h2 id="map">1. The map</h2>
+<p>Two processes talk over one TCP socket on the loopback.</p>
+<ul>
+  <li><strong>The station</strong> owns the sale and the money. A bank simulator sits behind it.</li>
+  <li><strong>The dispenser</strong> owns:
+    <ul>
+      <li>the valve,</li>
+      <li>the meter,</li>
+      <li>the limits.</li>
+    </ul>
+  </li>
+</ul>
+<p>Every box below is a worker. Each one handles a single message at a time. Think of a worker as a clerk with one in-tray.</p>
+<figure class="wide">
+<pre class="mermaid">
+flowchart LR
+  subgraph Station["GasPump.Host.exe (station)"]
+    SW[sale worker: SaleStateMachine]
+    PW[payment worker: PaymentGateway]
+    J[(state.json journal)]
+    SC[(station-copy chain)]
+  end
+  subgraph Bank["bank simulator"]
+    NW[NetworkSimulator] --> IS[IssuerSimulator]
+  end
+  subgraph Dispenser["GasPump.Dispenser.exe (island)"]
+    PK[pump worker: Dispenser.Handle]
+    TK((ticker 100 ms))
+    AU[PumpAuthority + HardLimits]
+    DC[(dispenser-custody chain)]
+  end
+  SW -- PaymentMessage --> PW
+  PW -- SaleEvent --> SW
+  PW --> NW
+  SW -- "PumpMessage over TCP" --> PK
+  PK -- "SaleEvent, view, custody line" --> SW
+  TK --> PK
+  PK --> AU
+  PK --> DC
+  SW --> J
+  SW --> SC
+</pre>
+<figcaption>The tick stays on the dispenser side of the wire. The dispenser has its own clock, its own limits, and its own records.</figcaption>
+</figure>
+
+<h2 id="strategy">2. Strategy: three ways to run a worker</h2>
+<p><span class="tag b">Both</span><strong>Pattern.</strong> Strategy. One interface, three interchangeable ways to do the same job. Think of three drivers who can all take you to the same address.</p>
+<p class="where">src/GasPump.Dispatch/IDispatchStrategy.cs · ThreadedDispatch.cs · ChannelDispatch.cs · AsyncProxyDispatch.cs</p>
+<aside class="rule n"><p><strong>The pattern, in general.</strong></p>
+<p>Strategy is a family of ways to do one job, each behind the same interface, so the caller picks one at runtime and the rest of the code never knows which. It solves one problem: a decision that would otherwise be an <code>if</code> inside every method that needs it. Three roles:</p>
+<ul>
+  <li>the <strong>context</strong>, the code that needs the job done (here, <code>Simulation</code>);</li>
+  <li>the <strong>strategy interface</strong>, the one shape every way must fit (<code>IDispatchStrategy</code>);</li>
+  <li>the <strong>concrete strategies</strong>, one class per way (threads, channels, AsyncProxy).</li>
+</ul>
+<p>The test for a good strategy seam: you can add a fourth way without opening the context.</p>
+</aside>
+<p>Three designs can run the workers:</p>
+<ol>
+  <li>one thread per worker,</li>
+  <li>a Task and a Channel per worker,</li>
+  <li>a hand-built state machine on MMP.AsyncProxy.</li>
+</ol>
+<p>They differ in three ways:</p>
+<ul>
+  <li>how workers run,</li>
+  <li>how mailboxes block,</li>
+  <li>how time arrives.</li>
+</ul>
+<p>Everything above the interface is the same code in all three. The test suite runs the whole sale under each strategy with a fake clock.</p>
+<pre class="code"><code>public interface IDispatchStrategy : IDisposable
+{
+    string Name { get; }
+    bool PrefersBlockingIo { get; }
+
+    IMailbox&lt;T&gt; CreateMailbox&lt;T&gt;(string name, int capacity);
+
+    // Starts a worker that drains the mailbox through the handler until disposed.
+    IWorkerHandle StartWorker&lt;T&gt;(string name, IMailbox&lt;T&gt; inbox, Action&lt;T&gt; handle);
+
+    // A repeating clock that posts a message each period. Disposing stops it.
+    IDisposable StartTicker&lt;T&gt;(string name, TimeSpan period, IMailbox&lt;T&gt; target, Func&lt;T&gt; make);
+
+    // A one-shot clock that posts a message once.
+    IDisposable StartTimer&lt;T&gt;(string name, TimeSpan due, IMailbox&lt;T&gt; target, Func&lt;T&gt; make);
+
+    // True when every mailbox is empty and no handler is mid-message.
+    bool IsIdle { get; }
+}</code></pre>
+<figure>
+<pre class="mermaid">
+classDiagram
+  class IDispatchStrategy {
+    +CreateMailbox(name, capacity)
+    +StartWorker(name, inbox, handle)
+    +StartTicker(name, period, target, make)
+    +StartTimer(name, due, target, make)
+    +IsIdle
+  }
+  class ThreadedDispatch { one OS thread per worker, BlockingCollection }
+  class ChannelDispatch { one Task per worker, Channel of T }
+  class AsyncProxyDispatch { iterator state machine, promise per message }
+  IDispatchStrategy &lt;|.. ThreadedDispatch
+  IDispatchStrategy &lt;|.. ChannelDispatch
+  IDispatchStrategy &lt;|.. AsyncProxyDispatch
+  class Simulation { uses one strategy for all workers }
+  Simulation --> IDispatchStrategy
+</pre>
+<figcaption>The host picks one with <code>--strategy threaded|channel|asyncproxy</code>. The threaded form shows head-of-line blocking on a late bank call. The channel form does not.</figcaption>
+</figure>
+
+<h2 id="actor">3. Actors and mailboxes</h2>
+<p><span class="tag b">Both</span><strong>Pattern.</strong> Actor model. Each worker owns its state and reads one mailbox. Nothing shares memory.</p>
+<p class="where">src/GasPump.Dispatch/Dispenser.cs · Simulation.cs · Messages.cs</p>
+<aside class="rule n"><p><strong>The pattern, in general.</strong></p>
+<p>An actor is a unit of code that owns its own state and talks to the world only through messages in its own mailbox. It handles one message at a time, so its state never needs a lock. Three rules make something an actor:</p>
+<ul>
+  <li>no shared memory: another actor can send it a message and nothing else;</li>
+  <li>one message at a time, in arrival order;</li>
+  <li>a bounded mailbox, so a flood makes the sender wait or drop instead of filling memory.</li>
+</ul>
+<p>The payoff is that most thread problems (races, deadlocks, torn reads) cannot happen, because there is nothing two threads can touch at once.</p>
+</aside>
+<p>Three rules hold for every strategy. They're written on the interface, so a new strategy can't forget them.</p>
+<aside class="rule">
+<p>1. A worker handles one message at a time, on one logical thread. Handlers never run at the same time.</p>
+<p>2. Timers never run code. They post a message. The worker runs the code.</p>
+<p>3. Workers never share state. They pass messages.</p>
+</aside>
+<p>The pump worker has one entry point. A message goes in. Zero or more sale events come out. The worker posts those events to the sale worker. The same method serves the in-process pump and the pump in another process.</p>
+<pre class="code"><code>// Runs on the pump worker only. The sale id is the station's current sale,
+// which the pump needs only to address the events it sends back.
+public IReadOnlyList&lt;SaleEvent&gt; Handle(PumpMessage m, string saleId)
+{
+    var events = new List&lt;SaleEvent&gt;(2);
+    switch (m)
+    {
+        case PumpMessage.Arm arm:
+            var (ok, reason, armed) = Pump.Arm(arm.SaleId, arm.Token, arm.Grade);
+            if (ok) events.Add(new SaleEvent.PumpArmed(arm.SaleId, armed!.Ceiling, armed.MaxVolume));
+            else    events.Add(new SaleEvent.PumpRefused(arm.SaleId, reason));
+            break;
+
+        case PumpMessage.Lift:
+            if (Pump.LiftNozzle()) events.Add(new SaleEvent.NozzleLifted(saleId));
+            break;
+        // ... InsertSpout, Squeeze, Release, Hang, Tick, Stop, the forecourt faults
+    }
+    return events;
+}</code></pre>
+<p>Mailboxes are bounded. A full mailbox makes the sender wait, like a full in-tray at a clerk's desk. A pulse stream can't drop a count. So the producer takes the delay and the consumer keeps every pulse. The code marks this as the house gem <code>back-pressure-ring</code>.</p>
+<figure>
+<pre class="mermaid">
+sequenceDiagram
+  participant T as ticker (100 ms)
+  participant PB as pump mailbox
+  participant PK as pump worker
+  participant SB as sale mailbox
+  participant SW as sale worker
+  T->>PB: Tick(dt)
+  PB->>PK: Tick(dt)
+  PK->>PK: Pump.Tick: meter, price, limits
+  PK->>SB: Progress(volume, money, flow)
+  SB->>SW: Progress
+  SW->>SW: SaleStateMachine.Apply
+</pre>
+<figcaption>The ticker only posts a message. One worker owns the meter, so no lock surrounds it.</figcaption>
+</figure>
+
+<h2 id="fsm">4. State machine that returns commands</h2>
+<p><span class="tag s">Station</span><strong>Pattern.</strong> Table-driven state machine plus Command. The machine decides. The caller acts.</p>
+<p class="where">src/GasPump.Core/SaleStateMachine.cs · Sale.cs · src/GasPump.Dispatch/Simulation.cs (Execute)</p>
+<aside class="rule n"><p><strong>The pattern, in general.</strong></p>
+<p>A state machine is a fixed list of states and the events that move between them. A table-driven one keeps that list in one place (a <code>switch</code> over state and event) so every legal move is visible and every other move is refused by default. Command is the companion: the machine returns a list of small records that say what to do (<code>ArmPump</code>, <code>SendCompletion</code>) and someone else does it. Together they give you a core with no I/O, which means:</p>
+<ul>
+  <li>a test is a list of events in and a list of commands out;</li>
+  <li>the same core runs under any threading model, because it never touches a thread;</li>
+  <li>the illegal move is a logged no-op, never a crash.</li>
+</ul>
+</aside>
+<p>The sale machine touches none of these:</p>
+<ul>
+  <li>a thread,</li>
+  <li>a timer,</li>
+  <li>a socket,</li>
+  <li>a valve.</li>
+</ul>
+<p><code>Apply</code> takes one event. It returns the commands the outside world should run. A list of records and a fake clock are enough to test the whole machine.</p>
+<pre class="code"><code>public IReadOnlyList&lt;SaleCommand&gt; Apply(SaleEvent e)
+{
+    if (e.SaleId != SaleId)
+        return [new SaleCommand.Log(SaleId, $"dropped event for other sale {e.SaleId}")];
+
+    var commands = new List&lt;SaleCommand&gt;(4);
+
+    // Money events are legal in every state. They move Hold.
+    if (ApplyHoldEvent(e, commands)) return ClearIfRepaired(commands);
+
+    // Service reports are legal in every state.
+    if (e is SaleEvent.PumpService ps) return ApplyService(ps, commands);
+
+    switch (State, e)
+    {
+        case (SaleState.Idle, SaleEvent.CardPresented cp):
+            CardName = cp.CardName;
+            Tender = cp.Tender;
+            Source = cp.Source;
+            Hold = HoldStatus.Requested;
+            commands.Add(new SaleCommand.RequestAuthorization(SaleId, cp.CardName, Grade, cp.Tender));
+            return Transition(SaleState.Authorizing, commands, "card presented", timeout: _timeouts.Authorization);
+        // ... one case per (state, event) pair
+    }
+}</code></pre>
+<p>The commands are plain records. The simulation reads them and does the side effects. The two money cases follow an order:</p>
+<ol>
+  <li>Write to the compensation log, on the deciding thread.</li>
+  <li>Post to the payment worker.</li>
+</ol>
+<p>Section 6 covers why.</p>
+<pre class="code"><code>private void Execute(SaleCommand c)
+{
+    switch (c)
+    {
+        case SaleCommand.ArmPump ap:
+            _link.Post(new PumpMessage.Arm(ap.SaleId, ap.Token, ap.Grade), ap.SaleId);
+            break;
+        case SaleCommand.CloseValve cv:
+            _link.Post(new PumpMessage.Close(cv.SaleId, "sale closed"), cv.SaleId);
+            break;
+        case SaleCommand.SendCompletion sc:
+            Gateway.Intend(new PendingAdvice(sc.SaleId, PendingKind.Completion, sc.Final));
+            _paymentBox.Post(new PaymentMessage.Complete(sc.SaleId, sc.Final));
+            break;
+        case SaleCommand.Reverse rv:
+            Gateway.Intend(new PendingAdvice(rv.SaleId, PendingKind.Reversal, Money.Zero));
+            _paymentBox.Post(new PaymentMessage.Reverse(rv.SaleId));
+            break;
+        case SaleCommand.ArmTimer at:   /* start the one sale timer */ break;
+        case SaleCommand.CancelTimer:   /* stop it */ break;
+        case SaleCommand.Log lg:        Log.Write("sale", lg.Message); break;
+    }
+}</code></pre>
+<figure class="wide">
+<pre class="mermaid">
+stateDiagram-v2
+  [*] --> Idle
+  Idle --> Authorizing: CardPresented / CashPaid
+  Authorizing --> ReadyToPump: Approved, PumpArmed
+  Authorizing --> Declined: Declined / AuthorizationTimedOut
+  ReadyToPump --> Fueling: FlowStarted (first squeeze)
+  ReadyToPump --> Cancelled: Timeout 120 s, no lift
+  Fueling --> Completing: NozzleHung / CeilingReached
+  Completing --> Idle: CompletionSent
+  Completing --> StoreAndForward: CompletionQueued (bank down)
+  StoreAndForward --> Idle: Timeout 30 s
+  Authorizing --> Faulted: Fault
+  ReadyToPump --> Faulted: Fault
+  Fueling --> Faulted: Fault
+  Declined --> Idle: Timeout 30 s
+  Cancelled --> Idle: Timeout 30 s
+  Faulted --> Idle: Timeout 30 s, or part repaired
+</pre>
+<figcaption>Each state arms one timeout when entered and cancels it when left. A terminal state keeps the screen while the bank still owes an answer.</figcaption>
+</figure>
+
+<h2 id="saga">5. The sale as a saga, and what a saga is</h2>
+<p><span class="tag s">Station</span><strong>Pattern.</strong> Saga. Each step toward "fuel for money" has a step back. A hold is reversed. A completion is queued.</p>
+<p class="where">src/GasPump.Core/SaleStateMachine.cs (ApplyHoldEvent) · Sale.cs (HoldStatus)</p>
+<aside class="rule n"><p><strong>The pattern, in general.</strong></p>
+<p>A saga is a long-running piece of business that has to cross more than one system, where you cannot lock everything in one database transaction. Instead of one big all-or-nothing step, you break it into a chain of small local steps. Each step commits on its own. Each step also has a <strong>compensating step</strong>: an action that undoes its effect if a later step fails. If step 3 fails, you run the undo for step 2, then the undo for step 1, and the business ends up where it started. That is the whole idea.</p>
+<p>The parts of a saga:</p>
+<ul>
+  <li><strong>Steps</strong>, each one a local change in one system. Ours: ask the bank for a hold, arm the pump, dispense fuel, settle with the bank.</li>
+  <li><strong>Compensations</strong>, one per step, each written so running it twice is harmless. Ours: reverse the hold, disarm and close the valve, settle for the fuel that moved (fuel cannot come back), queue the settlement if the bank is unreachable.</li>
+  <li><strong>A coordinator</strong> that knows which step comes next and which undo to run when something fails. Ours is <code>SaleStateMachine</code>: it holds the sale in one place and returns the forward or backward command for each event. This is the <em>orchestration</em> style. The other style, <em>choreography</em>, has each system react to the last one's event with no coordinator; it is harder to read and harder to recover.</li>
+  <li><strong>A saga log</strong>, a record of how far the chain got, so a crash can resume or unwind. Ours is in three layers: <code>HoldStatus</code> says where the money is, the journal snapshots the sale every second, and the write-ahead compensation log records any undo or settlement before it is sent.</li>
+  <li><strong>Recovery direction.</strong> Backward recovery unwinds: no fuel moved, so give the hold back. Forward recovery pushes through: fuel moved, so the only correct ending is to settle for it. The recovery table picks the direction from what the log says.</li>
+</ul>
+<p>Why not one big transaction? The bank is another company on the far end of a network. You cannot hold a lock on their ledger while a driver pumps gas for three minutes. A saga accepts that the two sides will be out of step for a while, and makes every in-between state a named, visible one with a known way out. That is what the two columns in the sales book are: <code>State</code> is how far the pump got, <code>Hold</code> is how far the money got, and the gap between them is where the compensations live.</p>
+</aside>
+<figure>
+<pre class="mermaid">
+flowchart LR
+  subgraph FWD["Forward steps"]
+    direction LR
+    A["1. Hold<br/>bank sets aside $30"] --> B["2. Arm<br/>pump accepts the token"] --> C["3. Dispense<br/>fuel moves"] --> D["4. Settle<br/>bank keeps $5.95"]
+  end
+  subgraph UNDO["Compensations"]
+    direction LR
+    A2["Reverse the hold"] ~~~ B2["Disarm, close valve"] ~~~ C2["None. Settle for what moved."] ~~~ D2["Queue it, send later"]
+  end
+  A -. "fails or times out" .-> A2
+  B -. "pump refuses" .-> B2
+  C -. "fault mid-pour" .-> C2
+  D -. "bank unreachable" .-> D2
+</pre>
+<figcaption>Each forward step has its undo written beside it. Step 3 has none, because fuel does not go back in the tank; its "undo" is to finish forward and charge only for what moved.</figcaption>
+</figure>
+<p>The machine tracks two things apart:</p>
+<ul>
+  <li>where the money is (<code>Hold</code>),</li>
+  <li>where the pump is (<code>State</code>).</li>
+</ul>
+<p>The two drift apart when the bank link runs late. That gap is where every "I was charged and got no gas" story lives. Anyone who has stood at a pump wondering whether the card went through knows the feeling. So the driver gets told about the gap.</p>
+<pre class="code"><code>public enum HoldStatus
+{
+    None,            // No request has gone to the bank.
+    Requested,       // A hold was requested and no answer has come back yet.
+    Held,            // The bank holds the money. Fuel may flow.
+    Settled,         // The hold was settled to the real amount. The sale is paid.
+    Released,        // The hold was released in full. Nothing was charged.
+    SettlePending,   // Fuel moved, the link was lost, the settlement sits in a queue.
+    ReleasePending,  // No fuel moved, the link was lost, the release sits in a queue.
+}</code></pre>
+<p>The nasty case is a late approval. The pump has already told the driver "no". An approval that shows up now gets reversed. It is never armed. Picture a receipt that prints after you left the store: the clerk voids it.</p>
+<pre class="code"><code>// The saga's compensation table. Returns true when the event was a money event.
+private bool ApplyHoldEvent(SaleEvent e, List&lt;SaleCommand&gt; commands)
+{
+    switch (e)
+    {
+        case SaleEvent.Approved late when State != SaleState.Authorizing:
+            // Late approval after we gave up. The bank holds money for a sale we already ended. Give it back.
+            Hold = HoldStatus.Held;
+            commands.Add(new SaleCommand.Reverse(SaleId));
+            commands.Add(new SaleCommand.Log(SaleId, $"LATE approval {late.Ceiling} arrived in {State}; token discarded, hold reversed"));
+            return true;
+
+        case SaleEvent.ReversalQueued:
+            Hold = HoldStatus.ReleasePending;
+            commands.Add(new SaleCommand.Log(SaleId, "bank unreachable, release queued, will post when the link returns"));
+            return true;
+
+        case SaleEvent.CompletionQueued cq when State == SaleState.Completing:
+            Hold = HoldStatus.SettlePending;
+            Transition(SaleState.StoreAndForward, commands, $"host down, completion for {cq.Final} queued", timeout: _timeouts.Notice);
+            return true;
+        // ... Declined, Reversed, CompletionSent
+    }
+    return false;
+}</code></pre>
+<figure>
+<pre class="mermaid">
+sequenceDiagram
+  participant D as driver
+  participant S as sale machine
+  participant B as bank
+  D->>S: CardPresented
+  S->>B: PreAuthorize (hold $75)
+  Note over S: 30 s pass, no answer
+  S->>D: Declined, "bank silent"
+  B-->>S: Approved (late)
+  Note over S: State is Declined, so the token is discarded
+  S->>B: Reverse (compensation)
+  B-->>S: Reversed
+  S->>D: "Hold released"
+</pre>
+<figcaption>The forward step and the compensating step sit in the same table, so you can check them side by side.</figcaption>
+</figure>
+
+<h2 id="wal">6. Write-ahead compensation log</h2>
+<p><span class="tag s">Station</span><strong>Pattern.</strong> Write-ahead log, shaped like a transactional outbox. The intent reaches disk before the wire is tried.</p>
+<p class="where">src/GasPump.Payment/PaymentGateway.cs · src/GasPump.Dispatch/Simulation.cs</p>
+<aside class="rule n"><p><strong>The pattern, in general.</strong></p>
+<p>A write-ahead log records what you are about to do before you do it, on a surface that survives a crash. The transactional outbox is the same idea for messages: write the outgoing message into your own store in the same step as the decision, and let a separate sender deliver it later. The order is the whole pattern:</p>
+<ol>
+  <li>decide;</li>
+  <li>write the intent to disk;</li>
+  <li>only then try the wire;</li>
+  <li>on restart, read the log and finish anything still open.</li>
+</ol>
+<p>It trades one extra disk write per decision for the guarantee that a crash between "decided" and "sent" loses nothing.</p>
+</aside>
+<p>A reversal or a completion is money the station owes the bank. The decision used to live only in a message between two threads until the bank answered. A crash in that window lost it. Now the order is:</p>
+<ol>
+  <li>The gateway records the advice in its queue.</li>
+  <li>The queue raises an event.</li>
+  <li>The station writes the journal on that event.</li>
+  <li>Only then does anything go on the wire.</li>
+</ol>
+<pre class="code"><code>// Record what the bank is owed before anything is sent. A second call for the same sale and kind changes nothing.
+public void Intend(PendingAdvice advice)
+{
+    if (TenderOf(advice.SaleId) == Tender.Cash) return;   // cash settles at the till
+    if (Enqueue(advice)) PendingChanged?.Invoke();
+}
+
+// In Simulation's constructor:
+// The compensation log reaches disk the moment it changes.
+Gateway.PendingChanged += () =&gt; SaveJournal();</code></pre>
+<p>There's one send path. The payment worker drains the queue:</p>
+<ul>
+  <li>oldest first,</li>
+  <li>removing an advice only after the bank has it,</li>
+  <li>stopping at a failure and keeping the rest.</li>
+</ul>
+<pre class="code"><code>public async Task&lt;IReadOnlyList&lt;PendingAdvice&gt;&gt; DrainPendingAsync(CancellationToken ct)
+{
+    var sent = new List&lt;PendingAdvice&gt;();
+    while (true)
+    {
+        PendingAdvice next;
+        lock (_gate)
+        {
+            if (_pending.Count == 0) return sent;
+            next = _pending[0];
+        }
+        var result = next.Kind == PendingKind.Completion
+            ? await _network.SendAsync(() =&gt; { _issuer.Complete(next.SaleId, next.Final); return true; }, _options.HostTimeout, ct)
+            : await _network.SendAsync(() =&gt; { _issuer.Reverse(next.SaleId); return true; }, _options.HostTimeout, ct);
+        if (!result.Delivered) return sent;
+        lock (_gate) _pending.Remove(next);
+        sent.Add(next);
+        PendingChanged?.Invoke();
+    }
+}
+
+// One advice per sale and kind. A retry that fails again must never double the queue.
+private bool Enqueue(PendingAdvice advice)
+{
+    lock (_gate)
+    {
+        if (_pending.Any(p =&gt; p.SaleId == advice.SaleId &amp;&amp; p.Kind == advice.Kind)) return false;
+        _pending.Add(advice);
+        return true;
+    }
+}</code></pre>
+<figure>
+<pre class="mermaid">
+flowchart TD
+  A[sale machine returns Reverse] --> B[Execute: Gateway.Intend]
+  B --> C{new?}
+  C -- yes --> D[PendingChanged]
+  D --> E[(SaveJournal: state.json)]
+  C -- no --> F
+  E --> F[post Reverse to payment worker]
+  F --> G[DrainPendingAsync: oldest first]
+  G --> H{delivered?}
+  H -- yes --> I[remove, PendingChanged, journal]
+  H -- no --> J[keep the queue, tell the driver]
+  I --> G
+</pre>
+<figcaption>A crash between any two boxes leaves the intent on disk. The next start finds it and finishes it.</figcaption>
+</figure>
+
+<h2 id="idem">7. Idempotent receiver and tombstone</h2>
+<p><span class="tag b">Both</span><strong>Pattern.</strong> Idempotent receiver. The same message twice has the same effect as once. Plus a tombstone for the message that arrives before the one it undoes.</p>
+<p class="where">src/GasPump.Payment/Issuer.cs</p>
+<aside class="rule n"><p><strong>The pattern, in general.</strong></p>
+<p>An idempotent receiver gives the same result whether a message arrives once or five times. Networks retry, so any receiver that charges, ships, or counts on each arrival will double-count. The usual tool is a key on the message (a sale id, a request id) and a record of keys already handled. A tombstone covers the reverse race: the "undo" arrives before the "do". The receiver records that the undo happened, so when the original finally shows up it is refused instead of applied to nothing.</p>
+</aside>
+<p>Repeats from the drain above cost nothing. The bank side treats a second completion or reversal as the same one. Doing it twice changes nothing.</p>
+<pre class="code"><code>public void Complete(string saleId, Money final)
+{
+    lock (_gate)
+    {
+        if (!_holds.Remove(saleId, out var hold)) return;   // duplicate completion, idempotent
+        var acct = _accounts[hold.Pan];
+        var refund = hold.Amount - Money.Min(final, hold.Amount);
+        acct.Available += refund;
+    }
+}</code></pre>
+<p>On a slow network a reversal can outrun its own authorization (the bank's yes). The issuer remembers the void, like a tombstone. The late authorization then lands as a decline. It never becomes an orphan hold.</p>
+<pre class="code"><code>// Sale ids that were reversed before any hold arrived.
+private readonly HashSet&lt;string&gt; _voided = new();
+
+public void Reverse(string saleId)
+{
+    lock (_gate)
+    {
+        if (!_holds.Remove(saleId, out var hold))
+        {
+            _voided.Add(saleId);   // nothing to release yet; remember the void
+            return;
+        }
+        _accounts[hold.Pan].Available += hold.Amount;
+    }
+}
+
+public IssuerDecision Authorize(string saleId, CardData card, Money hold, DateTimeOffset now)
+{
+    lock (_gate)
+    {
+        if (_voided.Contains(saleId))
+            return IssuerDecision.Decline(DeclineReason.DoNotHonor, "sale already voided by the terminal");
+        // ...
+    }
+}</code></pre>
+
+<h2 id="values">8. Value objects in whole units</h2>
+<p><span class="tag b">Both</span><strong>Pattern.</strong> Value object. A small type that holds one measured thing in whole units:</p>
+<ul>
+  <li>Money is whole cents.</li>
+  <li>Volume is thousandths of a gallon.</li>
+  <li>There's no double anywhere in the money path.</li>
+</ul>
+<p class="where">src/GasPump.Core/Units.cs</p>
+<aside class="rule n"><p><strong>The pattern, in general.</strong></p>
+<p>A value object is a small immutable type defined by its value, not its identity: two <code>Money(350)</code> are the same money. It gives a unit a type so the compiler catches a dollar added to a gallon, and it holds the number in whole units (cents, thousandths of a gallon) so arithmetic never loses a fraction and rounding happens in one named place.</p>
+</aside>
+<pre class="code"><code>// Money is whole cents in a long, never a double.
+public readonly record struct Money(long Cents) : IComparable&lt;Money&gt;
+{
+    public static Money FromDollars(decimal dollars) =&gt; new((long)Math.Round(dollars * 100m, MidpointRounding.AwayFromZero));
+    public static Money operator +(Money a, Money b) =&gt; new(a.Cents + b.Cents);
+    public static Money Min(Money a, Money b) =&gt; a &lt;= b ? a : b;
+    public override string ToString() =&gt; $"${Cents / 100}.{Cents % 100:00}";
+}
+
+// Thousandths of a gallon. A pulser click is one of these.
+public readonly record struct Volume(long MilliGallons) : IComparable&lt;Volume&gt;
+{
+    public static Volume FromGallons(decimal gallons) =&gt; new((long)Math.Round(gallons * 1000m, MidpointRounding.AwayFromZero));
+    public decimal Gallons =&gt; MilliGallons / 1000m;
+}</code></pre>
+<p>Price is tenths of a cent per gallon. The conversion rounds half up with integer math. The ceiling check and the display use the same code, so the two can't disagree by a cent.</p>
+<pre class="code"><code>public Money CentsFor(Grade grade, Volume volume)
+{
+    // cents = mGal * tenthCents / gal / 10 / 1000, rounded half up.
+    long numerator = volume.MilliGallons * PriceOf(grade);
+    return new Money((numerator + 5_000) / 10_000);
+}</code></pre>
+
+<h2 id="ports">9. One port, two adapters</h2>
+<p><span class="tag b">Both</span><strong>Pattern.</strong> Ports and adapters. The station talks to a port, like a wall socket. Two plugs fit it:</p>
+<ul>
+  <li>a mailbox in the same process,</li>
+  <li>a socket to another process.</li>
+</ul>
+<p>The station code above the port is the same for both.</p>
+<p class="where">src/GasPump.Dispatch/DispenserLink.cs · Messages.cs · Sale.cs</p>
+<aside class="rule n"><p><strong>The pattern, in general.</strong></p>
+<p>Ports and adapters (also called hexagonal architecture) puts an interface, the port, between the core and anything outside it: a socket, a file, a clock, a bank. Each outside thing gets an adapter that fits the port. The core sees only ports, so it can be tested with a fake adapter and shipped with a real one, and a new outside thing is a new adapter, never a change to the core.</p>
+</aside>
+<pre class="code"><code>// The seam between the station and the pump.
+public interface IDispenserLink : IDisposable
+{
+    bool Connected { get; }
+    void Post(PumpMessage m, string saleId);
+    void PowerOff();                               // the station cuts the dispenser's power
+
+    event Action&lt;SaleEvent&gt;? Event;
+    event Action&lt;DispenserView&gt;? ViewChanged;
+    event Action&lt;bool&gt;? ConnectionChanged;
+    event Action&lt;LogLine&gt;? RemoteLog;              // never raised in-process, where the log is shared
+    event Action&lt;LedgerEntry&gt;? RemoteLedger;
+    IDisposable SubscribeCustody(Action&lt;string, string&gt; onLine);
+}</code></pre>
+<p>The same records serve as the contract between two mailboxes and between two processes. No translation step sits between them. The wire needs one extra thing: a type tag on the base record.</p>
+<pre class="code"><code>[JsonPolymorphic(TypeDiscriminatorPropertyName = "$m")]
+[JsonDerivedType(typeof(Arm), nameof(Arm))]
+[JsonDerivedType(typeof(Close), nameof(Close))]
+[JsonDerivedType(typeof(Squeeze), nameof(Squeeze))]
+// ... Lift, InsertSpout, WithdrawSpout, Release, Hang, Tick, Stop, the fault hooks
+public abstract record PumpMessage
+{
+    public sealed record Arm(string SaleId, string Token, Grade? Grade) : PumpMessage;
+    public sealed record Close(string SaleId, string Reason) : PumpMessage;
+    public sealed record Squeeze : PumpMessage;
+    // There is no SetCeiling message.
+}</code></pre>
+<figure>
+<pre class="mermaid">
+flowchart LR
+  S[Simulation] --> P[IDispenserLink]
+  P --> L[LocalDispenserLink: mailbox, same process]
+  P --> K[SocketDispenserLink: JSON lines over TCP]
+  L --> D1[Dispenser.Handle]
+  K -- "127.0.0.1:5178" --> DS[DispenserServer] --> D2[Dispenser.Handle]
+</pre>
+<figcaption>The in-process adapter runs the fake-clock tests. The socket adapter runs the real-clock tests over the loopback. Same handler on both ends.</figcaption>
+</figure>
+
+<h2 id="recovery">10. Journal and a pure recovery table</h2>
+<p><span class="tag s">Station</span><strong>Pattern.</strong> Memento for the state, then a pure decision function over it. The decision has no I/O, so the whole table is testable with records.</p>
+<p class="where">src/GasPump.Dispatch/Recovery.cs · JournalRecords.cs · StateJournal</p>
+<aside class="rule n"><p><strong>The pattern, in general.</strong></p>
+<p>Memento is a snapshot of an object's state that can be stored and later used to rebuild it. Paired with a pure decision function (state in, decision out, no I/O), it gives a recovery path you can test with records: write the snapshot on a timer, read it on restart, and let the function say what to do about what it finds. The function never touches a file or a network, so every branch of the recovery table is a one-line test.</p>
+</aside>
+<p>The station writes a snapshot every second and on every sale change. On restart:</p>
+<ol>
+  <li><code>RecoveryPlan.Build</code> reads the last snapshot and the clock.</li>
+  <li>It says what to do.</li>
+  <li>The simulation carries it out.</li>
+</ol>
+<p>The record also admits what it can't know. Fuel may have moved for up to one snapshot period after the last write.</p>
+<pre class="code"><code>public static RecoveryOutcome Build(JournalSnapshot? snapshot, DateTimeOffset now, TimeSpan snapshotPeriod)
+{
+    if (snapshot is null)
+        return new(RecoveryKind.CleanStart, "", null, /* ... */ "no journal found, first run");
+
+    var s = snapshot.Sale;
+    var state = Enum.Parse&lt;SaleState&gt;(s.State);
+    var hold  = Enum.TryParse&lt;HoldStatus&gt;(s.Hold, out var h) ? h : HoldStatus.None;
+    var flow  = new FlowRate(s.FlowMilliGallonsPerSecond);
+    // An E-stop writes its own final snapshot on the way down, so nothing flowed after it. A crash writes none.
+    var estop = snapshot.StopReason == "ESTOP";
+    var unrecorded = estop ? Volume.Zero : flow.Over(snapshotPeriod);
+
+    switch (state)
+    {
+        case SaleState.Fueling when volume &gt; Volume.Zero:
+            return new(RecoveryKind.ClosedOut, /* ... */ unrecorded,
+                $"closed for {volume} at {money}; delivery likely under-recorded by up to {unrecorded}");
+        case SaleState.Fueling:
+        case SaleState.Authorizing:
+        case SaleState.ReadyToPump:
+            return new(RecoveryKind.Reversed, /* ... */ "no fuel delivered; hold reversed");
+        case SaleState.Completing:
+            return new(RecoveryKind.CompletionResent, /* ... */ "completion sent again");
+        // The sale had ended but the bank still held the money: the compensation never left. Finish it.
+        case SaleState.Faulted or SaleState.Cancelled or SaleState.Declined
+             when hold is HoldStatus.Requested or HoldStatus.Held &amp;&amp; volume &gt; Volume.Zero:
+            return new(RecoveryKind.CompletionResent, /* ... */ "completion sent");
+        default:
+            return new(RecoveryKind.CleanStart, /* ... */ "nothing to close");
+    }
+}</code></pre>
+<figure>
+<pre class="mermaid">
+flowchart TD
+  R[restart] --> S{snapshot?}
+  S -- none --> C[CleanStart]
+  S -- yes --> ST{state at crash}
+  ST -- Fueling, fuel moved --> CO[ClosedOut: settle metered fuel, flag up to one period unrecorded]
+  ST -- Fueling with no fuel, Authorizing, ReadyToPump --> RV[Reversed: give the hold back]
+  ST -- Completing --> CR[CompletionResent: bank treats it as the same one]
+  ST -- ended, hold still Held --> F{fuel moved?}
+  F -- yes --> CR
+  F -- no --> RV
+  ST -- anything else --> C
+</pre>
+<figcaption>No resume. A restart closes the sale it finds and starts clean. That was a product decision, recorded in the PRD.</figcaption>
+</figure>
+
+<h2 id="observer">11. Observer with replay</h2>
+<p><span class="tag d">Dispenser</span><strong>Pattern.</strong> Observer, with a twist: a late subscriber first receives everything that already happened, under the same lock, so it holds the whole chain from the first line.</p>
+<p class="where">src/GasPump.Dispatch/CustodyStream.cs · src/GasPump.Security/EventLedger.cs</p>
+<aside class="rule n"><p><strong>The pattern, in general.</strong></p>
+<p>Observer lets any number of listeners subscribe to a source and be called when something happens, without the source knowing who they are. The weak spot is the late joiner: a listener that subscribes after some events have fired never sees them. Observer with replay fixes that by handing a new subscriber the history first, under the same lock that publishes new events, so no event can slip into the gap between "caught up" and "subscribed".</p>
+</aside>
+<pre class="code"><code>// Attach a subscriber and first hand it every complete line already in the file,
+// from the header on. Done under the lock so no line lands between the replay
+// and the subscription.
+public void SubscribeWithReplay(Action&lt;string&gt; onLine)
+{
+    lock (_gate)
+    {
+        if (File.Exists(Path))
+        {
+            using var fs = new FileStream(Path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+            using var reader = new StreamReader(fs, System.Text.Encoding.UTF8);
+            var text = reader.ReadToEnd();
+            var complete = text.LastIndexOf('\n');
+            if (complete &gt;= 0)
+                foreach (var line in text[..complete].Split('\n')) onLine(line.TrimEnd('\r'));
+            var replayedBytes = System.Text.Encoding.UTF8.GetByteCount(text[..(complete + 1)]);
+            if (replayedBytes &gt; _offset) { _offset = replayedBytes; _partial.Clear(); }
+        }
+        Line += onLine;
+    }
+}</code></pre>
+<p>The ledger uses the simple form. Every append raises one event. In that one handler, the dispenser server does two things:</p>
+<ul>
+  <li>forwards the entry over the wire,</li>
+  <li>saves its state.</li>
+</ul>
+<pre class="code"><code>public event Action&lt;LedgerEntry&gt;? Appended;
+
+public LedgerEntry Append(string kind, string detail)
+{
+    LedgerEntry entry;
+    lock (_gate)
+    {
+        var prev = _entries.Count == 0 ? Genesis : _entries[^1].Hash;
+        var seq = _entries.Count + 1;
+        var at = clock.GetUtcNow();
+        entry = new LedgerEntry(seq, at, kind, detail, prev, LedgerEntry.Compute(seq, at, kind, detail, prev));
+        _entries.Add(entry);
+    }
+    Appended?.Invoke(entry);   // outside the lock
+    return entry;
+}</code></pre>
+
+<h2 id="derive">12. Derive, don't store</h2>
+<p><span class="tag d">Dispenser</span><strong>Pattern.</strong> Derived state and a value-equal status record. The pump's service status is read from the part sensors every time. Nothing is stored, so a fixed part can never still read as broken.</p>
+<p class="where">src/GasPump.Pump/PumpController.cs · src/GasPump.Core/Diagnostics.cs</p>
+<aside class="rule n"><p><strong>The pattern, in general.</strong></p>
+<p>Derived state is a value you compute from the facts every time you need it, instead of storing a copy that has to be kept in sync. Stored copies drift: the sensor says fixed, the flag still says broken. If computing it is cheap, derive it. A value-equal record for the result (two statuses with the same parts compare equal) makes "did it change?" a plain comparison.</p>
+</aside>
+<pre class="code"><code>// The conditions holding this pump out of service, read from the part sensors now.
+public ServiceStatus Service =&gt; ServiceStatus.Of(Conditions());
+
+// One sensor per row. The order is fixed, so the first entry is the one an arm refusal names.
+private IEnumerable&lt;DiagnosticCode&gt; Conditions()
+{
+    if (hydraulics.BreakawaySeparated) yield return DiagnosticCodes.PumpHoseBreakaway;
+    if (!hydraulics.SupplyAvailable)   yield return DiagnosticCodes.PumpSupplyNoFlow;
+    if (meter.PulserDead)              yield return DiagnosticCodes.PumpMeterNoPulse;
+}</code></pre>
+<p>Two statuses with the same codes are equal. A view that carries one changes only when a part does. So the station emits one <code>PumpService</code> event per real change, and none for noise.</p>
+<pre class="code"><code>public sealed record ServiceStatus(IReadOnlyList&lt;string&gt; Codes)
+{
+    public static ServiceStatus Of(IEnumerable&lt;DiagnosticCode&gt; conditions) =&gt; new([.. conditions.Select(c =&gt; c.Code)]);
+    public bool InService =&gt; Codes.Count == 0;
+    public bool Equals(ServiceStatus? other) =&gt; other is not null &amp;&amp; Codes.SequenceEqual(other.Codes);
+}</code></pre>
+<p>Each diagnostic code carries what clears it. Two readers use the same table:</p>
+<ul>
+  <li>the driver's notice,</li>
+  <li>the ledger's refusal line.</li>
+</ul>
+<p>So they can't say two different things.</p>
+<pre class="code"><code>public enum ServiceAction { NextArm, AttendantReset, SupplyRestored, PulserRepaired, LinkRestored, CashierReset }
+
+public sealed record DiagnosticCode(string Code, string Part, string Meaning, ServiceAction ClearedBy)
+{
+    public bool OutOfService =&gt; ClearedBy != ServiceAction.NextArm;
+    public string Format(string detail) =&gt; $"[{Code}] {detail}";
+}
+
+public static readonly DiagnosticCode PumpHoseBreakaway = new("PUMP.HOSE.BREAKAWAY", "hose breakaway coupling",
+    "coupling separated, both halves sealed: drive-off or hose strike; attendant reset required",
+    ServiceAction.AttendantReset);</code></pre>
+
+<h2 id="authority">13. Decide at the authoritative boundary</h2>
+<p><span class="tag d">Dispenser</span><strong>Pattern.</strong> Verify, then clamp, where the context lives. The pump has its own:</p>
+<ul>
+  <li>limits,</li>
+  <li>clock,</li>
+  <li>nonce history (the list of numbers already used once).</li>
+</ul>
+<p>So the pump decides. The station proposes a ceiling and the pump gets the last word.</p>
+<p class="where">src/GasPump.Security/PumpAuthority.cs · HardLimits.cs</p>
+<aside class="rule n"><p><strong>The pattern, in general.</strong></p>
+<p>Decide at the authoritative boundary means the component that owns a resource makes the final call about it, and treats every incoming value as a proposal to check, not an order to obey. Upstream can be wrong, late, or hostile. The owner verifies what it can (a signature, a time window, a one-time number) and then clamps the request to limits it holds itself. Trust ends where ownership ends.</p>
+</aside>
+<pre class="code"><code>public (ArmedAuthorization? Armed, string Refusal) TryArm(string saleId, string tokenWire)
+{
+    var now = clock.GetUtcNow();
+    var (auth, failure) = verifier.Verify(tokenWire, now);
+    if (auth is null) { ledger.Append("arm.refused", $"{saleId} {failure}"); return (null, failure.ToString()); }
+
+    var ceiling   = Money.Min(auth.Ceiling, limits.MaxMoneyPerSale);
+    var maxVolume = Volume.Min(auth.MaxVolume, limits.MaxVolumePerSale);
+    var clamped   = ceiling != auth.Ceiling || maxVolume != auth.MaxVolume;
+
+    ledger.Append("arm.ok", $"{saleId} ceiling {ceiling} max {maxVolume} {(clamped ? "clamped" : "within limits")}");
+    return (new ArmedAuthorization(saleId, ceiling, maxVolume, duration, clamped, note), "");
+}</code></pre>
+<p>The second article takes this boundary apart in full. It covers:</p>
+<ul>
+  <li>the token,</li>
+  <li>the order of checks,</li>
+  <li>the hard limits,</li>
+  <li>what happens when the wire between the two deciders breaks.</li>
+</ul>
+
+<h2 id="table">14. The table</h2>
+<div class="scroll">
+<table>
+<thead><tr><th>Pattern</th><th>Where</th><th>What it buys</th></tr></thead>
+<tbody>
+<tr><td>Strategy</td><td><code>IDispatchStrategy</code>, three implementations</td><td>Same sale code under threads, channels, or a hand-built state machine</td></tr>
+<tr><td>Actor, bounded mailbox</td><td><code>Dispenser.Handle</code>, <code>Simulation</code> workers</td><td>No shared state, no lock around the meter, a pulse is never dropped</td></tr>
+<tr><td>State machine returning commands</td><td><code>SaleStateMachine.Apply</code>, <code>Simulation.Execute</code></td><td>The whole sale is testable with a list of records</td></tr>
+<tr><td>Saga</td><td><code>ApplyHoldEvent</code>, <code>HoldStatus</code></td><td>A late approval is reversed, never armed; the driver sees where the money is</td></tr>
+<tr><td>Write-ahead log, outbox shape</td><td><code>PaymentGateway.Intend</code>, <code>PendingChanged</code>, <code>DrainPendingAsync</code></td><td>A crash between decision and bank answer loses no reversal or completion</td></tr>
+<tr><td>Idempotent receiver, tombstone</td><td><code>IssuerSimulator.Complete</code>, <code>Reverse</code>, <code>_voided</code></td><td>Retries are free; a reversal that outruns its hold still wins</td></tr>
+<tr><td>Value object</td><td><code>Money</code>, <code>Volume</code>, <code>Pricing.CentsFor</code></td><td>No double in the money path; the display and the limit agree to the cent</td></tr>
+<tr><td>Ports and adapters</td><td><code>IDispenserLink</code>, local and socket</td><td>One process for tests, two for the demo, one handler</td></tr>
+<tr><td>Memento, pure decision table</td><td><code>StateJournal</code>, <code>RecoveryPlan.Build</code></td><td>Restart closes the open sale and says what it cannot know</td></tr>
+<tr><td>Observer with replay</td><td><code>CustodyStream.SubscribeWithReplay</code>, <code>EventLedger.Appended</code></td><td>A late station holds the whole chain</td></tr>
+<tr><td>Derived state, value-equal status</td><td><code>PumpController.Service</code>, <code>ServiceStatus</code></td><td>A repaired part is never still reported broken; one event per real change</td></tr>
+<tr><td>Decide at the authoritative boundary</td><td><code>PumpAuthority.TryArm</code>, <code>HardLimits</code></td><td>A signed 600-gallon token arms 50 gallons</td></tr>
+<tr><td>Decorator and pipeline seams</td><td><code>IPriceSchedule</code>, <code>IDeliveryStage</code> on <code>PumpController</code></td><td>A surcharge wraps the price board; a part downstream of the meter sees every slice. Added 2026-11-01 for the detergent article.</td></tr>
+</tbody>
+</table>
+</div>
+<p class="eyebrow">Source: E:\dev\MMP.GasPumpSimulator at commit ebbf956. 275 dotnet tests and 9 Playwright specs pass. Companions: Gas Pump Security and Audit, Adding Fuel Detergent, Receipts, Lines, and a Video Player.</p>
+</main>
+
+<script>
+(function(){
+  var re =/(\/\/[^\n]*)|(\$?"(?:[^"\\\n]|\\.)*")|\b(public|private|static|sealed|readonly|record|struct|class|interface|enum|abstract|override|event|async|await|return|new|var|if|else|switch|case|when|is|not|and|or|out|lock|using|foreach|while|true|false|null|void|bool|long|string|int|decimal|this|yield|default|throw|try|catch|in)\b|\b([A-Z][A-Za-z0-9]*)\b/g;
+  function esc(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+  document.querySelectorAll('pre.code code').forEach(function(el){
+    var src = el.textContent, out = '', last = 0, m;
+    re.lastIndex = 0;
+    while ((m = re.exec(src)) !== null) {
+      out += esc(src.slice(last, m.index));
+      if (m[1]) out += '<span class="cmt">'+esc(m[1])+'</span>';
+      else if (m[2]) out += '<span class="str">'+esc(m[2])+'</span>';
+      else if (m[3]) out += '<span class="kw">'+esc(m[3])+'</span>';
+      else out += '<span class="ty">'+esc(m[4])+'</span>';
+      last = re.lastIndex;
+    }
+    out += esc(src.slice(last));
+    el.innerHTML = out;
+  });
+})();
+</script>
+
+<!--claude-mermaid-runtime-begin:3477-->
+<style>.mermaid-diagram{margin-block:4px}.mermaid-diagram svg{display:block;margin:0 auto;max-width:100%;height:auto}</style>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11.16.1/dist/mermaid.min.js"></script>
+<script>(function(){
+var CFG={"palettes":{"light":{"surface":"#f4efe4","text":"#42392e","line":"#8a7f6d","border":"#7a6c52","bg":"#fffdf8"},"dark":{"surface":"#262b34","text":"#f2f3f5","line":"#a8adb8","border":"#9aa4b8","bg":"#1f232b"}}};
+if(typeof mermaid==='undefined')return;
+var pres=Array.prototype.slice.call(document.querySelectorAll('pre.mermaid')).filter(function(p){if(p.hasAttribute('data-claude-mermaid-claimed'))return false;p.setAttribute('data-claude-mermaid-claimed','1');return true;});
+if(!pres.length)return;
+var mq=window.matchMedia?window.matchMedia('(prefers-color-scheme: dark)'):null;
+var root=document.documentElement;
+var items=pres.map(function(pre){
+var mount=document.createElement('div');mount.className='mermaid-diagram';
+return {pre:pre,mount:mount,src:pre.textContent||''};
+});
+var seq=0;
+var renderGen=0;
+var lastKey='';
+function pageBg(fallback){
+var els=[document.body,document.documentElement];
+for(var i=0;i<els.length;i++){
+var c=els[i]&&getComputedStyle(els[i]).backgroundColor;
+if(c&&c!=='transparent'&&c!=='rgba(0, 0, 0, 0)')return c;
+}
+return fallback;
+}
+function render(){
+var theme=root.getAttribute('data-theme');
+var dark=theme==='dark'||(!!(mq&&mq.matches)&&theme!=='light');
+var pal=dark?CFG.palettes.dark:CFG.palettes.light;
+var bg=pageBg(pal.bg);
+var key=(dark?'d':'l')+'|'+bg;
+if(key===lastKey)return;
+lastKey=key;
+var gen=++renderGen;
+var font=getComputedStyle(document.body).fontFamily||'sans-serif';
+var nat={useMaxWidth:false};
+mermaid.initialize({
+startOnLoad:false,securityLevel:'strict',theme:'base',
+flowchart:nat,sequence:nat,er:nat,state:nat,class:nat,pie:nat,
+gantt:nat,journey:nat,timeline:nat,gitGraph:nat,mindmap:nat,xyChart:nat,
+quadrantChart:nat,sankey:nat,c4:nat,requirement:nat,block:nat,
+packet:nat,kanban:nat,architecture:nat,radar:nat,
+themeVariables:{background:bg,mainBkg:pal.surface,primaryColor:pal.surface,
+primaryTextColor:pal.text,lineColor:pal.line,primaryBorderColor:pal.border,
+nodeBorder:pal.border,clusterBorder:pal.border,edgeLabelBackground:bg,
+clusterBkg:'rgba(127,127,127,0.07)',titleColor:pal.text,
+darkMode:dark,rowOdd:bg,rowEven:'rgba(127,127,127,0.07)',
+attributeBackgroundColorOdd:bg,attributeBackgroundColorEven:'rgba(127,127,127,0.07)',
+fontSize:'16px',fontFamily:font},
+themeCSS:'.node rect, .node circle, .node polygon, .node path, .cluster rect { stroke-width: 2px; }'
+});
+items.forEach(function(it){
+var id='claude-mermaid-'+seq++;
+mermaid.render(id,it.src).then(function(r){
+if(gen!==renderGen)return;
+var prev=it.pre.previousElementSibling;
+if(prev&&prev.className==='mermaid-diagram'&&prev!==it.mount)return;
+it.mount.innerHTML=r.svg;
+if(!it.mount.parentNode)it.pre.parentNode.insertBefore(it.mount,it.pre);
+it.pre.style.display='none';
+},function(){
+var scratch=document.getElementById(id);
+if(scratch)scratch.parentNode.removeChild(scratch);
+scratch=document.getElementById('d'+id);
+if(scratch)scratch.parentNode.removeChild(scratch);
+if(gen!==renderGen)return;
+if(it.mount.parentNode)it.mount.parentNode.removeChild(it.mount);
+it.pre.style.display='';
+});
+});
+}
+render();
+if(mq&&mq.addEventListener)mq.addEventListener('change',render);
+if(typeof MutationObserver!=='undefined')new MutationObserver(render).observe(root,{attributes:true,attributeFilter:['data-theme']});
+})();</script>
+<!--claude-mermaid-runtime-end-->
+
+</body></html>

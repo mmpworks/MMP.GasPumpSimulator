@@ -1,0 +1,841 @@
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
+<title>Adding Fuel Detergent</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Source+Sans+3:ital,wght@0,400;0,600;1,400&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: one 70ch reading column. Code and diagrams may widen to 96ch. Amber marks the dispenser, blue marks the station, green marks the hypothetical part. */
+:root{
+  --bg:#f6f3ec; --fg:#201e1a; --muted:#6a635a; --rule:#d9d2c5; --panel:#fffdf8;
+  --amber:#b4660a; --amber-soft:#f9e7cd; --blue:#2a5c9b; --blue-soft:#dbe6f5; --green:#2f7a4a; --green-soft:#dcefe1; --red:#a8322a; --red-soft:#f6ddd9;
+  --code-bg:#1c1e23; --code-fg:#e6e3dc; --kw:#f0a53c; --str:#9ed58b; --cmt:#8d939e; --type:#80c4ee;
+  --display:"Barlow Condensed","Arial Narrow",Arial,sans-serif;
+  --body:"Source Sans 3",system-ui,-apple-system,Segoe UI,sans-serif;
+  --mono:"IBM Plex Mono",Consolas,"Courier New",monospace;
+}
+@media (prefers-color-scheme: dark){ :root:not([data-theme="light"]){
+  --bg:#14161a; --fg:#e8e4db; --muted:#a69e90; --rule:#2c3038; --panel:#1b1e24;
+  --amber:#e8a24a; --amber-soft:#35260f; --blue:#82b1e6; --blue-soft:#162638; --green:#7fc79a; --green-soft:#14301d; --red:#e07a70; --red-soft:#3a1c19;
+  --code-bg:#0e1013; --code-fg:#e6e3dc; color-scheme:dark } }
+:root[data-theme="dark"]{
+  --bg:#14161a; --fg:#e8e4db; --muted:#a69e90; --rule:#2c3038; --panel:#1b1e24;
+  --amber:#e8a24a; --amber-soft:#35260f; --blue:#82b1e6; --blue-soft:#162638; --green:#7fc79a; --green-soft:#14301d; --red:#e07a70; --red-soft:#3a1c19;
+  --code-bg:#0e1013; --code-fg:#e6e3dc; color-scheme:dark }
+
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:0 4rem}
+main{max-width:70ch;margin:0 auto}
+.wide{max-width:96ch;margin-left:auto;margin-right:auto}
+h1,h2,h3{font-family:var(--display);text-wrap:balance;line-height:1.05;margin:0}
+h1{font-size:clamp(2.6rem,7vw,4.2rem);font-weight:700;letter-spacing:-.01em}
+h2{font-size:2rem;font-weight:600;margin-top:3.2rem;padding-top:1.2rem;border-top:3px solid var(--rule)}
+h3{font-size:1.35rem;font-weight:600;margin-top:1.8rem}
+p{margin:.9rem 0}
+.eyebrow{font-family:var(--mono);font-size:.78rem;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+header{padding-block:3rem 1.5rem}
+header p.lede{font-size:1.2rem;color:var(--muted);max-width:60ch}
+.tag{display:inline-block;font-family:var(--mono);font-size:.72rem;letter-spacing:.06em;text-transform:uppercase;padding:.15rem .5rem;border-radius:3px;margin-right:.4rem}
+.tag.d{background:var(--amber-soft);color:var(--amber)}
+.tag.s{background:var(--blue-soft);color:var(--blue)}
+.tag.n{background:var(--green-soft);color:var(--green)}
+.tag.r{background:var(--red-soft);color:var(--red)}
+.tag.b{background:var(--rule);color:var(--fg)}
+.where{font-family:var(--mono);font-size:.85rem;color:var(--muted);margin:.2rem 0 1rem}
+pre.code{background:var(--code-bg);color:var(--code-fg);font-family:var(--mono);font-size:.84rem;line-height:1.5;
+  padding:1rem 1.1rem;border-radius:6px;overflow-x:auto;margin:1rem 0;tab-size:4}
+pre.code code{font-family:inherit}
+pre.code.sketch{border-left:4px solid var(--green)}
+.kw{color:var(--kw)} .str{color:var(--str)} .cmt{color:var(--cmt);font-style:italic} .ty{color:var(--type)}
+figure{margin:1.4rem 0}
+figure pre.mermaid{background:var(--panel);border:1px solid var(--rule);border-radius:6px;padding:1rem;overflow-x:auto}
+figcaption{font-size:.9rem;color:var(--muted);margin-top:.5rem}
+table{border-collapse:collapse;width:100%;font-size:.93rem;margin:1rem 0}
+th,td{text-align:left;padding:.5rem .6rem;border-bottom:1px solid var(--rule);vertical-align:top}
+th{font-family:var(--display);font-size:1.05rem;font-weight:600}
+td code,p code,li code{font-family:var(--mono);font-size:.85em;background:var(--panel);border:1px solid var(--rule);padding:0 .3em;border-radius:3px}
+.scroll{overflow-x:auto}
+aside.rule{border-left:4px solid var(--amber);background:var(--panel);padding:.8rem 1rem;margin:1.2rem 0;border-radius:0 6px 6px 0}
+aside.rule.r{border-left-color:var(--red)}
+aside.rule.n{border-left-color:var(--green)}
+aside.rule p{margin:.3rem 0}
+ol,ul{padding-left:1.3rem} li{margin:.3rem 0}
+a{color:var(--blue)} a:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
+nav.toc{font-size:.95rem;columns:2;column-gap:2rem;margin:1.5rem 0}
+nav.toc a{text-decoration:none;display:block;padding:.15rem 0}
+.ok{color:var(--green);font-weight:600} .edit{color:var(--amber);font-weight:600} .new{color:var(--blue);font-weight:600}
+@media (max-width:520px){nav.toc{columns:1} body{font-size:16px}}
+</style>
+
+<main>
+<header>
+  <div class="eyebrow">MMP.GasPumpSimulator · article 3 · 2026-11-01</div>
+  <h1>Adding fuel detergent without touching the pump</h1>
+  <p class="lede">A thought experiment, with real code. Say a station wants to sell a detergent additive at the hose. The driver opts in. An injector doses it in step with the fuel. The sale bills one flat fee for it. We'll walk that request through the simulator. We'll see where the design already made it a bolt-on, and the two spots that needed a fix first.</p>
+  <p><span class="tag n">Hypothetical</span> code in green-edged blocks is a sketch and lives nowhere in the repo. <span class="tag d">Dispenser</span><span class="tag s">Station</span> mark the real code.</p>
+</header>
+
+<nav class="toc" aria-label="Sections">
+  <a href="#ask">1. The ask</a>
+  <a href="#before">2. What the code looked like this morning</a>
+  <a href="#seams">3. The two seams, and the proof</a>
+  <a href="#build">4. The build, as a sketch</a>
+  <a href="#touched">5. What changes and what stays put</a>
+  <a href="#solid">6. SOLID, line by line</a>
+  <a href="#cupid">7. CUPID, line by line</a>
+  <a href="#left">8. What still needs a registration, and why</a>
+  <a href="#money">9. How the money flow changes</a>
+</nav>
+
+<h2 id="ask">1. The ask</h2>
+<p>The detergent shares the hose with the fuel. A sale goes like this:</p>
+<ol>
+  <li>The driver picks the detergent before the first squeeze.</li>
+  <li>Fuel runs alone for the first three seconds.</li>
+  <li>A valve flips. 16 fl oz of additive goes down the hose.</li>
+  <li>The valve flips back. 16 fl oz of fuel follows.</li>
+  <li>The two keep taking turns until the configured amount of additive is out.</li>
+</ol>
+<p>Three money rules go with it:</p>
+<ul>
+  <li>The fuel meter counts only while fuel flows.</li>
+  <li>The station charges one flat fee for the additive, $1.50 in this example, whatever the fuel volume.</li>
+  <li>The fee is owed in full once the additive has started, even if the sale faults before it finishes.</li>
+</ul>
+<p>If the additive tank runs dry, the pump should refuse to sell the option. It should say why, with a code an auditor can read.</p>
+<p>That boils down to eight requirements:</p>
+<ol>
+  <li>A choice the driver makes at the pump, locked once fuel has moved.</li>
+  <li>A three-second lead of fuel before the first additive slug.</li>
+  <li>Alternating slugs: 16 oz additive, 16 oz fuel, until the configured total (in ounces) is delivered.</li>
+  <li>The fuel meter and the totalizer stand still while additive moves. Only fuel is metered.</li>
+  <li>Every valve switch, each way, is in the ledger and the custody chain.</li>
+  <li>A flat fee on the sale. It is owed in full from the first additive slug. The sale still lands on the cent under the ceiling.</li>
+  <li>An out-of-service condition with its own diagnostic code when the additive is out.</li>
+  <li>A record of each dose in the ledger.</li>
+</ol>
+<figure class="wide">
+<pre class="mermaid">
+gantt
+  title One sale, 32 oz of additive, time left to right
+  dateFormat ss
+  axisFormat %S s
+  section hose
+  fuel, metered           :a1, 00, 3s
+  additive 16 oz, unmetered :crit, a2, after a1, 1s
+  fuel 16 oz, metered     :a3, after a2, 1s
+  additive 16 oz, unmetered :crit, a4, after a3, 1s
+  fuel to the ceiling, metered :a5, after a4, 6s
+</pre>
+<figcaption>Red slugs are additive. The fuel meter runs only in the grey ones. Each boundary is a <code>hose.switch</code> ledger entry.</figcaption>
+</figure>
+<p>The test of the design: which classes have to change to meet those eight requirements, and which shouldn't. The money path and the security path should stay put. Six classes have no business knowing what detergent is:</p>
+<ul>
+  <li>the sale machine,</li>
+  <li>the payment gateway,</li>
+  <li>the authority,</li>
+  <li>the meter,</li>
+  <li>the totalizer,</li>
+  <li>the ledger.</li>
+</ul>
+
+<h2 id="before">2. What the code looked like this morning</h2>
+<p><span class="tag r">Gap</span>Two places would have forced an edit to a lower-level class.</p>
+<h3>Gap 1: the controller priced with a concrete record</h3>
+<p>The pump controller took <code>Pricing</code>, a sealed record keyed by grade. A fee changes the answer to "how much is this sale?" There were two ways in:</p>
+<ul>
+  <li>edit <code>Pricing</code>,</li>
+  <li>edit the two lines in the tick that call it.</li>
+</ul>
+<p>Both sit on the money path.</p>
+<pre class="code"><code>// Before. PumpController's constructor.
+public sealed class PumpController(
+    PumpAuthority authority,
+    Hydraulics hydraulics,
+    Meter meter,
+    Totalizer totalizer,
+    EventLedger ledger,
+    Pricing pricing,          // a concrete type, so nothing can wrap it to add a fee
+    TaperPolicy taper,
+    TimeProvider clock)</code></pre>
+<h3>Gap 2: nothing could see a metered slice, and nothing could take the hose</h3>
+<p>The tick counted fuel into the meter and the totalizer, then priced it. Three things blocked a bolt-on part:</p>
+<ul>
+  <li>Nothing came after the totalizer, so an injector had nowhere to listen.</li>
+  <li>A part couldn't say "this slice is mine, shut the fuel valve and count nothing." That made alternating slugs impossible without editing the tick.</li>
+  <li>The out-of-service sensor list was hard-coded to three rows. The restore table in the dispenser repeated the same three by name.</li>
+</ul>
+<pre class="code"><code>// Before. The end of PumpController.Tick.
+totalizer.Add(delivered);
+Money = pricing.CentsFor(grade, Volume);
+
+// Before. The three sensors are the only conditions.
+private IEnumerable&lt;DiagnosticCode&gt; Conditions()
+{
+    if (hydraulics.BreakawaySeparated) yield return DiagnosticCodes.PumpHoseBreakaway;
+    if (!hydraulics.SupplyAvailable)   yield return DiagnosticCodes.PumpSupplyNoFlow;
+    if (meter.PulserDead)              yield return DiagnosticCodes.PumpMeterNoPulse;
+}</code></pre>
+<aside class="rule r">
+<p><strong>So no, the design wasn't ready as it stood.</strong> Most of it held up. These were all open to this change:</p>
+<ul>
+  <li>messages,</li>
+  <li>events,</li>
+  <li>the ledger,</li>
+  <li>the diagnostics table,</li>
+  <li>the sale machine.</li>
+</ul>
+<p>Two seams were missing, both in the class that owns the valve. The second picked up a third method once the slug mechanics showed up. We added both today, in commits <code>708bac5</code> and <code>ebbf956</code>, with nothing built on them yet.</p>
+</aside>
+
+<h2 id="seams">3. The two seams, and the proof</h2>
+<p><span class="tag d">Dispenser</span>Both seams are small. Together they cost:</p>
+<ul>
+  <li>about thirty lines in the controller, across the two commits,</li>
+  <li>one new interface file,</li>
+  <li>one interface added to the units file.</li>
+</ul>
+<p class="where">src/GasPump.Core/Units.cs · src/GasPump.Pump/DeliveryStage.cs · src/GasPump.Pump/PumpController.cs · src/GasPump.Dispatch/Dispenser.cs</p>
+<h3>Seam 1: the price schedule is an interface</h3>
+<p>Think of a sticker laid over the price board. The pump reads the board the same way as before. The sticker adds the fee.</p>
+<pre class="code"><code>// The pump calls this to price each slice of fuel. The posted price board is one
+// schedule. A wrapper that adds a fee or a discount is another, and the controller
+// can't tell them apart. The two methods have to agree: MaxVolumeFor(g, m) returns
+// the largest v where CentsFor(g, v) is at or under m.
+public interface IPriceSchedule
+{
+    Money CentsFor(Grade grade, Volume volume);
+    Volume MaxVolumeFor(Grade grade, Money money);
+    string Display(Grade grade);
+}
+
+public sealed record Pricing(IReadOnlyDictionary&lt;Grade, long&gt; TenthCentsPerGallon) : IPriceSchedule
+{ /* unchanged */ }</code></pre>
+<h3>Seam 2: delivery stages see every slice</h3>
+<pre class="code"><code>// A part bolted onto the delivery path downstream of the meter: an additive
+// injector, a vapor-recovery monitor, a blend ratio check. The controller hands
+// every stage the slices the meter counted and asks each one whether it holds
+// the pump out of service. It never knows what a stage is.
+public interface IDeliveryStage
+{
+    string Name { get; }
+    void OnArmed(string saleId);                        // per-sale counters start here
+    void OnDelivered(Grade grade, Volume delivered);    // one metered slice, after the totalizer counted it
+
+    // Ask to take the hose for this slice. True means this stage moves its own product
+    // instead of fuel: the controller shuts the fuel valve, counts nothing on the fuel
+    // meter or the totalizer, and calls Pour. The switch, each way, is a ledger entry.
+    bool ClaimsHose(TimeSpan pouredFor) =&gt; false;
+    Volume Pour(TimeSpan dt, FlowRate hoseFlow) =&gt; Volume.Zero;
+
+    IEnumerable&lt;DiagnosticCode&gt; Conditions() =&gt; [];     // what holds the pump out of service
+    bool TryRestoreCondition(string code) =&gt; false;     // a restart doesn't repair this condition
+}</code></pre>
+<p>Here's the hose part of the controller after the change. It runs once per tick, ahead of the fuel path, so a claimed slice never reaches the meter.</p>
+<pre class="code"><code>_pouredFor += dt;
+
+// A stage may take the hose for this slice: its product moves, fuel does not. The fuel valve is shut,
+// the fuel meter counts nothing, and the switch each way is in the ledger. The two watchdogs rest,
+// because a silent fuel meter is the design while the hose is not carrying fuel.
+var claimant = _stages.FirstOrDefault(s =&gt; s.ClaimsHose(_pouredFor));
+if (claimant is not null)
+{
+    if (!ReferenceEquals(_hoseOwner, claimant))
+    {
+        hydraulics.Close();
+        ledger.Append("hose.switch", $"{armed.SaleId} fuel -&gt; {claimant.Name} after {Volume} fuel {Money}, {_pouredFor.TotalSeconds:0.0} s open");
+        _hoseOwner = claimant;
+    }
+    var moved = claimant.Pour(dt, hydraulics.NominalFlow);
+    _noFlowFor = TimeSpan.Zero;
+    _noPulseFor = TimeSpan.Zero;
+    _tickPhase = claimant.Name;
+    return Current(ceilingReached: false, stopped: false, hoseFlow: moved &gt; Volume.Zero ? hydraulics.NominalFlow : FlowRate.Zero);
+}
+if (_hoseOwner is { } released)
+{
+    ledger.Append("hose.switch", $"{armed.SaleId} {released.Name} -&gt; fuel after {Volume} fuel {Money}, {_pouredFor.TotalSeconds:0.0} s open");
+    _hoseOwner = null;
+}
+// ... the fuel path: cap, taper, Deliver, meter, watchdogs, totalizer, price</code></pre>
+<p>And the rest of the controller:</p>
+<pre class="code"><code>public sealed class PumpController(
+    /* ... */
+    IPriceSchedule pricing,                       // was Pricing
+    TaperPolicy taper,
+    TimeProvider clock,
+    IReadOnlyList&lt;IDeliveryStage&gt;? stages = null)  // new, optional
+{
+    private readonly IReadOnlyList&lt;IDeliveryStage&gt; _stages = stages ?? [];
+
+    // in Arm, after meter.ResetSale():
+    foreach (var stage in _stages) stage.OnArmed(saleId);
+
+    // in Tick, after the totalizer:
+    totalizer.Add(delivered);
+    foreach (var stage in _stages) stage.OnDelivered(grade, delivered);
+    Money = pricing.CentsFor(grade, Volume);
+
+    // in Conditions(), after the three sensors:
+    foreach (var stage in _stages)
+        foreach (var condition in stage.Conditions()) yield return condition;
+}</code></pre>
+<figure class="wide">
+<pre class="mermaid">
+classDiagram
+  direction LR
+  class PumpController {
+    Arm(saleId, token)
+    Tick(dt)
+    Service
+  }
+  class IPriceSchedule {
+    &lt;&lt;interface&gt;&gt;
+    CentsFor(grade, volume)
+    MaxVolumeFor(grade, money)
+  }
+  class IDeliveryStage {
+    &lt;&lt;interface&gt;&gt;
+    OnArmed(saleId)
+    OnDelivered(grade, delivered)
+    Conditions()
+    TryRestoreCondition(code)
+  }
+  class Pricing
+  class Totalizer
+  class Meter
+  class Hydraulics
+  class AdditivePricing["AdditivePricing (sketch)"]
+  class AdditiveInjector["AdditiveInjector (sketch)"]
+  PumpController --> IPriceSchedule
+  PumpController --> "0..*" IDeliveryStage
+  PumpController --> Totalizer
+  PumpController --> Meter
+  PumpController --> Hydraulics
+  IPriceSchedule &lt;|.. Pricing
+  IPriceSchedule &lt;|.. AdditivePricing
+  AdditivePricing --> IPriceSchedule : wraps
+  AdditivePricing --> AdditiveInjector : asks Selected
+  IDeliveryStage &lt;|.. AdditiveInjector
+</pre>
+<figcaption>Boxes marked "sketch" are the design from section 4 and aren't in the repo. The controller's arrows stay the same when they show up.</figcaption>
+</figure>
+<h3>The proof: five tests</h3>
+<p>Each test uses a fake part built against the seam, the way the detergent would be built. The suite is 275 of 275 at commit <code>ebbf956</code>. We start with the two slug tests, since they cover the alternating mechanics.</p>
+<pre class="code"><code>[Fact]
+public void A_stage_that_takes_the_hose_moves_its_product_unmetered_and_every_switch_is_in_the_ledger()
+{
+    var oz16 = new Volume(125);                                          // 16 fl oz = 0.125 gal
+    var stage = new SlugDiverter(total: new Volume(250), slug: oz16);    // 32 oz in two slugs, after 3 s of fuel
+    var rig = new Rig(stages: [stage]);
+    rig.ArmAndPour(Money.FromDollars(30));
+    var trace = rig.RunToStop();
+    var last = trace[^1];
+
+    // All of the additive went out, in two slugs, and none of it was metered or billed as fuel.
+    Assert.Equal(new Volume(250), stage.Delivered);
+    Assert.Equal(2, stage.Slugs);
+    Assert.Equal(last.Volume, rig.Totalizer.Total);
+    Assert.Equal(Pricing.Default.CentsFor(Grade.Regular, last.Volume), last.Money);
+    Assert.Equal(3000, last.Money.Cents);
+    Assert.True(last.CeilingReached);
+
+    // While the stage held the hose the fuel volume stood still and the phase named the stage.
+    for (int i = 1; i &lt; trace.Count; i++)
+        if (trace[i].TaperPhase == "additive") Assert.Equal(trace[i - 1].Volume, trace[i].Volume);
+
+    // Nothing took the hose before three seconds of fuel had run.
+    Assert.All(trace.Take(29), t =&gt; Assert.NotEqual("additive", t.TaperPhase));
+    Assert.Equal("additive", trace[29].TaperPhase);
+
+    // Four switches: to additive, back to fuel, to additive, back to fuel. Each one is a ledger entry.
+    var switches = rig.Ledger.Snapshot().Where(e =&gt; e.Kind == "hose.switch").ToList();
+    Assert.Equal(4, switches.Count);
+    Assert.Contains("fuel -&gt; additive", switches[0].Detail);
+    Assert.Contains("additive -&gt; fuel", switches[1].Detail);
+    Assert.Equal(0, rig.Ledger.Verify());
+}
+
+[Fact]
+public void A_fault_while_a_stage_holds_the_hose_bills_only_the_fuel_that_was_metered()
+{
+    var stage = new SlugDiverter(total: new Volume(1_000), slug: new Volume(125));
+    var rig = new Rig(stages: [stage]);
+    rig.ArmAndPour(Money.FromDollars(30));
+    // ... tick until the phase reads "additive" ...
+    var fuelBefore = rig.Pump.Volume;
+
+    rig.Pump.EmergencyStop(DiagnosticCodes.PumpHoseBreakaway, "drive-off mid-additive");
+
+    Assert.Equal(PumpPhase.Faulted, rig.Pump.Phase);
+    Assert.Equal(fuelBefore, rig.Pump.Volume);
+    Assert.Equal(fuelBefore, rig.Totalizer.Total);
+    Assert.Equal(Pricing.Default.CentsFor(Grade.Regular, fuelBefore), rig.Pump.Money);
+}</code></pre>
+<p>The three from the first commit:</p>
+<pre class="code"><code>[Fact]
+public void A_delivery_stage_sees_every_metered_slice_and_their_sum_is_the_sale_volume()
+{
+    var stage = new CountingStage();
+    var rig = new Rig(stages: [stage]);
+    rig.ArmAndPour(Money.FromDollars(20));
+    var last = rig.RunToStop()[^1];
+
+    Assert.Equal(1, stage.Arms);
+    Assert.Equal(last.Volume, stage.Seen);
+    Assert.Equal(rig.Totalizer.Total, stage.Seen);
+    Assert.Equal(2000, last.Money.Cents);
+}
+
+[Fact]
+public void A_broken_delivery_stage_holds_the_pump_out_of_service_until_it_is_fixed()
+{
+    var stage = new CountingStage { Broken = true };
+    var rig = new Rig(stages: [stage]);
+
+    var (ok, reason, _) = rig.Pump.Arm("S1", rig.Token("S1", Money.FromDollars(20)));
+    Assert.False(ok);
+    Assert.Equal(CountingStage.Code.Code, reason);
+    Assert.True(rig.Pump.Service.Holds(CountingStage.Code.Code));
+    Assert.Contains(rig.Ledger.Snapshot(), e =&gt; e.Kind == "arm.refused" &amp;&amp; e.Detail.Contains(CountingStage.Code.Code));
+
+    stage.Broken = false;
+    Assert.True(rig.Pump.Service.InService);
+    Assert.True(rig.Pump.Arm("S2", rig.Token("S2", Money.FromDollars(20))).Ok);
+}
+
+[Fact]
+public void A_wrapped_price_schedule_changes_the_money_and_the_sale_still_lands_under_the_ceiling()
+{
+    // A $1.50 detergent fee on top of the board, once per sale.
+    var fee = Money.FromDollars(1.50m);
+    var rig = new Rig(prices: new FlatFee(Pricing.Default, fee));
+    rig.ArmAndPour(Money.FromDollars(30));
+    var trace = rig.RunToStop();
+    var last = trace[^1];
+
+    Assert.All(trace, t =&gt; Assert.True(t.Money.Cents &lt;= 3000, $"{t.Money} over ceiling"));
+    Assert.InRange(last.Money.Cents, 2999, 3000);
+    Assert.True(last.CeilingReached);
+    // The fee was billed: the same volume on the plain board costs the fee less.
+    Assert.Equal(Pricing.Default.CentsFor(Grade.Regular, last.Volume) + fee, last.Money);
+    // And the fuel that fits under $30 is the fuel that fits under $28.50 on the board.
+    Assert.Equal(Pricing.Default.MaxVolumeFor(Grade.Regular, Money.FromDollars(28.50m)), last.Volume);
+    Assert.Equal(0, rig.Ledger.Verify());
+}
+
+// The fake the test uses. Its arithmetic is two lines.
+private sealed class FlatFee(IPriceSchedule inner, Money fee) : IPriceSchedule
+{
+    public Money CentsFor(Grade grade, Volume volume) =&gt; inner.CentsFor(grade, volume) + fee;
+    // The fee comes off the top, then the board decides how much fuel fits in what is left.
+    public Volume MaxVolumeFor(Grade grade, Money money) =&gt; money &lt;= fee ? Volume.Zero : inner.MaxVolumeFor(grade, money - fee);
+    public string Display(Grade grade) =&gt; inner.Display(grade);
+}</code></pre>
+<p>The third test in that group is the money one. The ceiling is a contract between the token and the valve. A wrapped schedule has to keep it. Three parts read the schedule through the interface:</p>
+<ul>
+  <li>the taper,</li>
+  <li>the creep floor,</li>
+  <li>the final cap.</li>
+</ul>
+<p>So the sale still stops at or under $30, and the ledger still verifies.</p>
+
+<h2 id="build">4. The build, as a sketch</h2>
+<p><span class="tag n">Hypothetical</span>This is what the detergent would look like on top of the seams. None of it is in the repo. It's here so you can check the section 5 claim line by line.</p>
+<h3>The injector is a delivery stage that takes the hose in slugs</h3>
+<pre class="code sketch"><code>// GasPump.Pump/AdditiveInjector.cs (sketch)
+// Total and Slug in fl oz on the config surface; here already converted to Volume (16 oz = 125 mGal).
+public sealed record AdditiveOptions(Volume Total, Volume Slug, TimeSpan Lead, Money Fee);
+
+public sealed class AdditiveInjector(AdditiveOptions o, Volume reservoir, EventLedger ledger) : IDeliveryStage
+{
+    public string Name =&gt; "additive";
+    public bool Selected { get; private set; }
+    public bool Started { get; private set; }       // the fee is owed from here, whatever happens next
+    public bool Empty { get; private set; }
+    public Volume Reservoir { get; private set; } = reservoir;
+    public Volume Delivered { get; private set; }
+    private bool _holding;
+    private Volume _inSlug;
+    private string _saleId = "-";
+
+    public void Select(bool on) =&gt; Selected = on;    // the handler refuses it after the first pour, like a grade
+
+    public void OnArmed(string saleId)
+    {
+        _saleId = saleId; Selected = false; Started = false; Delivered = Volume.Zero; _holding = false; _inSlug = Volume.Zero;
+    }
+
+    // Fuel slug: count fuel until a slug's worth has passed, then take the hose again.
+    public void OnDelivered(Grade grade, Volume delivered)
+    {
+        if (Started &amp;&amp; !_holding &amp;&amp; Delivered &lt; o.Total) _inSlug += delivered;
+    }
+
+    public bool ClaimsHose(TimeSpan pouredFor)
+    {
+        if (!Selected || Empty || Delivered &gt;= o.Total || pouredFor &lt; o.Lead) return false;
+        if (_holding) return true;
+        if (!Started || _inSlug &gt;= o.Slug) { _holding = true; _inSlug = Volume.Zero; Started = true; return true; }
+        return false;
+    }
+
+    public Volume Pour(TimeSpan dt, FlowRate hoseFlow)
+    {
+        var moved = Volume.Min(hoseFlow.Over(dt), Volume.Min(o.Slug - _inSlug, o.Total - Delivered));
+        if (moved &gt; Reservoir) { Empty = true; moved = Reservoir; }
+        Reservoir -= moved; _inSlug += moved; Delivered += moved;
+        ledger.Append("additive.dose", $"{_saleId} {moved}, {Delivered} of {o.Total} delivered, reservoir {Reservoir}");
+        if (_inSlug &gt;= o.Slug || Delivered &gt;= o.Total || Empty) { _holding = false; _inSlug = Volume.Zero; }
+        return moved;
+    }
+
+    public IEnumerable&lt;DiagnosticCode&gt; Conditions() { if (Empty) yield return DiagnosticCodes.PumpAdditiveEmpty; }
+
+    public bool TryRestoreCondition(string code)
+    {
+        if (code != DiagnosticCodes.PumpAdditiveEmpty.Code) return false;
+        Empty = true;
+        return true;
+    }
+}</code></pre>
+<p>Two parts write to the ledger:</p>
+<ul>
+  <li>The controller writes <code>hose.switch</code> on every flip.</li>
+  <li>The injector writes <code>additive.dose</code> on every slice it moves.</li>
+</ul>
+<p>Both land in the ledger, so both are in the custody chain. The switching audit lives in the controller. The controller owns the valve, and a part shouldn't be the only witness to its own switching.</p>
+<h3>The fee is a price schedule that wraps the board</h3>
+<pre class="code sketch"><code>// GasPump.Pump/AdditivePricing.cs (sketch)
+public sealed class AdditivePricing(IPriceSchedule board, AdditiveInjector injector, Money fee) : IPriceSchedule
+{
+    // The fee is owed in full from the first additive slug, whatever happens after: a fault
+    // mid-slug still pays for the additive. Before the first slug nothing is owed, so a sale
+    // that faults in the three-second lead, or never pours, carries no fee.
+    private Money Fee(Volume v) =&gt; injector.Started ? fee : Money.Zero;
+
+    public Money CentsFor(Grade grade, Volume volume) =&gt; board.CentsFor(grade, volume) + Fee(volume);
+
+    // The fee comes off the top of the ceiling, then the board decides how much fuel fits in what is left.
+    public Volume MaxVolumeFor(Grade grade, Money money) =&gt;
+        !injector.Selected ? board.MaxVolumeFor(grade, money)
+        : money &lt;= fee     ? Volume.Zero
+        : board.MaxVolumeFor(grade, money - fee);
+
+    public string Display(Grade grade) =&gt; board.Display(grade);
+
+    // The receipt and the bank's settlement get two lines once the additive has started.
+    public IReadOnlyList&lt;ChargeLine&gt; Lines(Grade grade, Volume volume) =&gt;
+        injector.Started
+            ? [.. board.Lines(grade, volume), new ChargeLine("ADDITIVE", $"detergent additive {injector.Delivered}", fee)]
+            : board.Lines(grade, volume);
+}</code></pre>
+<h3>One diagnostic row, one message, one case, one line of wiring</h3>
+<pre class="code sketch"><code>// GasPump.Core/Diagnostics.cs: one new row in the table. ClearedBy drives the notice and the refusal line.
+public static readonly DiagnosticCode PumpAdditiveEmpty = new("PUMP.ADD.EMPTY", "additive injector",
+    "additive reservoir empty: the option cannot be sold until it is refilled",
+    ServiceAction.SupplyRestored);
+// and PumpAdditiveEmpty added to All.
+
+// GasPump.Dispatch/Messages.cs: one new record in the closed union, with its registration.
+[JsonDerivedType(typeof(SelectAdditive), nameof(SelectAdditive))]
+public sealed record SelectAdditive(bool On) : PumpMessage;
+
+// GasPump.Dispatch/Dispenser.cs: one new case in Handle.
+case PumpMessage.SelectAdditive sa:
+    if (Pump.Poured) Log.Write("pump", "additive locked after the first pour");
+    else if (sa.On &amp;&amp; Pump.Armed is { } a &amp;&amp; a.Ceiling &lt;= Fee) Log.Write("pump", "additive refused: fee {Fee} is not under the ceiling {Ceiling}", ("Fee", Fee), ("Ceiling", a.Ceiling));
+    else { _injector.Select(sa.On); Ledger.Append("additive.selected", $"{saleId} {sa.On} fee {(sa.On ? Fee : Money.Zero)}"); }
+    break;
+
+// GasPump.Dispenser/Program.cs: the composition.
+var additive = new AdditiveOptions(Total: Ounces(32), Slug: Ounces(16), Lead: TimeSpan.FromSeconds(3), Fee: Money.FromDollars(1.50m));
+var injector = new AdditiveInjector(additive, reservoir: Volume.FromGallons(5), ledger);
+new Dispenser(options, key, ledger, log, clock,
+    prices: new AdditivePricing(options.Pricing, injector, additive.Fee),
+    stages: [injector]);
+
+static Volume Ounces(decimal oz) =&gt; Volume.FromGallons(oz / 128m);   // 16 oz = 0.125 gal = 125 mGal</code></pre>
+<figure class="wide">
+<pre class="mermaid">
+sequenceDiagram
+  participant UI as pump face
+  participant PK as pump worker
+  participant PC as PumpController
+  participant M as Meter and Totalizer
+  participant INJ as AdditiveInjector
+  participant PR as AdditivePricing
+  participant L as EventLedger
+  UI->>PK: SelectAdditive(on)
+  PK->>INJ: Select(true)
+  PK->>L: additive.selected
+  loop fuel ticks (first 3 s, and every fuel slug)
+    PK->>PC: Tick(dt)
+    PC->>INJ: ClaimsHose(pouredFor)?
+    INJ-->>PC: no
+    PC->>M: Deliver, Register, Add(delivered)
+    PC->>INJ: OnDelivered(grade, delivered)
+    PC->>PR: CentsFor, Lines
+    PR->>INJ: Started?
+    PR-->>PC: board price + fee, two lines
+    PC-->>PK: Progress(volume, money, lines)
+  end
+  loop additive ticks (each 16 oz slug)
+    PK->>PC: Tick(dt)
+    PC->>INJ: ClaimsHose(pouredFor)?
+    INJ-->>PC: yes
+    PC->>L: hose.switch fuel -> additive (first tick of the slug)
+    PC->>INJ: Pour(dt, hoseFlow)
+    INJ->>L: additive.dose
+    Note over M: fuel valve shut, meter and totalizer idle
+    PC-->>PK: Progress(same volume, phase "additive")
+  end
+  PC->>L: hose.switch additive -> fuel
+</pre>
+<figcaption>The controller's tick is the same sequence it ran before, with one question added at the top. The meter is untouched on every additive tick.</figcaption>
+</figure>
+
+<h2 id="touched">5. What changes and what stays put</h2>
+<p>The claim, in one table. The third column uses three labels:</p>
+<ul>
+  <li><span class="new">New</span> is a file that didn't exist before.</li>
+  <li><span class="edit">Register</span> is a one-line addition to a table or a closed union.</li>
+  <li><span class="ok">Untouched</span> is what we're after.</li>
+</ul>
+<div class="scroll">
+<table>
+<thead><tr><th>Class</th><th>Owns</th><th>For detergent</th><th>Why</th></tr></thead>
+<tbody>
+<tr><td><code>AdditiveInjector</code></td><td>dose, reservoir, Empty</td><td class="new">New</td><td>Implements <code>IDeliveryStage</code>. Nothing else learns its name.</td></tr>
+<tr><td><code>AdditivePricing</code></td><td>the fee</td><td class="new">New</td><td>Implements <code>IPriceSchedule</code>, wraps the board.</td></tr>
+<tr><td><code>DiagnosticCodes</code></td><td>the code table</td><td class="edit">Register</td><td>One row. <code>ClearedBy</code> already drives the notice, the refusal line, and the clear-when-fixed path.</td></tr>
+<tr><td><code>PumpMessage</code></td><td>what the pump accepts</td><td class="edit">Register</td><td>One record in a union that is closed on purpose. See section 8.</td></tr>
+<tr><td><code>Dispenser.Handle</code></td><td>message to events</td><td class="edit">Register</td><td>One case. The handler is the one place a message meets a part.</td></tr>
+<tr><td><code>Dispenser.exe Program</code></td><td>composition</td><td class="edit">Register</td><td>Two constructor arguments that already exist.</td></tr>
+<tr><td><code>PumpController</code></td><td>the valve, the interlocks, the ceiling</td><td class="ok">Untouched</td><td>Reads the schedule through the interface, hands slices to the stage list.</td></tr>
+<tr><td><code>Pricing</code></td><td>the price board</td><td class="ok">Untouched</td><td>Wrapped by the new schedule, and the file stays as is.</td></tr>
+<tr><td><code>Hydraulics</code>, <code>Meter</code>, <code>Totalizer</code></td><td>the wet side, the count</td><td class="ok">Untouched</td><td>On an additive tick the controller skips them. Fuel is metered when fuel flows.</td></tr>
+<tr><td><code>PumpAuthority</code>, <code>HardLimits</code>, <code>NonceStore</code></td><td>the security path</td><td class="ok">Untouched</td><td>A fee changes the price and leaves the limits alone. The 600-gallon defense stays put.</td></tr>
+<tr><td><code>EventLedger</code>, custody chain</td><td>the record</td><td class="ok">Untouched</td><td>Append-only and open. The injector appends like any part.</td></tr>
+<tr><td><code>SaleStateMachine</code>, <code>HoldStatus</code></td><td>the sale and the money</td><td class="ok">Untouched</td><td>Money arrives in <code>Progress</code> events from the pump. The sale never priced anything.</td></tr>
+<tr><td><code>PaymentGateway</code>, <code>IssuerSimulator</code></td><td>the bank</td><td class="ok">Untouched</td><td>Completion is for the final money, whatever it was made of.</td></tr>
+<tr><td><code>RecoveryPlan</code>, <code>StateJournal</code></td><td>the restart</td><td class="ok">Untouched</td><td>Recovery works on volume and money. The reservoir level is the dispenser's state file, through <code>TryRestoreCondition</code>.</td></tr>
+<tr><td><code>IDispenserLink</code>, <code>LinkFrame</code></td><td>the wire</td><td class="ok">Untouched</td><td>The new message crosses the socket under the discriminator it already has.</td></tr>
+<tr><td><code>DispenserView</code>, <code>PumpFace.vue</code></td><td>the screen</td><td class="edit">Register</td><td>A field for the option and the reservoir, since that's where a reader would look. An AIF seam here would be an attachments map on the view. It waits for the day a second part needs it.</td></tr>
+</tbody>
+</table>
+</div>
+
+<h2 id="solid">6. SOLID, line by line</h2>
+<div class="scroll">
+<table>
+<thead><tr><th>Principle</th><th>Where it shows</th><th>What it bought</th></tr></thead>
+<tbody>
+<tr><td><strong>S</strong>ingle responsibility</td><td><code>AdditiveInjector</code> owns the dose and the reservoir. <code>AdditivePricing</code> owns the fee. <code>PumpController</code> still owns only the valve, the interlocks, and the ceiling.</td><td>Each new fact has one home, so a bug in the dose can't be in the price.</td></tr>
+<tr><td><strong>O</strong>pen for extension, closed for modification</td><td>The controller gained a list and an interface. The detergent lands as two new classes in that list and behind that interface.</td><td>The money path grows without an edit. Section 5 shows it.</td></tr>
+<tr><td><strong>L</strong>iskov substitution</td><td><code>FlatFee</code> stands in for <code>Pricing</code> and the sale still stops at or under the ceiling. The interface states the contract between its two methods in one sentence.</td><td>The third test is a substitution test. It passes.</td></tr>
+<tr><td><strong>I</strong>nterface segregation</td><td><code>IDeliveryStage</code> has two required methods and two with defaults. A part that only counts implements two.</td><td>A vapor monitor doesn't have to know about restore, and the interface stays small as parts arrive.</td></tr>
+<tr><td><strong>D</strong>ependency inversion</td><td>The controller depends on <code>IPriceSchedule</code> and <code>IDeliveryStage</code>, both of which it defines or sits above. The additive classes depend on the controller's abstractions, never the reverse.</td><td>The lower module is the policy. The higher-level detail plugs in.</td></tr>
+</tbody>
+</table>
+</div>
+
+<h2 id="cupid">7. CUPID, line by line</h2>
+<div class="scroll">
+<table>
+<thead><tr><th>Property</th><th>Where it shows</th></tr></thead>
+<tbody>
+<tr><td><strong>C</strong>omposable</td><td>A stage list and a wrapped schedule. Two injectors, or an injector plus a vapor monitor, compose by adding to the list. <code>new Dispenser(..., prices: wrapped, stages: [a, b])</code> is the whole wiring.</td></tr>
+<tr><td><strong>U</strong>nix philosophy</td><td>Each part does one thing and talks through one narrow channel: a slice in, a code out. The injector never sees the valve. The schedule never sees the meter.</td></tr>
+<tr><td><strong>P</strong>redictable</td><td>With or without the fee, the sale lands on the cent, the trace never goes over the ceiling, and the ledger verifies.</td></tr>
+<tr><td><strong>I</strong>diomatic</td><td>Records for data, interfaces for roles, default interface members for optional behaviour, collection expressions for the list. The seam reads like the rest of the codebase.</td></tr>
+<tr><td><strong>D</strong>omain-based</td><td>The names are forecourt names. An additive injector is a part on a real dispenser. "Delivery stage" and "price schedule" are what a pump technician and a station manager would call them.</td></tr>
+</tbody>
+</table>
+</div>
+<aside class="rule n">
+<p><strong>The AIF (Assume It's Future) reading.</strong> A few dozen lines today open the door. The room, meaning the detergent, isn't built. The seam costs:</p>
+<ul>
+  <li>one interface,</li>
+  <li>one optional parameter,</li>
+  <li>three foreach loops.</li>
+</ul>
+<p>Skipping it would have meant retrofitting later:</p>
+<ul>
+  <li>the money path,</li>
+  <li>the security path,</li>
+  <li>the restore table.</li>
+</ul>
+<p>Each of those is a review of code nobody wants to reopen.</p>
+</aside>
+
+<h2 id="left">8. What still needs a registration, and why</h2>
+<p>Three edits land outside the new classes. Each is a one-line row in a table that's meant to take rows.</p>
+<ol>
+  <li><strong>The diagnostic code.</strong> <code>DiagnosticCodes.All</code> is a registry, and adding a row is how it grows. Four things read the row's <code>ClearedBy</code> and need no change:
+    <ul>
+      <li>the notice,</li>
+      <li>the refusal line,</li>
+      <li>the clear-when-fixed rule,</li>
+      <li>the docs table.</li>
+    </ul>
+  </li>
+  <li><strong>The message.</strong> <code>PumpMessage</code> is a closed union on purpose. That means a fixed list of messages the pump accepts. The security article's strongest control is the message that doesn't exist. A pump that accepted any message a plug-in defined would lose that control. So a new message is a visible, reviewable row with its JSON registration beside it.</li>
+  <li><strong>The handler case.</strong> <code>Dispenser.Handle</code> is the one place a message meets a part. One case per message keeps it readable, and this case is a handful of lines.</li>
+</ol>
+<p>The pump face gains a button and a field. That's the screen's job, and anyone who wants to see the reservoir should be able to.</p>
+<p>Everything else on the section 5 list stays as it was at commit <code>708bac5</code>. The detergent can be built in an afternoon on top of what's there, and the review would be two new files and four one-line rows.</p>
+
+<h2 id="money">9. How the money flow changes</h2>
+<p><span class="tag s">Station</span><span class="tag d">Dispenser</span>The bank never has to learn what detergent is. Think of a restaurant check: one total, two lines. The bank gets a total and two charge lines, FUEL and ADDITIVE. That is all it needs. The fee reuses three things that already exist:</p>
+<ul>
+  <li>it sits inside the ceiling the pump already has,</li>
+  <li>it rides in the one money number the pump already reports,</li>
+  <li>it settles in the one completion the station already sends.</li>
+</ul>
+<p>The same split lands in the ledger, for the books.</p>
+<figure class="wide">
+<pre class="mermaid">
+flowchart LR
+  H[bank hold: site ceiling, say $75] --> T[token ceiling $75]
+  T --> A[PumpAuthority clamps to HardLimits]
+  A --> S{additive selected?}
+  S -- no --> V1[MaxVolumeFor on the board: fuel for $75]
+  S -- yes --> V2[MaxVolumeFor on the board for $73.50, fee held back]
+  V1 --> M1[Money = board price]
+  V2 --> M2[Money = board price + $1.50 once fuel moves]
+  M1 --> P[Progress events, screen, journal]
+  M2 --> P
+  P --> C[SendCompletion with the one final amount]
+  C --> B[bank settles final; hold minus final is released]
+  M2 -. ledger .-> L1[additive.selected, fee $1.50]
+  M2 -. ledger .-> L2[additive.dose per slice]
+  C -. ledger .-> L3[valve.close: volume, money, totalizer]
+  style S fill:#dcefe1,stroke:#2f7a4a,color:#111
+  style V2 fill:#dcefe1,stroke:#2f7a4a,color:#111
+  style M2 fill:#dcefe1,stroke:#2f7a4a,color:#111
+</pre>
+<figcaption>Green is the only path the fee touches. Everything to the right of Progress is the same code it was.</figcaption>
+</figure>
+<div class="scroll">
+<table>
+<thead><tr><th>Step</th><th>Today</th><th>With the fee</th><th>Who changes</th></tr></thead>
+<tbody>
+<tr><td>Pre-authorization</td><td>Site ceiling to the bank, bank answers, lesser wins</td><td>Same hold, same answer. The option isn't chosen yet, so the bank hears nothing about it.</td><td class="ok">Nobody</td></tr>
+<tr><td>Arm</td><td>Token ceiling clamped to hard limits</td><td>Same. The clamp is on total money, and the fee is inside it.</td><td class="ok">Nobody</td></tr>
+<tr><td>Select additive</td><td>n/a</td><td>Refused if the armed ceiling is at or under the fee, so a $1.00 partial approval can't end up buying a $1.50 fee and no fuel. Locked after the first pour, like the grade.</td><td class="edit">Handler case</td></tr>
+<tr><td>Fuel that fits</td><td><code>MaxVolumeFor(grade, ceiling)</code></td><td><code>MaxVolumeFor(grade, ceiling - fee)</code>. Under a $30 ceiling the driver gets $28.50 of fuel. The taper and the final cap read this number and stop on the cent as before.</td><td class="new">AdditivePricing</td></tr>
+<tr><td>Money on the screen</td><td>Board price of the metered volume</td><td>Board price for the first three seconds, plus $1.50 from the first additive slug on. The volume on screen holds still during each additive slug, since only fuel is metered.</td><td class="new">AdditivePricing</td></tr>
+<tr><td>Additive slug</td><td>n/a</td><td>Fuel valve shut, fuel meter and totalizer idle, <code>hose.switch</code> in the ledger and the chain at each flip, <code>additive.dose</code> per slice. The ceiling clock keeps running.</td><td class="ok">Controller seam</td></tr>
+<tr><td>Fault mid-pour</td><td>Settle for the metered volume</td><td>Settle for the metered fuel plus the full fee, if the first slug had begun. A fault in the three-second lead carries no fee. Additive already in the hose is paid for in full either way.</td><td class="ok">Nobody</td></tr>
+<tr><td>No pour, hang or timeout</td><td>Reverse the hold in full</td><td>Same. Money stayed zero, so the state machine takes the zero-volume path and reverses.</td><td class="ok">Nobody</td></tr>
+<tr><td>Completion</td><td><code>SendCompletion(sale, final)</code> with one amount</td><td>Same message, same amount, fee included. The issuer settles the hold to it and releases the rest.</td><td class="ok">Nobody</td></tr>
+<tr><td>Cash</td><td>Cash amount is the ceiling, change at the till</td><td>Fee comes off the top of the cash, fuel fills the rest, change is cash minus the final. No bank either way.</td><td class="ok">Nobody</td></tr>
+<tr><td>Crash and restart</td><td>Journal carries volume and money; recovery settles or reverses</td><td>Same. Money in the journal already includes the fee. The "under-recorded up to" bound is about volume and stays put.</td><td class="ok">Nobody</td></tr>
+<tr><td>The books</td><td>One <code>valve.close</code> line with volume, money, totalizer</td><td>Plus <code>additive.selected</code>, <code>hose.switch</code> at every flip, and <code>additive.dose</code> per slice. The completion carries two charge lines, FUEL and ADDITIVE, and the bank keeps them. The receipt prints the same two.</td><td class="new">Injector appends, lines flow</td></tr>
+</tbody>
+</table>
+</div>
+<aside class="rule n">
+<p><strong>The line items are done.</strong> Commit <code>16cdbc4</code> added charge lines from the price schedule to the bank's settlement and the driver's receipt. The companion article on receipts and telemetry shows that seam and the video player.</p>
+</aside>
+<p class="eyebrow">Source: E:\dev\MMP.GasPumpSimulator at commits 708bac5, aadc2e2, 16cdbc4, ebbf956. 275 dotnet tests and 9 Playwright specs pass. Companions: Gas Pump Patterns, Gas Pump Security and Audit, Receipts, Lines, and a Video Player.</p>
+</main>
+
+<script>
+(function(){
+  var re = /(\/\/[^\n]*|\/\*[^*]*\*\/)|(\$?"(?:[^"\\\n]|\\.)*")|\b(public|private|static|sealed|readonly|record|struct|class|interface|enum|abstract|override|event|async|await|return|new|var|if|else|switch|case|when|is|not|and|or|out|lock|using|foreach|while|true|false|null|void|bool|long|string|int|decimal|this|yield|default|throw|try|catch|in|const|ref|break)\b|\b([A-Z][A-Za-z0-9]*)\b/g;
+  function esc(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+  document.querySelectorAll('pre.code code').forEach(function(el){
+    var src = el.textContent, out = '', last = 0, m;
+    re.lastIndex = 0;
+    while ((m = re.exec(src)) !== null) {
+      out += esc(src.slice(last, m.index));
+      if (m[1]) out += '<span class="cmt">'+esc(m[1])+'</span>';
+      else if (m[2]) out += '<span class="str">'+esc(m[2])+'</span>';
+      else if (m[3]) out += '<span class="kw">'+esc(m[3])+'</span>';
+      else out += '<span class="ty">'+esc(m[4])+'</span>';
+      last = re.lastIndex;
+    }
+    out += esc(src.slice(last));
+    el.innerHTML = out;
+  });
+})();
+</script>
+
+<!--claude-mermaid-runtime-begin:3477-->
+<style>.mermaid-diagram{margin-block:4px}.mermaid-diagram svg{display:block;margin:0 auto;max-width:100%;height:auto}</style>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11.16.1/dist/mermaid.min.js"></script>
+<script>(function(){
+var CFG={"palettes":{"light":{"surface":"#f4efe4","text":"#42392e","line":"#8a7f6d","border":"#7a6c52","bg":"#fffdf8"},"dark":{"surface":"#262b34","text":"#f2f3f5","line":"#a8adb8","border":"#9aa4b8","bg":"#1f232b"}}};
+if(typeof mermaid==='undefined')return;
+var pres=Array.prototype.slice.call(document.querySelectorAll('pre.mermaid')).filter(function(p){if(p.hasAttribute('data-claude-mermaid-claimed'))return false;p.setAttribute('data-claude-mermaid-claimed','1');return true;});
+if(!pres.length)return;
+var mq=window.matchMedia?window.matchMedia('(prefers-color-scheme: dark)'):null;
+var root=document.documentElement;
+var items=pres.map(function(pre){
+var mount=document.createElement('div');mount.className='mermaid-diagram';
+return {pre:pre,mount:mount,src:pre.textContent||''};
+});
+var seq=0;
+var renderGen=0;
+var lastKey='';
+function pageBg(fallback){
+var els=[document.body,document.documentElement];
+for(var i=0;i<els.length;i++){
+var c=els[i]&&getComputedStyle(els[i]).backgroundColor;
+if(c&&c!=='transparent'&&c!=='rgba(0, 0, 0, 0)')return c;
+}
+return fallback;
+}
+function render(){
+var theme=root.getAttribute('data-theme');
+var dark=theme==='dark'||(!!(mq&&mq.matches)&&theme!=='light');
+var pal=dark?CFG.palettes.dark:CFG.palettes.light;
+var bg=pageBg(pal.bg);
+var key=(dark?'d':'l')+'|'+bg;
+if(key===lastKey)return;
+lastKey=key;
+var gen=++renderGen;
+var font=getComputedStyle(document.body).fontFamily||'sans-serif';
+var nat={useMaxWidth:false};
+mermaid.initialize({
+startOnLoad:false,securityLevel:'strict',theme:'base',
+flowchart:nat,sequence:nat,er:nat,state:nat,class:nat,pie:nat,
+gantt:nat,journey:nat,timeline:nat,gitGraph:nat,mindmap:nat,xyChart:nat,
+quadrantChart:nat,sankey:nat,c4:nat,requirement:nat,block:nat,
+packet:nat,kanban:nat,architecture:nat,radar:nat,
+themeVariables:{background:bg,mainBkg:pal.surface,primaryColor:pal.surface,
+primaryTextColor:pal.text,lineColor:pal.line,primaryBorderColor:pal.border,
+nodeBorder:pal.border,clusterBorder:pal.border,edgeLabelBackground:bg,
+clusterBkg:'rgba(127,127,127,0.07)',titleColor:pal.text,
+darkMode:dark,rowOdd:bg,rowEven:'rgba(127,127,127,0.07)',
+attributeBackgroundColorOdd:bg,attributeBackgroundColorEven:'rgba(127,127,127,0.07)',
+fontSize:'16px',fontFamily:font},
+themeCSS:'.node rect, .node circle, .node polygon, .node path, .cluster rect { stroke-width: 2px; }'
+});
+items.forEach(function(it){
+var id='claude-mermaid-'+seq++;
+mermaid.render(id,it.src).then(function(r){
+if(gen!==renderGen)return;
+var prev=it.pre.previousElementSibling;
+if(prev&&prev.className==='mermaid-diagram'&&prev!==it.mount)return;
+it.mount.innerHTML=r.svg;
+if(!it.mount.parentNode)it.pre.parentNode.insertBefore(it.mount,it.pre);
+it.pre.style.display='none';
+},function(){
+var scratch=document.getElementById(id);
+if(scratch)scratch.parentNode.removeChild(scratch);
+scratch=document.getElementById('d'+id);
+if(scratch)scratch.parentNode.removeChild(scratch);
+if(gen!==renderGen)return;
+if(it.mount.parentNode)it.mount.parentNode.removeChild(it.mount);
+it.pre.style.display='';
+});
+});
+}
+render();
+if(mq&&mq.addEventListener)mq.addEventListener('change',render);
+if(typeof MutationObserver!=='undefined')new MutationObserver(render).observe(root,{attributes:true,attributeFilter:['data-theme']});
+})();</script>
+<!--claude-mermaid-runtime-end-->
+
+</body></html>

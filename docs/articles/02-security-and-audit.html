@@ -1,0 +1,720 @@
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
+<title>Gas Pump Security and Audit</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Source+Sans+3:ital,wght@0,400;0,600;1,400&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: one 70ch reading column. Code and diagrams may widen to 96ch. Amber marks the dispenser, blue marks the station, as in the app. */
+:root{
+  --bg:#f6f3ec; --fg:#201e1a; --muted:#6a635a; --rule:#d9d2c5; --panel:#fffdf8;
+  --amber:#b4660a; --amber-soft:#f9e7cd; --blue:#2a5c9b; --blue-soft:#dbe6f5; --red:#a8322a; --red-soft:#f6ddd9;
+  --code-bg:#1c1e23; --code-fg:#e6e3dc; --kw:#f0a53c; --str:#9ed58b; --cmt:#8d939e; --type:#80c4ee;
+  --display:"Barlow Condensed","Arial Narrow",Arial,sans-serif;
+  --body:"Source Sans 3",system-ui,-apple-system,Segoe UI,sans-serif;
+  --mono:"IBM Plex Mono",Consolas,"Courier New",monospace;
+}
+@media (prefers-color-scheme: dark){ :root:not([data-theme="light"]){
+  --bg:#14161a; --fg:#e8e4db; --muted:#a69e90; --rule:#2c3038; --panel:#1b1e24;
+  --amber:#e8a24a; --amber-soft:#35260f; --blue:#82b1e6; --blue-soft:#162638; --red:#e07a70; --red-soft:#3a1c19;
+  --code-bg:#0e1013; --code-fg:#e6e3dc; color-scheme:dark } }
+:root[data-theme="dark"]{
+  --bg:#14161a; --fg:#e8e4db; --muted:#a69e90; --rule:#2c3038; --panel:#1b1e24;
+  --amber:#e8a24a; --amber-soft:#35260f; --blue:#82b1e6; --blue-soft:#162638; --red:#e07a70; --red-soft:#3a1c19;
+  --code-bg:#0e1013; --code-fg:#e6e3dc; color-scheme:dark }
+
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:0 4rem}
+main{max-width:70ch;margin:0 auto}
+.wide{max-width:96ch;margin-left:auto;margin-right:auto}
+h1,h2,h3{font-family:var(--display);text-wrap:balance;line-height:1.05;margin:0}
+h1{font-size:clamp(2.6rem,7vw,4.2rem);font-weight:700;letter-spacing:-.01em}
+h2{font-size:2rem;font-weight:600;margin-top:3.2rem;padding-top:1.2rem;border-top:3px solid var(--rule)}
+h3{font-size:1.35rem;font-weight:600;margin-top:1.8rem}
+p{margin:.9rem 0}
+.eyebrow{font-family:var(--mono);font-size:.78rem;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+header{padding-block:3rem 1.5rem}
+header p.lede{font-size:1.2rem;color:var(--muted);max-width:60ch}
+.tag{display:inline-block;font-family:var(--mono);font-size:.72rem;letter-spacing:.06em;text-transform:uppercase;padding:.15rem .5rem;border-radius:3px;margin-right:.4rem}
+.tag.d{background:var(--amber-soft);color:var(--amber)}
+.tag.s{background:var(--blue-soft);color:var(--blue)}
+.tag.b{background:var(--rule);color:var(--fg)}
+.tag.r{background:var(--red-soft);color:var(--red)}
+.where{font-family:var(--mono);font-size:.85rem;color:var(--muted);margin:.2rem 0 1rem}
+pre.code{background:var(--code-bg);color:var(--code-fg);font-family:var(--mono);font-size:.84rem;line-height:1.5;
+  padding:1rem 1.1rem;border-radius:6px;overflow-x:auto;margin:1rem 0;tab-size:4}
+pre.code code{font-family:inherit}
+.kw{color:var(--kw)} .str{color:var(--str)} .cmt{color:var(--cmt);font-style:italic} .ty{color:var(--type)}
+figure{margin:1.4rem 0}
+figure pre.mermaid{background:var(--panel);border:1px solid var(--rule);border-radius:6px;padding:1rem;overflow-x:auto}
+figcaption{font-size:.9rem;color:var(--muted);margin-top:.5rem}
+table{border-collapse:collapse;width:100%;font-size:.93rem;margin:1rem 0}
+th,td{text-align:left;padding:.5rem .6rem;border-bottom:1px solid var(--rule);vertical-align:top}
+th{font-family:var(--display);font-size:1.05rem;font-weight:600}
+td code,p code,li code{font-family:var(--mono);font-size:.85em;background:var(--panel);border:1px solid var(--rule);padding:0 .3em;border-radius:3px}
+.scroll{overflow-x:auto}
+aside.rule{border-left:4px solid var(--amber);background:var(--panel);padding:.8rem 1rem;margin:1.2rem 0;border-radius:0 6px 6px 0}
+aside.rule.s{border-left-color:var(--blue)}
+aside.rule p{margin:.3rem 0}
+.cap{display:grid;grid-template-columns:repeat(3,1fr);gap:1rem;margin:1.2rem 0}
+.cap div{background:var(--panel);border:1px solid var(--rule);border-radius:6px;padding:.9rem 1rem;min-width:0}
+.cap b{font-family:var(--display);font-size:1.4rem;display:block}
+@media (max-width:620px){.cap{grid-template-columns:1fr}}
+ol,ul{padding-left:1.3rem} li{margin:.3rem 0}
+a{color:var(--blue)} a:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
+nav.toc{font-size:.95rem;columns:2;column-gap:2rem;margin:1.5rem 0}
+nav.toc a{text-decoration:none;display:block;padding:.15rem 0}
+@media (max-width:520px){nav.toc{columns:1} body{font-size:16px}}
+</style>
+
+<main>
+<header>
+  <div class="eyebrow">MMP.GasPumpSimulator · article 2 of 2 · 2026-11-01</div>
+  <h1>Security, audit, and the CAP theorem at the hose</h1>
+  <p class="lede">Three assets, four attackers, two wires that fail. The simulator protects the fuel and the hold. It keeps a record a third party can check. At each wire it picks a side of the CAP trade.</p>
+  <p><span class="tag d">Dispenser</span><span class="tag s">Station</span><span class="tag b">Both</span><span class="tag r">Attack</span></p>
+</header>
+
+<nav class="toc" aria-label="Sections">
+  <a href="#assets">1. Assets and attackers</a>
+  <a href="#ceilings">2. Three ceilings, in order</a>
+  <a href="#token">3. The token and the order of checks</a>
+  <a href="#absent">4. The message that does not exist</a>
+  <a href="#reboot">5. Replay across a reboot</a>
+  <a href="#physics">6. Physical sanity</a>
+  <a href="#admin">7. The admin panel</a>
+  <a href="#audit">8. Audit: three records, one code</a>
+  <a href="#custody">9. Custody in two places</a>
+  <a href="#recovery">10. Recovery is part of the audit</a>
+  <a href="#cap">11. Where CAP comes in</a>
+  <a href="#scope">12. Out of scope, on purpose</a>
+  <a href="#matrix">13. Attack, control, test</a>
+</nav>
+
+<h2 id="assets">1. Assets and attackers</h2>
+<p>Two trust boundaries, two jobs. The card reader guards the card, and the pump controller guards the fuel. The simulator builds the pump controller. It only names the card reader.</p>
+<div class="cap">
+  <div><b>Fuel</b>Volume leaving the hose that nobody paid for.</div>
+  <div><b>The hold</b>Money on a driver's card that should be released, or settled to the real amount.</div>
+  <div><b>The record</b>A ledger and a totalizer that let the books be checked against the meter.</div>
+</div>
+<ul>
+  <li><strong>Upstream owned.</strong> The attacker has taken over one of these:
+    <ul>
+      <li>the payment host,</li>
+      <li>the site controller,</li>
+      <li>the wire between them.</li>
+    </ul>
+    The attacker can send any message to the pump, including a correctly signed one.</li>
+  <li><strong>On the wire.</strong> The attacker can capture and replay messages between the host and the pump.</li>
+  <li><strong>At the pump.</strong> The attacker can feed the meter input, as a spoofed pulser would.</li>
+  <li><strong>At the host.</strong> The network to the processor is in one of three bad states:
+    <ul>
+      <li>down,</li>
+      <li>slow,</li>
+      <li>going up and down.</li>
+    </ul>
+  </li>
+</ul>
+
+<h2 id="ceilings">2. Three ceilings, in order</h2>
+<p><span class="tag b">Both</span>A sale's ceiling passes three gates, in this order. Each gate can only lower it.</p>
+<ol>
+  <li><strong>Site ceiling.</strong> <code>SiteLimits</code> holds it, behind a PIN. Credit is $75, debit is $50, and cash is the cash amount. The admin panel can move this gate anywhere.</li>
+  <li><strong>The bank's yes.</strong> The approved amount, which may be partial. A signed token then carries it to the pump.</li>
+  <li><strong>Hard limit.</strong> <code>HardLimits</code> inside the pump: $500, 50 gallons, 10 minutes. It is set at construction and never from a message. This gate stays put.</li>
+</ol>
+<figure class="wide">
+<pre class="mermaid">
+flowchart LR
+  A[Site ceiling: SiteLimits behind a PIN. Credit $75, Debit $50, Cash = the cash amount] --> B[Bank's answer: approved amount, may be partial]
+  B --> C[Signed token: ceiling, volume, expiry, nonce]
+  C --> D[Hard limit: HardLimits in the pump. $500, 50 gal, 10 min. Set at construction, never from a message]
+  D --> E((valve))
+  style A fill:#dbe6f5,stroke:#2a5c9b,color:#111
+  style B fill:#dbe6f5,stroke:#2a5c9b,color:#111
+  style C fill:#eee,stroke:#666,color:#111
+  style D fill:#f9e7cd,stroke:#b4660a,color:#111
+</pre>
+<figcaption>Blue is the station's business. Amber is the pump's safety. Owning the admin panel buys an attacker nothing past $500.</figcaption>
+</figure>
+<pre class="code"><code>// The numbers the pump will never exceed, whatever anyone upstream says.
+// Set once at construction, from the pump's own configuration, never from a message.
+public sealed record HardLimits(
+    Money MaxMoneyPerSale,
+    Volume MaxVolumePerSale,
+    TimeSpan MaxSaleDuration,
+    FlowRate MaxFlow,
+    long MaxPulsesPerTick)
+{
+    public static HardLimits Default =&gt; new(
+        MaxMoneyPerSale: Money.FromDollars(500),
+        MaxVolumePerSale: Volume.FromGallons(50),
+        MaxSaleDuration: TimeSpan.FromMinutes(10),
+        MaxFlow: FlowRate.GallonsPerMinute(12),
+        // A tick is 100 ms. 12 gal/min is 20 mGal per tick. Anything far above that is a spoofed pulser.
+        MaxPulsesPerTick: 60);
+}</code></pre>
+<p><span class="tag r">Attack 6</span>Own the upstream and sign a 600-gallon, $2000 token. The signature is good. The pump verifies it, then clamps every number to its own limits and writes the clamp to the ledger.</p>
+<pre class="code"><code>var ceiling   = Money.Min(auth.Ceiling, limits.MaxMoneyPerSale);
+var maxVolume = Volume.Min(auth.MaxVolume, limits.MaxVolumePerSale);
+var remaining = auth.ExpiresAt - now;
+var duration  = remaining &lt; limits.MaxSaleDuration ? remaining : limits.MaxSaleDuration;
+
+var clamped = ceiling != auth.Ceiling || maxVolume != auth.MaxVolume;
+var note = clamped ? $"clamped from {auth.Ceiling}/{auth.MaxVolume} to {ceiling}/{maxVolume}" : "within limits";
+ledger.Append("arm.ok", $"{saleId} ceiling {ceiling} max {maxVolume} {note}");</code></pre>
+<p>Comment out the clamp and run the suite. Attack 6 now arms 600 gallons, and two tests go red.</p>
+
+<h2 id="token">3. The token and the order of checks</h2>
+<p><span class="tag b">Both</span>The payment side hands the pump one string: this sale, this pump, this much, this long, once. Think of a permission slip with a wax seal. Field order is the contract. Change it and every pump rejects every token.</p>
+<p class="where">src/GasPump.Payment/AuthorizationToken.cs · src/GasPump.Security/PumpAuthority.cs</p>
+<pre class="code"><code>public sealed record AuthorizationToken(
+    string SaleId, string PumpId,
+    long CeilingCents, long MaxMilliGallons,
+    long IssuedAtUnixMs, long ExpiresAtUnixMs,
+    string Nonce, string Signature)
+{
+    // The bytes that are signed.
+    public string Payload() =&gt; $"{SaleId}|{PumpId}|{CeilingCents}|{MaxMilliGallons}|{IssuedAtUnixMs}|{ExpiresAtUnixMs}|{Nonce}";
+}
+
+// HMAC-SHA256 over the payload. The verifier in GasPump.Security holds the same key.
+public static string Sign(byte[] key, string payload) =&gt;
+    Convert.ToHexString(HMACSHA256.HashData(key, Encoding.UTF8.GetBytes(payload)));</code></pre>
+<p>The verifier runs four checks in a fixed order. A token that cannot be parsed is refused before check 1.</p>
+<ol>
+  <li><strong>Signature.</strong> Is the seal good? The comparison runs in constant time.</li>
+  <li><strong>Pump id.</strong> Is the token for this pump?</li>
+  <li><strong>Time window.</strong> Is now between issue time and expiry, give or take the clock-skew allowance?</li>
+  <li><strong>Nonce.</strong> Is this number, used once, new to the nonce store?</li>
+</ol>
+<p>A forged token fails check 1 and never reaches the nonce store. So an attacker can't burn nonces by spamming junk.</p>
+<pre class="code"><code>public (VerifiedAuthorization? Auth, VerifyFailure Failure) Verify(string wire, DateTimeOffset now)
+{
+    AuthorizationToken token;
+    try { token = AuthorizationToken.Parse(wire); }
+    catch (Exception) { return (null, VerifyFailure.BadFormat); }
+
+    var expected = HmacAuthorizationSigner.Sign(key, token.Payload());
+    if (!CryptographicOperations.FixedTimeEquals(Encoding.ASCII.GetBytes(expected), Encoding.ASCII.GetBytes(token.Signature)))
+        return (null, VerifyFailure.BadSignature);           // 1. signature, in constant time
+
+    if (!string.Equals(token.PumpId, pumpId, StringComparison.Ordinal))
+        return (null, VerifyFailure.WrongPump);              // 2. this pump
+
+    var issued  = DateTimeOffset.FromUnixTimeMilliseconds(token.IssuedAtUnixMs);
+    var expires = DateTimeOffset.FromUnixTimeMilliseconds(token.ExpiresAtUnixMs);
+    if (now &lt; issued - clockSkew)  return (null, VerifyFailure.NotYetValid);   // 3. time window
+    if (now &gt; expires + clockSkew) return (null, VerifyFailure.Expired);
+
+    if (!nonces.TryConsume(token.Nonce)) return (null, VerifyFailure.Replayed);  // 4. once
+
+    return (new VerifiedAuthorization(token.SaleId, token.Ceiling, token.MaxVolume, expires), VerifyFailure.None);
+}</code></pre>
+<figure>
+<pre class="mermaid">
+flowchart LR
+  W[token on the wire] --> P{parse}
+  P -- bad --> R1[BadFormat]
+  P --> S{HMAC equal, constant time}
+  S -- no --> R2[BadSignature]
+  S --> I{pump id mine}
+  I -- no --> R3[WrongPump]
+  I --> T{inside time window}
+  T -- no --> R4[Expired or NotYetValid]
+  T --> N{nonce unseen}
+  N -- no --> R5[Replayed]
+  N --> C[clamp to HardLimits] --> OK[armed, written to ledger]
+  style C fill:#f9e7cd,stroke:#b4660a,color:#111
+</pre>
+<figcaption>Attacks 2 through 5 each stop at one diamond. Attack 6 passes all five and meets the clamp.</figcaption>
+</figure>
+
+<h2 id="absent">4. The message that does not exist</h2>
+<p><span class="tag d">Dispenser</span>The strongest control is a message that doesn't exist. The only way to arm the pump is a token. There is no <code>SetCeiling</code>, no <code>SetLimit</code>, no <code>OpenValve</code>. Over the socket the dispenser accepts the same records it accepted in-process. <code>Arm</code> still goes through the authority and the nonce store. <code>Stop</code> is the one frame that needs no token, and all it can do is close the valve.</p>
+<pre class="code"><code>// What the sale worker and the driver send the pump worker.
+// There is no SetCeiling message.
+public abstract record PumpMessage
+{
+    public sealed record Arm(string SaleId, string Token, Grade? Grade) : PumpMessage;
+    public sealed record Close(string SaleId, string Reason) : PumpMessage;
+    public sealed record SelectGrade(Grade Grade) : PumpMessage;
+    public sealed record Lift : PumpMessage;      // nozzle out of the boot
+    public sealed record InsertSpout : PumpMessage;      // spout in a tank; the bellows interlock closed
+    public sealed record Squeeze : PumpMessage;   // open the valve if every interlock allows it
+    public sealed record Release : PumpMessage;
+    public sealed record Hang : PumpMessage;
+    public sealed record Tick(TimeSpan Dt) : PumpMessage;
+    public sealed record Stop(string Reason) : PumpMessage;
+    // ... forecourt fault hooks for the demo
+}</code></pre>
+<p><span class="tag r">Attack 1</span>Send the pump a ceiling of $2000. There's nothing to send it to.</p>
+
+<h2 id="reboot">5. Replay across a reboot</h2>
+<p><span class="tag d">Dispenser</span>A nonce store in memory forgets everything at power off, so a captured token would replay after a reboot. Two controls close that door.</p>
+<p class="where">src/GasPump.Security/PumpAuthority.cs (NonceStore) · src/GasPump.Dispatch/DispenserServer.cs (CustodyKeyFile)</p>
+<p>First, the dispenser saves every nonce it burned in its state file and restores them before the first message.</p>
+<pre class="code"><code>public sealed class NonceStore
+{
+    private readonly Lock _gate = new();
+    private readonly HashSet&lt;string&gt; _seen = new(StringComparer.Ordinal);
+
+    public bool TryConsume(string nonce) { lock (_gate) return _seen.Add(nonce); }
+
+    // For the journal. A restart must remember every nonce it burned, or a token replays across the reboot.
+    public IReadOnlyList&lt;string&gt; Export() { lock (_gate) return _seen.ToArray(); }
+    public void Import(IEnumerable&lt;string&gt; nonces) { lock (_gate) foreach (var n in nonces) _seen.Add(n); }
+}</code></pre>
+<p>Second, the token key comes from the site's custody key. HKDF (a standard key-derivation function) makes it under a fixed label. So both processes compute the same key after any restart. A fresh random key per boot would be simpler. But every queued token would then be worthless, and every old token a mystery.</p>
+<pre class="code"><code>public static class CustodyKeyFile
+{
+    public const string TokenKeyLabel = "gaspump.token-key.v1";
+
+    // GASPUMP_CUSTODY_IKM_HEX wins; else custody.ikm in the directory; else a new random key written there.
+    public static byte[] Load(string directory) { /* ... */ }
+
+    public static byte[] TokenKey(byte[] ikm) =&gt;
+        HKDF.DeriveKey(HashAlgorithmName.SHA256, ikm, 32, info: Encoding.UTF8.GetBytes(TokenKeyLabel));
+}</code></pre>
+<p><span class="tag r">Attack 30</span>Reboot the pump to replay a token. The replay dies on the restored nonce.</p>
+
+<h2 id="physics">6. Physical sanity</h2>
+<p><span class="tag d">Dispenser</span>The meter is an input an attacker can reach. The pump checks what it hears against what the valve could pass.</p>
+<p class="where">src/GasPump.Pump/PumpController.cs (Tick) · src/GasPump.Security/EventLedger.cs (Totalizer)</p>
+<pre class="code"><code>// Fuel moving while the valve is shut is a stuck valve or a bypass. Stop everything.
+if (Phase != PumpPhase.Dispensing)
+{
+    var strayPulses = meter.TakePulseCount();
+    if (strayPulses &gt; 0 &amp;&amp; Phase != PumpPhase.Faulted)
+        EmergencyStop(DiagnosticCodes.PumpMeterStray, $"{strayPulses} pulses while {Phase}");
+}
+
+// Pulser sanity. The valve at full open over one tick cannot pass more than this.
+if (pulses &gt; authority.Limits.MaxPulsesPerTick * Math.Max(1.0, dt.TotalMilliseconds / 100.0))
+    EmergencyStop(DiagnosticCodes.PumpMeterOverPulse,
+        $"pulser reported {pulses} pulses in one tick, valve could pass at most {authority.Limits.MaxPulsesPerTick}");
+
+totalizer.Add(delivered);
+Money = pricing.CentsFor(grade, Volume);</code></pre>
+<p>The totalizer is the sealed counter on the side of a real pump. It only goes up. There is no Reset method, on purpose. It can be loaded from the journal once, before the first sale, while it still reads zero.</p>
+<pre class="code"><code>public sealed class Totalizer
+{
+    private long _milliGallons;
+    public Volume Total =&gt; new(Interlocked.Read(ref _milliGallons));
+
+    public void Add(Volume delivered)
+    {
+        if (delivered.MilliGallons &lt; 0) throw new ArgumentOutOfRangeException(nameof(delivered), "a totalizer never goes down");
+        Interlocked.Add(ref _milliGallons, delivered.MilliGallons);
+    }
+
+    public void Restore(Volume journaled)
+    {
+        if (Interlocked.CompareExchange(ref _milliGallons, journaled.MilliGallons, 0) != 0)
+            throw new InvalidOperationException("a totalizer is restored once, before the first sale");
+    }
+}</code></pre>
+<p><span class="tag r">Attacks 8, 9, 33</span>Three attacks, in this order:</p>
+<ol>
+  <li>Spoof the pulser upward.</li>
+  <li>Move fuel past a shut valve.</li>
+  <li>Kill the pulser so fuel leaves unmetered.</li>
+</ol>
+<p>The first two stop the pump dead on the first bad tick. The third faults after 300 ms. The unmetered volume goes in the record. It never gets billed or added to the totalizer.</p>
+
+<h2 id="admin">7. The admin panel</h2>
+<p><span class="tag s">Station</span>The site manager sets the hold ceilings from the back office, behind a PIN. Three rules guard that PIN:</p>
+<ul>
+  <li>Three wrong PINs lock the panel for five minutes.</li>
+  <li>Every attempt is a ledger entry.</li>
+  <li>The lockout is journaled, so a power cycle doesn't reset it.</li>
+</ul>
+<p class="where">src/GasPump.Payment/SiteLimits.cs</p>
+<pre class="code"><code>else if (pin != _adminPin)
+{
+    _failedPins++;
+    if (_failedPins &gt;= MaxPinFailures)
+    {
+        _lockedUntil = _clock.GetUtcNow() + Lockout;
+        (ok, kind, detail) = (false, "admin.locked", $"{_failedPins} wrong PINs, panel locked for {Lockout.TotalMinutes:0} min");
+    }
+    else (ok, kind, detail) = (false, "admin.refused", $"wrong PIN ({_failedPins} of {MaxPinFailures})");
+}
+// ...
+Changed?.Invoke(kind, detail);   // every attempt, good or bad, reaches the ledger
+
+// For the journal. A reboot must not reset a lockout. Otherwise three wrong PINs and a power cycle would clear it.
+public void Restore(Money creditHold, Money debitHold, int failedPins, DateTimeOffset? lockedUntil) { /* ... */ }</code></pre>
+<p><span class="tag r">Attacks 23, 24</span>Guess the PIN, or own the panel and raise the debit ceiling to $5000. The guess locks the panel. The raise passes gate 1 and meets gate 3, which still says $500.</p>
+
+<h2 id="audit">8. Audit: three records, one code</h2>
+<p><span class="tag b">Both</span>Every fault, every arm, and every admin attempt lands in three places:</p>
+<ul>
+  <li>the debug log on Herald.OSS,</li>
+  <li>the hash-chained ledger,</li>
+  <li>the TesseraSeal custody chain.</li>
+</ul>
+<p>One diagnostic code goes in all three. So whoever reads any one of them can tell a dead pulser from an empty tank without reading the prose.</p>
+<p class="where">src/GasPump.Core/Diagnostics.cs · src/GasPump.Security/EventLedger.cs · src/GasPump.Custody</p>
+<figure class="wide">
+<pre class="mermaid">
+flowchart LR
+  F[PumpController faults: PUMP.MTR.NOPULSE] --> L[Herald log line, Code property]
+  F --> G[EventLedger entry: hash chain, SHA-256]
+  F --> C[Custody chain line: TesseraSeal HMAC chain under HKDF key]
+  G --> W[LinkFrame ledger over TCP]
+  C --> X[LinkFrame custody over TCP]
+  W --> SR[station RecordsPanel, dispenser origin]
+  X --> SC[(station-copy-run.ndjson)]
+  SC --> V[VerifyChain with the same key]
+  style G fill:#f9e7cd,stroke:#b4660a,color:#111
+  style C fill:#f9e7cd,stroke:#b4660a,color:#111
+  style SC fill:#dbe6f5,stroke:#2a5c9b,color:#111
+</pre>
+<figcaption>The dispenser writes. The station receives and verifies. Neither side can edit the other's record.</figcaption>
+</figure>
+<p>The ledger is append-only and hash-chained. Every entry carries the hash (a fingerprint) of the one before it. Edit entry 7 and entries 8 onward no longer match. Verify walks the whole chain. It returns the first broken sequence number, or 0 when the chain is intact.</p>
+<pre class="code"><code>public sealed record LedgerEntry(long Seq, DateTimeOffset At, string Kind, string Detail, string PrevHash, string Hash)
+{
+    public static string Compute(long seq, DateTimeOffset at, string kind, string detail, string prevHash)
+    {
+        var bytes = Encoding.UTF8.GetBytes($"{seq}|{at.ToUnixTimeMilliseconds()}|{kind}|{detail}|{prevHash}");
+        return Convert.ToHexString(SHA256.HashData(bytes));
+    }
+}
+
+public static long Verify(IReadOnlyList&lt;LedgerEntry&gt; entries)
+{
+    var prev = Genesis;
+    for (int i = 0; i &lt; entries.Count; i++)
+    {
+        var e = entries[i];
+        if (e.Seq != i + 1) return e.Seq;
+        if (e.PrevHash != prev) return e.Seq;
+        if (LedgerEntry.Compute(e.Seq, e.At, e.Kind, e.Detail, e.PrevHash) != e.Hash) return e.Seq;
+        prev = e.Hash;
+    }
+    return 0;
+}</code></pre>
+<p>The totalizer is recorded on every valve close, so stolen volume shows up in the books even if someone erased the sale record.</p>
+<p><span class="tag r">Attack 11</span>Erase or edit the sale record. The chain breaks at that entry, and the totalizer still disagrees with the tank.</p>
+
+<h2 id="custody">9. Custody in two places</h2>
+<p><span class="tag b">Both</span>A chain kept only on the dispenser dies with the dispenser. So the dispenser publishes every custody line, byte for byte, as it lands. The station appends the same bytes to its own file, one file per dispenser run. It checks the copy with the same key. The line a subscriber receives is the line the verifier will read.</p>
+<p class="where">src/GasPump.Dispatch/CustodyStream.cs · src/GasPump.Host/StationServer.cs</p>
+<pre class="code"><code>// The station's copy of the dispenser's chain.
+private void OnLine(string runId, string line)
+{
+    lock (_gate)
+    {
+        if (runId != RunId)
+        {
+            RunId = runId;
+            CopyPath = Path.Combine(_directory, $"station-copy-{runId}.ndjson");
+            LinesReceived = File.Exists(CopyPath) ? File.ReadLines(CopyPath).Count() : 0;
+        }
+        File.AppendAllText(CopyPath!, line + "\n");
+        LinesReceived++;
+    }
+}
+
+// Run TesseraSeal's verifier over the station's copy.
+public (bool Ok, long? FailureAtSeq, string? Reason, int Lines) VerifyCopy()
+{
+    lock (_gate)
+    {
+        if (CopyPath is null || !File.Exists(CopyPath)) return (false, null, "no station copy yet", 0);
+        var ok = ImmutableAuditFileSink.VerifyChain(CopyPath, _ikm, out var seq, out var reason);
+        return (ok, seq, reason, File.ReadLines(CopyPath).Count());
+    }
+}</code></pre>
+<p>The custody chain is TesseraSeal primitive 1: an HMAC-SHA-256 chain under an HKDF session key. A changed byte fails that entry's MAC (message authentication code). A cut final newline fails the whole file. Each run is its own chain, and both sides can verify it. The host exposes <code>/api/station/custody/verify</code> and streams the lines on <code>/ws/custody</code> for any outside listener.</p>
+<p><span class="tag r">Attacks 31, 36</span>Edit the custody file after the fact, or take the evidence with a dead dispenser. The edit fails at the edited entry. The station holds the copy.</p>
+
+<h2 id="recovery">10. Recovery is part of the audit</h2>
+<p><span class="tag s">Station</span>A record that claims more than it knows is a bad record. So the restart decision states what it cannot count. After a crash, fuel may have moved for up to one snapshot period, at the last flow rate. After an E-stop that number is zero, because the E-stop wrote its own final snapshot on the way down.</p>
+<pre class="code"><code>// An E-stop writes its own final snapshot on the way down, so nothing flowed after it. A crash writes none.
+var estop = snapshot.StopReason == "ESTOP";
+var unrecorded = estop ? Volume.Zero : flow.Over(snapshotPeriod);
+
+case SaleState.Fueling when volume &gt; Volume.Zero:
+    return new(RecoveryKind.ClosedOut, /* ... */ unrecorded, age,
+        estop
+            ? $"{how} while fueling; closed for {volume} at {money}; the E-stop cut power with the valve open, nothing flowed after the final snapshot"
+            : $"{how} while fueling; closed for {volume} at {money}; delivery likely under-recorded by up to {unrecorded}");</code></pre>
+<p>The outcome goes in the ledger and the custody chain under <code>recovery</code>. An auditor reads the gap as a stated bound.</p>
+
+<h2 id="cap">11. Where CAP comes in</h2>
+<p><span class="tag b">Both</span>The CAP theorem says a networked system can't have all three of these at once when the network breaks:</p>
+<div class="cap">
+  <div><b>C</b>Consistency. Every reader sees the same, latest truth.</div>
+  <div><b>A</b>Availability. Every request gets an answer, even while the link is down.</div>
+  <div><b>P</b>Partition tolerance. The system keeps working when the link is cut.</div>
+</div>
+<p>Partitions happen, so P is a given. The question at each wire is what to do when the link is down: answer anyway (A), or refuse until we know (C)? The simulator has two wires. It answers differently at each wire, and differently at each step of the sale.</p>
+<figure class="wide">
+<pre class="mermaid">
+flowchart LR
+  subgraph W1["wire 1: station to bank"]
+    direction TB
+    a1[authorize] -->|30 s silence| a2[decline, nothing armed: C over A]
+    b1[complete or reverse] -->|bank down| b2[write-ahead queue, drain later: A over C, eventually consistent]
+  end
+  subgraph W2["wire 2: station to dispenser"]
+    direction TB
+    c1[mid-sale, link lost] --> c2[dispenser keeps pouring under the token: A, bounded]
+    c1 --> c3[station faults LINK.DISPENSER.LOST, settles recorded fuel: C on its side]
+    d1[reconnect] --> d2[first frame is Stop; chain replays from the header]
+  end
+  style a2 fill:#dbe6f5,stroke:#2a5c9b,color:#111
+  style b2 fill:#dbe6f5,stroke:#2a5c9b,color:#111
+  style c2 fill:#f9e7cd,stroke:#b4660a,color:#111
+  style c3 fill:#dbe6f5,stroke:#2a5c9b,color:#111
+</pre>
+<figcaption>One system, four answers, each picked by what's at risk at that step.</figcaption>
+</figure>
+
+<h3>Wire 1, authorization: consistency wins</h3>
+<p>No answer from the bank means no fuel. The station waits 30 seconds and declines. A late approval that arrives after that gets reversed, and the pump stays unarmed. What's at risk here is fuel nobody paid for, so the system refuses to guess.</p>
+<pre class="code"><code>// From approval to the first lift, with the card read at the pump, authorization waits 30 s.
+public sealed record SaleTimeouts(TimeSpan Authorization, TimeSpan NozzleLift, TimeSpan NozzleLiftAtStation, TimeSpan Notice, TimeSpan MaxFueling);
+
+case SaleEvent.Approved late when State != SaleState.Authorizing:
+    // Late approval after we gave up. Give the hold back.
+    Hold = HoldStatus.Held;
+    commands.Add(new SaleCommand.Reverse(SaleId));
+    return true;</code></pre>
+
+<h3>Wire 1, settlement: availability wins, with a log</h3>
+<p>Fuel has moved, and the driver shouldn't have to stand at the pump until the bank wakes up. So three things happen:</p>
+<ol>
+  <li>The completion or reversal goes into the compensation log (the undo-and-retry list) on disk.</li>
+  <li>The driver is told the hold is pending.</li>
+  <li>The queue drains when any call succeeds.</li>
+</ol>
+<p>Two facts make this eventual consistency (the books catch up later) safe:</p>
+<ul>
+  <li>the intent is on disk before the wire is tried,</li>
+  <li>the bank treats a repeat as the same message, so doing it twice changes nothing.</li>
+</ul>
+<pre class="code"><code>// Intent first, then one send path for everything owed, oldest first.
+var advice = new PendingAdvice(saleId, PendingKind.Completion, final);
+Intend(advice);
+var sent = await DrainPendingAsync(ct);
+return sent.Contains(advice)
+    ? new CompletionResult(true, false, $"completion {final} sent")
+    : new CompletionResult(false, true, $"host {LastOutcome}, completion {final} queued");</code></pre>
+
+<h3>Wire 2, mid-sale: bounded availability on the island</h3>
+<p>The dispenser is an island on purpose. When the station vanishes with the valve open, the dispenser keeps pouring. It pours only under the token it already holds and the hard limits it owns:</p>
+<ul>
+  <li>the ceiling,</li>
+  <li>the volume,</li>
+  <li>the ten-minute clock.</li>
+</ul>
+<p>The token is a lease, like a rental that ends at a set time. Its expiry and ceiling cap how far the island can drift from the station's truth. Availability stretches only as far as a signed and clamped number allows.</p>
+<p>The station makes the opposite choice. A pump it can't reach is a pump it must not pretend to drive. Posts are dropped and counted while the link is down. The sale then does three things:</p>
+<ol>
+  <li>It faults with <code>LINK.DISPENSER.LOST</code>.</li>
+  <li>It settles for the fuel recorded so far.</li>
+  <li>It sends the driver to the attendant.</li>
+</ol>
+<pre class="code"><code>private void OnDispenserConnection(bool up)
+{
+    if (_frozen) return;   // the station cut this link itself; see EmergencyStop
+    var code = DiagnosticCodes.LinkDispenserLost;
+    if (up)
+    {
+        Ledger.Append("link.up", $"dispenser {_link.RemoteRunId} pid {_link.RemotePid}");
+        _link.Post(new PumpMessage.Stop("station connected"), CurrentSaleId);   // a valve left open shuts first
+        return;
+    }
+    var s = Snapshot();
+    Ledger.Append("link.down", code.Format($"sale {s.SaleId} {s.State} {s.Volume} {s.Money}"));
+    if (s.State is SaleState.Authorizing or SaleState.ReadyToPump or SaleState.Fueling)
+        _saleBox.Post(new SaleEvent.Fault(s.SaleId, "dispenser link lost", code.Code));
+}</code></pre>
+
+<h3>Wire 2, reconnect: the records converge</h3>
+<p>The first frame a new station sends is <code>Stop</code>. The dispenser answers by sending back, in this order:</p>
+<ol>
+  <li>its whole ledger,</li>
+  <li>the tail of its log,</li>
+  <li>the custody chain from the header.</li>
+</ol>
+<p>The station then drops the overlap:</p>
+<ul>
+  <li>It de-duplicates the ledger by run and sequence.</li>
+  <li>It skips the custody lines its copy already holds, by count. This works because the chain is append-only and the prefix matches.</li>
+</ul>
+<p>After the replay the two copies hold the same bytes. The hash chain is the proof.</p>
+<pre class="code"><code>// What this run already wrote before the station arrived: the ledger in full,
+// the last stretch of the log, then the whole chain so far, then live.
+foreach (var e in Ledger.Snapshot()) Send(new LinkFrame(LinkFrame.TagLedger, L: e));
+foreach (var l in Log.Snapshot().Where(l =&gt; l.Source != "ledger").TakeLast(200)) Send(new LinkFrame(LinkFrame.TagLog, Log: WireLog.From(l)));
+if (_stream is not null)
+{
+    _custodyHandler = line =&gt; Send(new LinkFrame(LinkFrame.TagCustody, Line: line));
+    _stream.SubscribeWithReplay(_custodyHandler);
+}
+Send(new LinkFrame(LinkFrame.TagView, V: Dispenser.View(RunId, Environment.ProcessId, CustodyPath)));</code></pre>
+
+<h3>What never crosses a wire</h3>
+<p>Some state is kept on one side so no agreement is ever needed.</p>
+<ul>
+  <li><strong>Dispenser only:</strong> the nonce store and the hard limits.</li>
+  <li><strong>Station only:</strong> the sale, the journal, and the compensation log.</li>
+</ul>
+<p>Each of these has one writer. So there is no consensus to run (no vote between the two sides) and no split brain to heal (two copies that each think they are right). The cheapest way through CAP is to arrange things so the two sides never have to agree on the same row.</p>
+<div class="scroll">
+<table>
+<thead><tr><th>Step</th><th>Link down</th><th>Choice</th><th>Why</th></tr></thead>
+<tbody>
+<tr><td>Authorize</td><td>station to bank</td><td>C. Decline after 30 s. Late approval reversed.</td><td>Fuel nobody paid for is the asset at risk.</td></tr>
+<tr><td>Complete or reverse</td><td>station to bank</td><td>A. Write-ahead queue, drain later, idempotent at the bank.</td><td>Fuel already moved. The driver should leave. The money follows.</td></tr>
+<tr><td>Fueling</td><td>station to dispenser</td><td>A on the island, bounded by the token lease. C at the station, which faults and settles.</td><td>The valve must not slam on a driver mid-pour, and the station must not pretend.</td></tr>
+<tr><td>Custody</td><td>station to dispenser</td><td>Eventual. Replay from the header on reconnect. Hash chain proves convergence.</td><td>Evidence must survive either side dying.</td></tr>
+<tr><td>Nonces, hard limits</td><td>n/a</td><td>Single writer on the dispenser.</td><td>No agreement needed, so no partition can split it.</td></tr>
+</tbody>
+</table>
+</div>
+<aside class="rule s">
+<p><strong>Without a partition, the trade is latency.</strong> The station journals every change to the compensation log. It streams every custody line as it lands. Each decision costs a disk write and a socket write. The simulator pays that cost, since a record written late may never get written.</p>
+</aside>
+
+<h2 id="scope">12. Out of scope, on purpose</h2>
+<p>The simulator leaves out five things.</p>
+<ol>
+  <li><strong>Card data.</strong> There is none. A real reader encrypts the card inside a tamper-proof boundary, using a DUKPT key (a fresh key for every swipe). The terminal never sees digits. That is PCI PTS territory (the PIN Transaction Security standard).</li>
+  <li><strong>Key management.</strong> The payment host and the pump share one HMAC key, derived from the site custody key. A real site gives each device its own key. It also adds a counter, so the pump can refuse out-of-order commands.</li>
+  <li><strong>Physical attacks on the meter.</strong> The pulse check catches a pulser that reads too high. A meter that reads too low gives fuel away. Only the totalizer compared with the tank dip (a manual reading of the tank level) would show it.</li>
+  <li><strong>Denial of service.</strong> An attacker who can reach the pump mailbox can fill it with junk. Mailboxes have a size limit, so the attacker has to wait for room. The driver waits too.</li>
+  <li><strong>Merkle seal and HSM signature</strong> on the custody chain. An HSM is a hardware security module. The chain uses TesseraSeal primitive 1 only.</li>
+</ol>
+
+<h2 id="matrix">13. Attack, control, test</h2>
+<p>Each control has at least one test that fails when you remove it. The table below is a selection from the 46 rows in <code>docs/threat-model.md</code>.</p>
+<div class="scroll">
+<table>
+<thead><tr><th>#</th><th>Attack</th><th>Control</th><th>Test</th></tr></thead>
+<tbody>
+<tr><td>1</td><td>Send the pump a ceiling of $2000</td><td>No ceiling message exists</td><td><code>Arming_without_a_token_is_refused</code></td></tr>
+<tr><td>2</td><td>Edit the ceiling in a captured token</td><td>HMAC over every field, checked first</td><td><code>Tampered_ceiling_fails_the_signature</code></td></tr>
+<tr><td>3</td><td>Replay a good token</td><td>Single-use nonce</td><td><code>Replayed_token_is_refused_the_second_time</code></td></tr>
+<tr><td>6</td><td>Sign a 600-gallon, $2000 token</td><td>Verify, then clamp to HardLimits</td><td><code>Signed_600_gallon_token_is_clamped_to_50_gallons_and_500_dollars</code></td></tr>
+<tr><td>8</td><td>Spoof the pulser</td><td>Per-tick pulse sanity, emergency stop</td><td><code>Spoofed_pulses_during_dispensing_stop_the_pump_dead</code></td></tr>
+<tr><td>11</td><td>Erase or edit the sale record</td><td>Hash-chained ledger, totalizer on every close</td><td><code>Ledger_verifies_intact_and_detects_an_edited_entry</code></td></tr>
+<tr><td>12</td><td>Complete a sale twice</td><td>Idempotent completion at the issuer</td><td><code>Hold_comes_off_the_balance_and_completion_refunds_the_unspent_part</code></td></tr>
+<tr><td>18</td><td>Reversal lost on a dead link</td><td>Same store-and-forward queue, once per sale</td><td><code>Reversal_that_cannot_reach_the_host_is_queued_once_and_drains_before_completions</code></td></tr>
+<tr><td>19</td><td>Reversal arrives before its authorization</td><td>Void tombstone at the issuer</td><td><code>Reversal_that_arrives_before_its_authorization_voids_the_sale_at_the_issuer</code></td></tr>
+<tr><td>24</td><td>Guess the admin PIN</td><td>Lock after three, every attempt in the ledger</td><td><code>Brute_forcing_the_admin_pin_locks_the_panel_and_changes_nothing</code></td></tr>
+<tr><td>30</td><td>Reboot to replay a token or clear the lockout</td><td>Nonces and lockout journaled; key derived by HKDF</td><td><code>Replayed_token_is_still_refused_after_a_restart</code></td></tr>
+<tr><td>31</td><td>Edit the custody file after the fact</td><td>HMAC chain under an HKDF session key</td><td><code>Custody_file_verifies_under_TesseraSeal_and_a_tampered_byte_fails_at_the_right_entry</code></td></tr>
+<tr><td>36</td><td>Dead dispenser takes the evidence</td><td>Station copy of the chain, verified with the same key</td><td><code>Custody_stream_hands_out_the_same_bytes_the_file_holds_and_a_copy_built_from_it_verifies</code></td></tr>
+<tr><td>37</td><td>Dispenser dies mid-sale</td><td>LINK.DISPENSER.LOST, settle recorded fuel</td><td><code>Dispenser_power_loss_mid_fuel_faults_the_station_sale_with_LINK_DISPENSER_LOST_and_settles_for_the_recorded_fuel</code></td></tr>
+<tr><td>38</td><td>Station dies with the valve open</td><td>Dispenser pours under its own limits; Stop is the first frame back</td><td><code>Station_restart_sends_Stop_first_so_a_valve_left_open_closes_and_the_journal_closes_the_sale</code></td></tr>
+<tr><td>44</td><td>A restart shows a broken part as repaired</td><td>Broken parts persisted on both sides</td><td><code>A_restart_does_not_repair_a_separated_hose</code></td></tr>
+</tbody>
+</table>
+</div>
+<p class="eyebrow">Source: E:\dev\MMP.GasPumpSimulator at commit ebbf956. 275 dotnet tests and 9 Playwright specs pass. Companions: Gas Pump Patterns, Adding Fuel Detergent, Receipts, Lines, and a Video Player.</p>
+</main>
+
+<script>
+(function(){
+  var re = /(\/\/[^\n]*)|(\$?"(?:[^"\\\n]|\\.)*")|\b(public|private|static|sealed|readonly|record|struct|class|interface|enum|abstract|override|event|async|await|return|new|var|if|else|switch|case|when|is|not|and|or|out|lock|using|foreach|while|true|false|null|void|bool|long|string|int|decimal|this|yield|default|throw|try|catch|in|const|ref)\b|\b([A-Z][A-Za-z0-9]*)\b/g;
+  function esc(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+  document.querySelectorAll('pre.code code').forEach(function(el){
+    var src = el.textContent, out = '', last = 0, m;
+    re.lastIndex = 0;
+    while ((m = re.exec(src)) !== null) {
+      out += esc(src.slice(last, m.index));
+      if (m[1]) out += '<span class="cmt">'+esc(m[1])+'</span>';
+      else if (m[2]) out += '<span class="str">'+esc(m[2])+'</span>';
+      else if (m[3]) out += '<span class="kw">'+esc(m[3])+'</span>';
+      else out += '<span class="ty">'+esc(m[4])+'</span>';
+      last = re.lastIndex;
+    }
+    out += esc(src.slice(last));
+    el.innerHTML = out;
+  });
+})();
+</script>
+
+<!--claude-mermaid-runtime-begin:3477-->
+<style>.mermaid-diagram{margin-block:4px}.mermaid-diagram svg{display:block;margin:0 auto;max-width:100%;height:auto}</style>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11.16.1/dist/mermaid.min.js"></script>
+<script>(function(){
+var CFG={"palettes":{"light":{"surface":"#f4efe4","text":"#42392e","line":"#8a7f6d","border":"#7a6c52","bg":"#fffdf8"},"dark":{"surface":"#262b34","text":"#f2f3f5","line":"#a8adb8","border":"#9aa4b8","bg":"#1f232b"}}};
+if(typeof mermaid==='undefined')return;
+var pres=Array.prototype.slice.call(document.querySelectorAll('pre.mermaid')).filter(function(p){if(p.hasAttribute('data-claude-mermaid-claimed'))return false;p.setAttribute('data-claude-mermaid-claimed','1');return true;});
+if(!pres.length)return;
+var mq=window.matchMedia?window.matchMedia('(prefers-color-scheme: dark)'):null;
+var root=document.documentElement;
+var items=pres.map(function(pre){
+var mount=document.createElement('div');mount.className='mermaid-diagram';
+return {pre:pre,mount:mount,src:pre.textContent||''};
+});
+var seq=0;
+var renderGen=0;
+var lastKey='';
+function pageBg(fallback){
+var els=[document.body,document.documentElement];
+for(var i=0;i<els.length;i++){
+var c=els[i]&&getComputedStyle(els[i]).backgroundColor;
+if(c&&c!=='transparent'&&c!=='rgba(0, 0, 0, 0)')return c;
+}
+return fallback;
+}
+function render(){
+var theme=root.getAttribute('data-theme');
+var dark=theme==='dark'||(!!(mq&&mq.matches)&&theme!=='light');
+var pal=dark?CFG.palettes.dark:CFG.palettes.light;
+var bg=pageBg(pal.bg);
+var key=(dark?'d':'l')+'|'+bg;
+if(key===lastKey)return;
+lastKey=key;
+var gen=++renderGen;
+var font=getComputedStyle(document.body).fontFamily||'sans-serif';
+var nat={useMaxWidth:false};
+mermaid.initialize({
+startOnLoad:false,securityLevel:'strict',theme:'base',
+flowchart:nat,sequence:nat,er:nat,state:nat,class:nat,pie:nat,
+gantt:nat,journey:nat,timeline:nat,gitGraph:nat,mindmap:nat,xyChart:nat,
+quadrantChart:nat,sankey:nat,c4:nat,requirement:nat,block:nat,
+packet:nat,kanban:nat,architecture:nat,radar:nat,
+themeVariables:{background:bg,mainBkg:pal.surface,primaryColor:pal.surface,
+primaryTextColor:pal.text,lineColor:pal.line,primaryBorderColor:pal.border,
+nodeBorder:pal.border,clusterBorder:pal.border,edgeLabelBackground:bg,
+clusterBkg:'rgba(127,127,127,0.07)',titleColor:pal.text,
+darkMode:dark,rowOdd:bg,rowEven:'rgba(127,127,127,0.07)',
+attributeBackgroundColorOdd:bg,attributeBackgroundColorEven:'rgba(127,127,127,0.07)',
+fontSize:'16px',fontFamily:font},
+themeCSS:'.node rect, .node circle, .node polygon, .node path, .cluster rect { stroke-width: 2px; }'
+});
+items.forEach(function(it){
+var id='claude-mermaid-'+seq++;
+mermaid.render(id,it.src).then(function(r){
+if(gen!==renderGen)return;
+var prev=it.pre.previousElementSibling;
+if(prev&&prev.className==='mermaid-diagram'&&prev!==it.mount)return;
+it.mount.innerHTML=r.svg;
+if(!it.mount.parentNode)it.pre.parentNode.insertBefore(it.mount,it.pre);
+it.pre.style.display='none';
+},function(){
+var scratch=document.getElementById(id);
+if(scratch)scratch.parentNode.removeChild(scratch);
+scratch=document.getElementById('d'+id);
+if(scratch)scratch.parentNode.removeChild(scratch);
+if(gen!==renderGen)return;
+if(it.mount.parentNode)it.mount.parentNode.removeChild(it.mount);
+it.pre.style.display='';
+});
+});
+}
+render();
+if(mq&&mq.addEventListener)mq.addEventListener('change',render);
+if(typeof MutationObserver!=='undefined')new MutationObserver(render).observe(root,{attributes:true,attributeFilter:['data-theme']});
+})();</script>
+<!--claude-mermaid-runtime-end-->
+
+</body></html>

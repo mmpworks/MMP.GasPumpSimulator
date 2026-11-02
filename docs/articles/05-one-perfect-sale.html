@@ -1,0 +1,1115 @@
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
+<title>One Perfect Sale</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Source+Sans+3:ital,wght@0,400;0,600;1,400&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: one 70ch reading column. Code and diagrams may widen to 96ch. Amber marks the dispenser, blue marks the station. */
+:root{
+  --bg:#f6f3ec; --fg:#201e1a; --muted:#6a635a; --rule:#d9d2c5; --panel:#fffdf8;
+  --amber:#b4660a; --amber-soft:#f9e7cd; --blue:#2a5c9b; --blue-soft:#dbe6f5; --green:#2f7a4a; --green-soft:#dcefe1;
+  --code-bg:#1c1e23; --code-fg:#e6e3dc; --kw:#f0a53c; --str:#9ed58b; --cmt:#8d939e; --type:#80c4ee;
+  --display:"Barlow Condensed","Arial Narrow",Arial,sans-serif;
+  --body:"Source Sans 3",system-ui,-apple-system,Segoe UI,sans-serif;
+  --mono:"IBM Plex Mono",Consolas,"Courier New",monospace;
+}
+@media (prefers-color-scheme: dark){ :root:not([data-theme="light"]){
+  --bg:#14161a; --fg:#e8e4db; --muted:#a69e90; --rule:#2c3038; --panel:#1b1e24;
+  --amber:#e8a24a; --amber-soft:#35260f; --blue:#82b1e6; --blue-soft:#162638; --green:#7fc79a; --green-soft:#14301d;
+  --code-bg:#0e1013; --code-fg:#e6e3dc; color-scheme:dark } }
+:root[data-theme="dark"]{
+  --bg:#14161a; --fg:#e8e4db; --muted:#a69e90; --rule:#2c3038; --panel:#1b1e24;
+  --amber:#e8a24a; --amber-soft:#35260f; --blue:#82b1e6; --blue-soft:#162638; --green:#7fc79a; --green-soft:#14301d;
+  --code-bg:#0e1013; --code-fg:#e6e3dc; color-scheme:dark }
+
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:0 4rem}
+main{max-width:70ch;margin:0 auto}
+.wide{max-width:96ch;margin-left:auto;margin-right:auto}
+h1,h2,h3{font-family:var(--display);text-wrap:balance;line-height:1.05;margin:0}
+h1{font-size:clamp(2.6rem,7vw,4.2rem);font-weight:700;letter-spacing:-.01em}
+h2{font-size:2rem;font-weight:600;margin-top:3.2rem;padding-top:1.2rem;border-top:3px solid var(--rule)}
+h3{font-size:1.35rem;font-weight:600;margin-top:1.8rem}
+p{margin:.9rem 0}
+.eyebrow{font-family:var(--mono);font-size:.78rem;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+header{padding-block:3rem 1.5rem}
+header p.lede{font-size:1.2rem;color:var(--muted);max-width:60ch}
+.tag{display:inline-block;font-family:var(--mono);font-size:.72rem;letter-spacing:.06em;text-transform:uppercase;padding:.15rem .5rem;border-radius:3px;margin-right:.4rem}
+.tag.d{background:var(--amber-soft);color:var(--amber)}
+.tag.s{background:var(--blue-soft);color:var(--blue)}
+.where{font-family:var(--mono);font-size:.85rem;color:var(--muted);margin:.2rem 0 1rem}
+pre.code{background:var(--code-bg);color:var(--code-fg);font-family:var(--mono);font-size:.84rem;line-height:1.5;
+  padding:1rem 1.1rem;border-radius:6px;overflow-x:auto;margin:1rem 0;tab-size:4}
+pre.code code{font-family:inherit}
+.kw{color:var(--kw)} .str{color:var(--str)} .cmt{color:var(--cmt);font-style:italic} .ty{color:var(--type)}
+figure{margin:1.4rem 0}
+figure pre.mermaid{background:var(--panel);border:1px solid var(--rule);border-radius:6px;padding:1rem;overflow-x:auto}
+figure svg{width:100%;height:auto;display:block;background:var(--panel);border:1px solid var(--rule);border-radius:6px}
+figcaption{font-size:.9rem;color:var(--muted);margin-top:.5rem}
+table{border-collapse:collapse;width:100%;font-size:.93rem;margin:1rem 0}
+th,td{text-align:left;padding:.5rem .6rem;border-bottom:1px solid var(--rule);vertical-align:top}
+th{font-family:var(--display);font-size:1.05rem;font-weight:600}
+td code,p code,li code{font-family:var(--mono);font-size:.85em;background:var(--panel);border:1px solid var(--rule);padding:0 .3em;border-radius:3px}
+.scroll{overflow-x:auto}
+aside.rule{border-left:4px solid var(--amber);background:var(--panel);padding:.8rem 1rem;margin:1.2rem 0;border-radius:0 6px 6px 0}
+aside.rule.s{border-left-color:var(--blue)}
+aside.rule p{margin:.3rem 0}
+ol,ul{padding-left:1.3rem} li{margin:.3rem 0}
+a{color:var(--blue)} a:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
+nav.toc{font-size:.95rem;columns:2;column-gap:2rem;margin:1.5rem 0}
+nav.toc a{text-decoration:none;display:block;padding:.15rem 0}
+pre.trace{font-family:var(--mono);font-size:.82rem;background:var(--panel);border:1px solid var(--rule);border-radius:6px;padding:1rem 1.2rem;overflow-x:auto;white-space:pre;line-height:1.6}
+dl.words dt{font-weight:600;margin-top:.8rem} dl.words dd{margin:.2rem 0 0 0;color:var(--fg)}
+.plain{background:var(--panel);border:1px solid var(--rule);border-radius:6px;padding:.7rem 1rem;margin:1rem 0}
+.plain strong{font-family:var(--display);font-size:1.05rem;letter-spacing:.02em}
+/* SVG text uses the page's tokens so both themes read. */
+svg text{font-family:var(--body);fill:var(--fg)}
+svg .t{font-family:var(--display);font-weight:600}
+svg .m{fill:var(--muted);font-size:11px}
+svg .box{fill:var(--panel);stroke:var(--rule);stroke-width:1.5}
+svg .amber{stroke:var(--amber)} svg .amberfill{fill:var(--amber-soft)}
+svg .blue{stroke:var(--blue)} svg .bluefill{fill:var(--blue-soft)}
+svg .wire{stroke:var(--muted);stroke-width:2;fill:none}
+@media (max-width:520px){nav.toc{columns:1} body{font-size:16px}}
+</style>
+
+<main>
+<header>
+  <div class="eyebrow">MMP.GasPumpSimulator · article 5 · 2026-11-02</div>
+  <h1>One perfect sale, piece by piece</h1>
+  <p class="lede">A driver taps a credit card, types a ZIP code, picks Regular, fills up, stops to take a phone call, finishes, and hangs up the nozzle. Nothing goes wrong. This article follows that one sale through the software. For each part it says what the part decides and who it talks to next. Read this one first. Every other path through the code is this path with a wrong turn in it.</p>
+  <p><span class="tag s">Station</span> marks the computer inside the store that owns the sale and the money. <span class="tag d">Dispenser</span> marks the computer out on the island that owns the valve and the meter.</p>
+</header>
+
+<nav class="toc" aria-label="Sections">
+  <a href="#words">1. Six words we use</a>
+  <a href="#island">2. The dispenser, out on the island</a>
+  <a href="#store">3. The station, inside the store</a>
+  <a href="#trace">4. The trace the tests pin</a>
+  <a href="#tap">5. Tap: a card becomes a sale</a>
+  <a href="#keypad">6. Keypad: the ZIP goes in</a>
+  <a href="#bank">7. Bank: the hold and the token</a>
+  <a href="#arm">8. Arm: the token crosses the wire</a>
+  <a href="#hands">9. Hands: grade, lift, insert, squeeze</a>
+  <a href="#phone">10. The phone call</a>
+  <a href="#hang">11. Hang up: settling the bill</a>
+  <a href="#quiet">12. What stayed quiet</a>
+  <a href="#map">13. Who touched what</a>
+  <a href="#read">14. Where to start reading</a>
+</nav>
+
+<h2 id="words">1. Six words we use</h2>
+<p>Think of a small gas station run by three people:</p>
+<ul>
+  <li>One sits at the register and keeps the sales book.</li>
+  <li>One sits next to them with a phone and calls the bank.</li>
+  <li>One is out on the island, running the pump.</li>
+</ul>
+<p>They never shout across the room. They pass each other slips of paper. That is the whole design, and these six words describe it.</p>
+
+<dl class="words">
+  <dt>Worker</dt>
+  <dd>One of the three people. In the software a worker is a loop. It waits for a slip, handles it, and waits for the next one. It handles one slip at a time, so it never trips over itself. The three workers are:
+    <ul>
+      <li>the <strong>sale worker</strong>, the sales book,</li>
+      <li>the <strong>payment worker</strong>, the phone to the bank,</li>
+      <li>the <strong>pump worker</strong>, the hands on the pump.</li>
+    </ul>
+  </dd>
+  <dt>Mailbox</dt>
+  <dd>Each worker's in-tray. Anyone can drop a slip in. Only the owner takes slips out, in the order they arrived. A tray has a size. When a tray fills up, one of two things happens:
+    <ul>
+      <li>the sender waits, or</li>
+      <li>the slip is dropped and counted.</li>
+    </ul>
+    Either way, one slow worker cannot drown the others. In the code a mailbox is a bounded queue (a line with a size limit). <code>_saleBox.Post(...)</code> drops a slip into the sale worker's tray.</dd>
+  <dt>Message</dt>
+  <dd>The slip itself. Every slip is a small record with a name on top, like <code>CardPresented</code>, <code>Arm</code>, <code>Progress</code>, or <code>NozzleHung</code>. Slips come in three stacks:
+    <ul>
+      <li><code>SaleEvent</code>: things that happened to the sale,</li>
+      <li><code>PumpMessage</code>: things to do at the pump,</li>
+      <li><code>PaymentMessage</code>: things to ask the bank.</li>
+    </ul>
+    A slip is just a record. So the same slip can go across a room or across a cable without being rewritten.</dd>
+  <dt>Wire</dt>
+  <dd>The cable between the store and the island.
+    <ul>
+      <li>The sale and payment workers live in one program, <code>GasPump.Host.exe</code>, inside the store.</li>
+      <li>The pump worker lives in a second program, <code>GasPump.Dispenser.exe</code>, out on the island.</li>
+      <li>The wire is a TCP connection between them on port 5178. It carries one slip per line of text, written as JSON.</li>
+      <li>Pump messages go out. Sale events, pump views, and audit lines come back.</li>
+    </ul>
+  </dd>
+  <dt>Token and nonce</dt>
+  <dd>Three pieces make one permission slip:
+    <ul>
+      <li>The <strong>token</strong> is the slip the station signs for the pump: "this sale may pump up to $30 and 50 gallons, until this time."</li>
+      <li>The <strong>seal</strong> is a signature made with a secret key both sides hold.</li>
+      <li>The <strong>nonce</strong> is a "number used once", a random number stamped on each slip.</li>
+    </ul>
+    The pump writes down every nonce it has seen. If the same one arrives again, the slip is a copy of an old one. The pump refuses it even though the seal is good. That is how a replayed token dies.</dd>
+  <dt>Ticker</dt>
+  <dd>A metronome on the island. Every 100 milliseconds it drops a <code>Tick</code> slip in the pump worker's tray. The pump worker uses each tick to read the meter and report how much fuel moved. Nothing on the store side ticks. The store just hears the reports.</dd>
+</dl>
+
+<p>How the three workers run on the CPU is a choice made once at startup. There are three choices:</p>
+<ul>
+  <li>one thread each,</li>
+  <li>Tasks over channels,</li>
+  <li>the AsyncProxy iterator machines.</li>
+</ul>
+<p>The choice changes nothing in this story. The tests run the whole sale three times, once per choice, and the trace below comes out the same each time.</p>
+
+<h2 id="island">2. The dispenser, out on the island</h2>
+<p><span class="tag d">Dispenser</span> The island computer runs one worker, the pump worker, and that worker has the most hands-on job. It is the mechanic. It owns every physical part that touches fuel, and it keeps the records that prove how much fuel moved.</p>
+
+<figure class="wide">
+<svg viewBox="0 0 900 560" role="img" aria-labelledby="svg1t svg1d">
+  <title id="svg1t">The dispenser and its parts</title>
+  <desc id="svg1d">A fuel dispenser cabinet with the pump worker inside, connected to the valve, meter, totalizer, flow switch, breakaway sensor, tank supply, nozzle switches, grade buttons, and its own ledger, custody chain, and state file. A wire leaves the cabinet toward the station.</desc>
+  <!-- cabinet -->
+  <rect x="40" y="30" width="520" height="500" rx="14" class="box amber"/>
+  <text x="60" y="62" class="t" font-size="20">GasPump.Dispenser.exe · the island</text>
+  <!-- pump worker -->
+  <rect x="200" y="90" width="200" height="86" rx="8" class="box amber amberfill"/>
+  <text x="300" y="118" text-anchor="middle" class="t" font-size="16">Pump worker</text>
+  <text x="300" y="138" text-anchor="middle" class="m">Dispenser.Handle + PumpController</text>
+  <text x="300" y="156" text-anchor="middle" class="m">one PumpMessage at a time</text>
+  <!-- ticker -->
+  <rect x="430" y="100" width="110" height="60" rx="8" class="box"/>
+  <text x="485" y="125" text-anchor="middle" font-size="14">Ticker</text>
+  <text x="485" y="144" text-anchor="middle" class="m">every 100 ms</text>
+  <path d="M430 130 L400 130" class="wire" marker-end="url(#arrow)"/>
+  <!-- authority -->
+  <rect x="60" y="100" width="120" height="60" rx="8" class="box"/>
+  <text x="120" y="123" text-anchor="middle" font-size="14">Authority</text>
+  <text x="120" y="142" text-anchor="middle" class="m">verify token, clamp</text>
+  <path d="M180 130 L200 130" class="wire"/>
+  <!-- hardware row -->
+  <g font-size="13">
+    <rect x="60" y="220" width="130" height="64" rx="8" class="box"/>
+    <text x="125" y="244" text-anchor="middle">Valve</text>
+    <text x="125" y="262" text-anchor="middle" class="m">Hydraulics, 0 to 100% open</text>
+    <rect x="210" y="220" width="130" height="64" rx="8" class="box"/>
+    <text x="275" y="244" text-anchor="middle">Meter</text>
+    <text x="275" y="262" text-anchor="middle" class="m">pulser, counts pulses</text>
+    <rect x="360" y="220" width="180" height="64" rx="8" class="box"/>
+    <text x="450" y="244" text-anchor="middle">Totalizer</text>
+    <text x="450" y="262" text-anchor="middle" class="m">lifetime gallons, never resets</text>
+
+    <rect x="60" y="304" width="130" height="64" rx="8" class="box"/>
+    <text x="125" y="328" text-anchor="middle">Flow switch</text>
+    <text x="125" y="346" text-anchor="middle" class="m">is fuel moving?</text>
+    <rect x="210" y="304" width="130" height="64" rx="8" class="box"/>
+    <text x="275" y="328" text-anchor="middle">Breakaway</text>
+    <text x="275" y="346" text-anchor="middle" class="m">hose coupling sensor</text>
+    <rect x="360" y="304" width="180" height="64" rx="8" class="box"/>
+    <text x="450" y="328" text-anchor="middle">Tank supply</text>
+    <text x="450" y="346" text-anchor="middle" class="m">pressure from the tank</text>
+
+    <rect x="60" y="388" width="280" height="64" rx="8" class="box"/>
+    <text x="200" y="412" text-anchor="middle">Nozzle: boot switch, bellows interlock, lever</text>
+    <text x="200" y="430" text-anchor="middle" class="m">three switches the interlocks read</text>
+    <rect x="360" y="388" width="180" height="64" rx="8" class="box"/>
+    <text x="450" y="412" text-anchor="middle">Grade buttons</text>
+    <text x="450" y="430" text-anchor="middle" class="m">Regular, Plus, Premium</text>
+
+    <rect x="60" y="470" width="480" height="46" rx="8" class="box"/>
+    <text x="300" y="498" text-anchor="middle" class="m">Records: ledger (hash chain) · custody file (TesseraSeal) · state file (totalizer + used nonces)</text>
+  </g>
+  <!-- lines from worker to hardware -->
+  <path d="M300 176 L300 220" class="wire"/>
+  <path d="M300 200 L125 200 L125 220" class="wire"/>
+  <path d="M300 200 L450 200 L450 220" class="wire"/>
+  <!-- wire out -->
+  <path d="M560 130 L700 130" class="wire" marker-end="url(#arrow)"/>
+  <path d="M700 150 L560 150" class="wire" marker-end="url(#arrow)"/>
+  <text x="630" y="118" text-anchor="middle" class="m">events, views, audit lines</text>
+  <text x="630" y="172" text-anchor="middle" class="m">pump messages</text>
+  <rect x="700" y="90" width="170" height="86" rx="8" class="box blue bluefill"/>
+  <text x="785" y="124" text-anchor="middle" class="t" font-size="15">to the station</text>
+  <text x="785" y="146" text-anchor="middle" class="m">TCP 127.0.0.1:5178</text>
+  <defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--muted)"/></marker></defs>
+</svg>
+<figcaption>Everything that touches fuel lives in this cabinet. The station can ask for things across the wire, but it cannot reach in and open the valve.</figcaption>
+</figure>
+
+<p>The pump worker has six jobs.</p>
+<ul>
+  <li><strong>Checking the permission slip.</strong> The station sends a signed token that says "this sale may pump up to $30 and 50 gallons." The <strong>authority</strong> runs four checks:
+    <ul>
+      <li>the signature is good,</li>
+      <li>the token names this pump,</li>
+      <li>the token has not expired,</li>
+      <li>the token has never been used before.</li>
+    </ul>
+    Then it clamps. If the token asks for more than the pump's own hard limits ($500, 50 gallons), the pump lowers it. The station can be wrong or hacked. The pump still pumps only what it allows itself.</li>
+  <li><strong>The four interlocks.</strong> Fuel moves only when all four are true at once:
+    <ul>
+      <li>the pump is armed,</li>
+      <li>a grade is picked,</li>
+      <li>the nozzle is off its hook,</li>
+      <li>the spout is inserted in the fill pipe (the bellows interlock).</li>
+    </ul>
+    The lever is the fifth thing. Squeeze it with all four true and the valve opens. Any one false and the squeeze is written down and ignored.</li>
+  <li><strong>The valve.</strong> A solenoid (an electric switch) opens and closes the fuel line.
+    <ul>
+      <li>At the start of a sale the worker opens it all the way.</li>
+      <li>Near the end it opens the valve only part way. The last few cents dribble in, and the sale lands on the ceiling to the penny.</li>
+      <li>That slowdown is the taper.</li>
+    </ul>
+  </li>
+  <li><strong>The meter and the totalizer.</strong>
+    <ul>
+      <li>The meter is a pulser: a little wheel in the fuel line that clicks a fixed number of times per gallon.</li>
+      <li>On every tick the worker counts the clicks. It turns them into gallons, then into dollars using the price board.</li>
+      <li>The totalizer is a lifetime counter of every gallon that ever left this hose. It never resets. Auditors read it.</li>
+    </ul>
+  </li>
+  <li><strong>Watching for trouble.</strong> On every tick the worker checks four things:
+    <ul>
+      <li>the flow switch: valve open but nothing moving means the tank is dry,</li>
+      <li>the pulser: fuel moving but no clicks means a broken meter,</li>
+      <li>the breakaway coupling: a car drove off with the hose,</li>
+      <li>the click count: more clicks than fuel could have moved means someone is faking the meter.</li>
+    </ul>
+    Any of these stops the valve at once and names the part that failed.</li>
+  <li><strong>Keeping its own records, and sending a copy out.</strong> The pump keeps three records:
+    <ul>
+      <li>the ledger: every arm, every valve close, every fault. It is a hash chain, so each line locks in the one before it.</li>
+      <li>the custody file: the same lines, in a form the station can verify.</li>
+      <li>the state file: the totalizer and the list of used tokens. It survives a power cut.</li>
+    </ul>
+    The custody file is written and sent at the same time. The instant a line lands on the island's disk, the same bytes go down the wire to the station, which appends them to its own copy and checks them with the same key. That gives two copies of the whole transaction, in two places:
+    <ul>
+      <li>lose the island, and the station still has the chain;</li>
+      <li>lose the station, and the island still has it;</li>
+      <li>when the wire comes back, the island replays the chain and the station's copy keeps only the lines it was missing.</li>
+    </ul>
+  </li>
+</ul>
+
+<p>Notice what the pump worker does <em>not</em> know:</p>
+<ul>
+  <li>what a sale is,</li>
+  <li>who the driver is,</li>
+  <li>what card they used.</li>
+</ul>
+<p>It knows a token, a valve, and a counter. That is on purpose. A small program that handles money is easier to trust than a big one that also handles fuel. The same goes for a small program that handles fuel.</p>
+
+<h2 id="store">3. The station, inside the store</h2>
+<p><span class="tag s">Station</span> The store computer runs the other two workers and holds everything about money.</p>
+
+<figure class="wide">
+<svg viewBox="0 0 900 520" role="img" aria-labelledby="svg2t svg2d">
+  <title id="svg2t">The station and its parts</title>
+  <desc id="svg2d">The station program with the sale worker and payment worker, each with a mailbox, plus the state machine, gateway, network simulator, bank, site limits, cash drawer, journal, ledger, chain copy, capability listeners, and the web UI. A wire leaves toward the dispenser.</desc>
+  <rect x="40" y="30" width="620" height="460" rx="14" class="box blue"/>
+  <text x="60" y="62" class="t" font-size="20">GasPump.Host.exe · the station</text>
+  <!-- UI -->
+  <rect x="60" y="90" width="160" height="70" rx="8" class="box"/>
+  <text x="140" y="116" text-anchor="middle" font-size="14">Pump face + buttons</text>
+  <text x="140" y="134" text-anchor="middle" class="m">web UI, HTTP + WebSocket</text>
+  <text x="140" y="150" text-anchor="middle" class="m">card reader, keypad, screen</text>
+  <!-- sale worker -->
+  <rect x="250" y="90" width="190" height="86" rx="8" class="box blue bluefill"/>
+  <text x="345" y="116" text-anchor="middle" class="t" font-size="16">Sale worker</text>
+  <text x="345" y="136" text-anchor="middle" class="m">mailbox: 1024 SaleEvents</text>
+  <text x="345" y="154" text-anchor="middle" class="m">owns the SaleStateMachine</text>
+  <!-- payment worker -->
+  <rect x="470" y="90" width="170" height="86" rx="8" class="box blue bluefill"/>
+  <text x="555" y="116" text-anchor="middle" class="t" font-size="16">Payment worker</text>
+  <text x="555" y="136" text-anchor="middle" class="m">mailbox: 64 PaymentMessages</text>
+  <text x="555" y="154" text-anchor="middle" class="m">owns the PaymentGateway</text>
+  <path d="M220 125 L250 125" class="wire" marker-end="url(#arrow2)"/>
+  <path d="M440 125 L470 125" class="wire" marker-end="url(#arrow2)"/>
+  <path d="M470 150 L440 150" class="wire" marker-end="url(#arrow2)"/>
+  <!-- under sale worker -->
+  <g font-size="13">
+    <rect x="250" y="200" width="190" height="60" rx="8" class="box"/>
+    <text x="345" y="224" text-anchor="middle">SaleStateMachine</text>
+    <text x="345" y="242" text-anchor="middle" class="m">the sales book: state + where the money is</text>
+    <rect x="250" y="272" width="190" height="60" rx="8" class="box"/>
+    <text x="345" y="296" text-anchor="middle">Timers</text>
+    <text x="345" y="314" text-anchor="middle" class="m">keypad, bank, lift, fueling, idle, notice</text>
+    <rect x="250" y="344" width="190" height="60" rx="8" class="box"/>
+    <text x="345" y="368" text-anchor="middle">Capability listeners</text>
+    <text x="345" y="386" text-anchor="middle" class="m">video, loyalty, the trace test</text>
+    <!-- under payment worker -->
+    <rect x="470" y="200" width="170" height="60" rx="8" class="box"/>
+    <text x="555" y="224" text-anchor="middle">PaymentGateway</text>
+    <text x="555" y="242" text-anchor="middle" class="m">card checks, token, send queue</text>
+    <rect x="470" y="272" width="170" height="60" rx="8" class="box"/>
+    <text x="555" y="296" text-anchor="middle">Network simulator</text>
+    <text x="555" y="314" text-anchor="middle" class="m">latency, outages, late answers</text>
+    <rect x="470" y="344" width="170" height="60" rx="8" class="box"/>
+    <text x="555" y="368" text-anchor="middle">The bank (Issuer)</text>
+    <text x="555" y="386" text-anchor="middle" class="m">accounts, PIN or ZIP on file, holds</text>
+    <!-- left column -->
+    <rect x="60" y="200" width="160" height="60" rx="8" class="box"/>
+    <text x="140" y="224" text-anchor="middle">Site limits</text>
+    <text x="140" y="242" text-anchor="middle" class="m">credit $75, debit $50, admin PIN</text>
+    <rect x="60" y="272" width="160" height="60" rx="8" class="box"/>
+    <text x="140" y="296" text-anchor="middle">Cash drawer</text>
+    <text x="140" y="314" text-anchor="middle" class="m">prepaid cash, change due</text>
+    <rect x="60" y="344" width="160" height="60" rx="8" class="box"/>
+    <text x="140" y="368" text-anchor="middle">Journal</text>
+    <text x="140" y="386" text-anchor="middle" class="m">state.json every second</text>
+    <rect x="60" y="420" width="580" height="50" rx="8" class="box"/>
+    <text x="350" y="450" text-anchor="middle" class="m">Records: station ledger and chain · copy of the dispenser's chain (CustodyCopy) · Herald.OSS log</text>
+  </g>
+  <path d="M345 176 L345 200" class="wire"/>
+  <path d="M555 176 L555 200" class="wire"/>
+  <!-- wire out -->
+  <path d="M660 240 L760 240" class="wire" marker-end="url(#arrow2)"/>
+  <path d="M760 262 L660 262" class="wire" marker-end="url(#arrow2)"/>
+  <text x="710" y="228" text-anchor="middle" class="m">pump messages</text>
+  <text x="710" y="286" text-anchor="middle" class="m">events, views, audit</text>
+  <rect x="760" y="206" width="120" height="86" rx="8" class="box amber amberfill"/>
+  <text x="820" y="240" text-anchor="middle" class="t" font-size="15">to the island</text>
+  <text x="820" y="262" text-anchor="middle" class="m">the wire</text>
+  <defs><marker id="arrow2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--muted)"/></marker></defs>
+</svg>
+<figcaption>The sale worker keeps the book. The payment worker makes the calls. Neither one touches fuel.</figcaption>
+</figure>
+
+<p><strong>The sale worker</strong> is the person at the register with the sales book. The book is the <code>SaleStateMachine</code>. It has one open sale at a time. For that sale it tracks two things, apart from each other:</p>
+<ul>
+  <li>Where the pump is (<code>SaleState</code>). The pump is in one of five spots:
+    <ul>
+      <li>waiting for a ZIP,</li>
+      <li>asking the bank,</li>
+      <li>ready to pump,</li>
+      <li>fueling,</li>
+      <li>finishing.</li>
+    </ul>
+  </li>
+  <li>Where the money is (<code>HoldStatus</code>). The money is in one of five spots:
+    <ul>
+      <li>nothing asked,</li>
+      <li>hold requested,</li>
+      <li>held,</li>
+      <li>settled,</li>
+      <li>released.</li>
+    </ul>
+  </li>
+</ul>
+<p>The two drift apart when the bank is slow. A driver who was charged and got no gas lives in that gap. Keeping both columns keeps the book straight.</p>
+
+<p>The book has one odd rule: it never does anything itself. Hand it a slip. It writes in the book, then hands back a list of chores. For example:</p>
+<ul>
+  <li>"start a 30 second timer",</li>
+  <li>"ask the bank for a hold",</li>
+  <li>"tell the pump to arm",</li>
+  <li>"send the bank the final amount".</li>
+</ul>
+<p>The sale worker then does the chores by dropping slips in other trays. Because of this split, the book can be tested with an ordinary list and no threads.</p>
+
+<p><strong>The payment worker</strong> is the person with the phone to the bank. Its tool is the <code>PaymentGateway</code>. A call goes through three steps:</p>
+<ol>
+  <li>The gateway does the checks a terminal can do alone: is the card number well formed, is it expired.</li>
+  <li>The call goes through a <strong>network simulator</strong>. It can add delay, drop the line, or answer late.</li>
+  <li>The call reaches the <strong>issuer</strong>, an in-memory bank. It keeps accounts, balances, a PIN or a billing ZIP on file, and a list of open holds.</li>
+</ol>
+<p>The payment worker returns no value when the bank answers. It drops a slip back in the sale worker's tray: <code>Approved</code>, <code>Declined</code>, or <code>CompletionSent</code>.</p>
+
+<p>Around the two workers sit the things a store keeps:</p>
+<ul>
+  <li>the <strong>site limits</strong>: how much to hold on a credit or debit card. An admin PIN changes them.</li>
+  <li>the <strong>cash drawer</strong>.</li>
+  <li>the <strong>journal</strong>: it snapshots the whole sale to disk every second, so a power cut can be recovered.</li>
+  <li>the station's own ledger and audit chain.</li>
+  <li>a <strong>copy of the dispenser's chain</strong>.</li>
+  <li>the <strong>capability listeners</strong>: side programs that hear every sale event but can never write back. The trace in the next section comes from one of them.</li>
+</ul>
+
+<h2 id="trace">4. The trace the tests pin</h2>
+<p>Here is the whole sale as the test <code>HappyPathTraceTests</code> records it. A listener writes down every slip the sale worker handled, in order. A second listener writes down every state the screen showed. The test asserts both lists under all three worker styles, so this article and the code are checked against the same thing.</p>
+
+<pre class="trace">events:  CardPresented > CodeEntered > Approved > PumpArmed > GradeSelected > NozzleLifted
+         > SpoutInserted > FlowStarted > Progress… > FlowPaused > FlowResumed > Progress…
+         > NozzleHung > CompletionSent
+
+states:  CardRead/idle > Authorizing/idle > ReadyToPump/idle > ReadyToPump/armed
+         > Fueling/full > Fueling/paused > Fueling/full > Completing/hung > Idle/idle
+
+ticks:   100 Progress events
+money:   $5.95 for 1.700 gal, hold Settled</pre>
+<p class="where">tests/GasPump.Tests/HappyPathTraceTests.cs, output from <code>dotnet test --logger "console;verbosity=detailed"</code></p>
+
+<p>Fourteen kinds of slip, nine screen states, one settled charge. Here it is as a picture, then step by step.</p>
+
+<figure class="wide">
+<pre class="mermaid">
+sequenceDiagram
+  autonumber
+  participant Face as Pump face
+  participant Sale as Sale worker<br/>(the sales book)
+  participant Pay as Payment worker<br/>(the phone to the bank)
+  participant Bank as Bank
+  participant Pump as Pump worker<br/>(on the island)
+  Face->>Sale: CardPresented (tap)
+  Note over Sale: Idle → CardRead, 30 s keypad timer
+  Face->>Sale: CodeEntered "12345"
+  Note over Sale: CardRead → Authorizing, hold Requested
+  Sale->>Pay: PreAuthorize(card, Credit, zip)
+  Pay->>Bank: Authorize(card + zip, $30 hold)
+  Bank-->>Pay: approved $30
+  Pay-->>Sale: Approved(ceiling $30, signed token)
+  Note over Sale: Authorizing → ReadyToPump, hold Held, 120 s lift timer
+  Sale->>Pump: Arm(token)
+  Note over Pump: verify signature, pump id, expiry, nonce; clamp to hard limits
+  Pump-->>Sale: PumpArmed($30, 50 gal)
+  Face->>Pump: SelectGrade, Lift, InsertSpout, Squeeze
+  Pump-->>Sale: GradeSelected, NozzleLifted, SpoutInserted, FlowStarted
+  Note over Sale: ReadyToPump → Fueling, 10 min timer
+  loop every 100 ms tick
+    Pump-->>Sale: Progress(volume, money, lines)
+  end
+  Face->>Pump: Release (the phone rings)
+  Pump-->>Sale: FlowPaused
+  Note over Sale: idle timer, 60 s
+  Face->>Pump: Squeeze (call over)
+  Pump-->>Sale: FlowResumed
+  Note over Sale: idle timer cancelled
+  Face->>Pump: Hang
+  Pump-->>Sale: NozzleHung
+  Note over Sale: Fueling → Completing, SendCompletion($5.95, lines)
+  Sale->>Pay: Complete($5.95, lines) after writing the intent to the journal
+  Pay->>Bank: Complete → hold settles, $24.05 given back
+  Pay-->>Sale: CompletionSent
+  Note over Sale: Completing → Idle, hold Settled, "Thank you"
+</pre>
+<figcaption>Every arrow is a slip dropped in a tray. No arrow reaches into another worker's desk.</figcaption>
+</figure>
+
+<h2 id="tap">5. Tap: a card becomes a sale</h2>
+<div class="plain"><strong>Short version.</strong> The driver taps a card. The station opens a new page in the sales book and starts a 30 second clock. The bank waits. The screen asks for a ZIP code.</div>
+
+<p><span class="tag s">Station</span> The Tap button sends a web request to <code>/api/card</code>. The host hands it to <code>Simulation.TryPresentCard</code>. That method first asks <code>BeginSale</code> whether the pump will take a new payment at all. Three things can make it say no:</p>
+<ul>
+  <li>the pump is out of service,</li>
+  <li>fuel is moving,</li>
+  <li>someone else's approved sale has a nozzle in hand.</li>
+</ul>
+<p>None of those is true. So a fresh <code>SaleStateMachine</code> gets a new id, and the card slip goes in the sale worker's tray.</p>
+
+<pre class="code"><code>// Simulation.cs
+public (bool Ok, string SaleId, string Reason) TryPresentCard(string cardName, Grade? grade = null, Tender tender = Tender.Credit, CardSource source = CardSource.PumpInsert)
+{
+    if (tender == Tender.Cash) throw new ArgumentException("use PayCash for a cash sale", nameof(tender));
+    var (ok, id, reason) = BeginSale($"new card {cardName} {SaleStateMachine.SourceText(source)}");
+    if (!ok) return (false, id, reason);
+    _saleBox.Post(new SaleEvent.CardPresented(id, cardName, grade, tender, source));
+    return (true, id, "");
+}</code></pre>
+
+<p>The sale worker's whole job is this one handler. It runs the same twenty lines for every slip in this article:</p>
+<ol>
+  <li>Take a slip.</li>
+  <li>Write it in the book.</li>
+  <li>Do the chores the book hands back.</li>
+  <li>Update the screen.</li>
+  <li>Tell the listeners.</li>
+</ol>
+
+<pre class="code"><code>// Simulation.cs
+private void HandleSaleEvent(SaleEvent e)
+{
+    IReadOnlyList&lt;SaleCommand&gt; commands;
+    SaleState before, after;
+    SaleSnapshot snap;
+    lock (_gate)
+    {
+        if (e.SaleId != _sale.SaleId) { HandleOrphanEvent(e); return; }
+        before = _sale.State;
+        commands = _sale.Apply(e);
+        after = _sale.State;
+        snap = _sale.Snapshot();
+    }
+    foreach (var c in commands) Execute(c);
+    RecordSaleBoundary(e, before, after, snap);
+    Publish();
+    Capabilities.Publish(e);
+}</code></pre>
+
+<p>Inside the book, a card in <code>Idle</code> is written down. The book records three things:</p>
+<ul>
+  <li>which card,</li>
+  <li>credit or debit,</li>
+  <li>tapped or inserted.</li>
+</ul>
+<p>The page then moves to <code>CardRead</code> with a 30 second timer. Nothing goes to the bank. The card alone buys the driver a prompt and a countdown.</p>
+
+<pre class="code"><code>// SaleStateMachine.cs
+case (SaleState.Idle, SaleEvent.CardPresented cp):
+    CardName = cp.CardName;
+    Grade = cp.Grade ?? Grade.Regular;
+    GradeSelected = cp.Grade is not null;
+    Tender = cp.Tender;
+    Source = cp.Source;
+    // Nothing has gone to the bank yet. The keypad comes first: a PIN for debit, a ZIP code for credit.
+    return Transition(SaleState.CardRead, commands, $"card {cp.CardName} as {cp.Tender}, {SourceText(cp.Source)}, waiting for {CodeFor(cp.Tender).Name}", timeout: _timeouts.CodeEntry);</code></pre>
+
+<p>Two chores come back:</p>
+<ol>
+  <li>Cancel any old timer.</li>
+  <li>Start a 30 second timer.</li>
+</ol>
+<p>The screen reads "Enter your 5-digit billing ZIP code" with the countdown. The station ledger gets a <code>sale.open</code> line.</p>
+
+<h2 id="keypad">6. Keypad: the ZIP goes in</h2>
+<div class="plain"><strong>Short version.</strong> The driver types 12345. The book checks that it has five digits and nothing else. If it does, the book writes "asked the bank" and hands the payment worker a slip with the card and the ZIP on it.</div>
+
+<p><span class="tag s">Station</span> Enter sends <code>/api/code</code>. That becomes <code>Simulation.EnterCode</code>, which drops a <code>CodeEntered</code> slip in the sale tray. The book checks the shape:</p>
+<ul>
+  <li>a credit card wants five digits,</li>
+  <li>a debit card wants four.</li>
+</ul>
+<p>Anything else is refused. The log line says how many digits were typed. It never says which ones.</p>
+
+<pre class="code"><code>// SaleStateMachine.cs
+case (SaleState.CardRead, SaleEvent.CodeEntered ce):
+{
+    var (digits, name, _) = CodeFor(Tender);
+    if (ce.Code.Length != digits || !ce.Code.All(char.IsDigit))
+    {
+        // The digits never reach a log. Only the shape of the mistake does.
+        commands.Add(new SaleCommand.Log(SaleId, $"{name} entry refused: {digits} digits expected, {ce.Code.Length} typed; waiting"));
+        return commands;
+    }
+    Hold = HoldStatus.Requested;
+    commands.Add(new SaleCommand.RequestAuthorization(SaleId, CardName!, Grade, Tender, ce.Code));
+    return Transition(SaleState.Authorizing, commands, $"{name} entered, asking the bank", timeout: _timeouts.Authorization);
+}</code></pre>
+
+<p>Three things happen:</p>
+<ul>
+  <li>The money column flips to <code>Requested</code>.</li>
+  <li>The page moves to <code>Authorizing</code> with a 30 second timer.</li>
+  <li>A <code>RequestAuthorization</code> chore carries the ZIP out.</li>
+</ul>
+<p><code>Execute</code> looks up the test card by name and puts the ZIP beside it. Then it drops the slip in the payment worker's tray.</p>
+
+<pre class="code"><code>// Simulation.cs, inside Execute
+case SaleCommand.RequestAuthorization ra:
+    var card = TestCards.ByName.TryGetValue(ra.CardName, out var known) ? known : new CardData("0000000000000000", 1, 2000, CardKind.Credit);
+    _paymentBox.Post(new PaymentMessage.PreAuthorize(ra.SaleId, card, ra.Tender, ra.Code));
+    break;</code></pre>
+
+<aside class="rule s"><p><strong>Why the book checks the shape and the bank checks the value.</strong> The book talks to nothing outside itself, so it can only know what it was handed. A PIN is a secret between the driver and their bank. A ZIP is a fact only the bank has on file. So the bank does the real check. That keeps the book's claims inside what it can know. It also keeps the digits out of every line the book writes.</p></aside>
+
+<h2 id="bank">7. Bank: the hold and the token</h2>
+<div class="plain"><strong>Short version.</strong> The payment worker asks the bank to set aside $30. The bank checks the card and the ZIP, then says yes. The payment worker signs a permission slip (the token) for $30. It drops an "Approved" slip back in the sale tray.</div>
+
+<p><span class="tag s">Station</span> The payment worker's handler is the one place where the worker style shows on purpose. The style changes how the call to the bank waits:</p>
+<ul>
+  <li>With one thread per worker, the call just blocks. This worker has its own thread, so nobody is waiting on it.</li>
+  <li>With Tasks or AsyncProxy, the call carries on in the background. The worker goes back to its tray.</li>
+</ul>
+<p>Either way the answer comes back as a slip.</p>
+
+<pre class="code"><code>// Simulation.cs
+private void HandlePaymentMessage(PaymentMessage m)
+{
+    Interlocked.Increment(ref _inflightPayments);
+    var work = RunPaymentAsync(m);
+    if (_dispatch.PrefersBlockingIo)
+    {
+        // The 2008 way: this worker has its own thread, and the host call blocks it. Nobody else waits.
+        work.GetAwaiter().GetResult();
+    }
+    else
+    {
+        // The modern way: let the call continue on a callback. The worker moves on. Results post back as events.
+        _ = work;
+    }
+}</code></pre>
+
+<p><code>PaymentGateway.PreAuthorizeAsync</code> first does two checks a terminal can do without calling anyone:</p>
+<ul>
+  <li>the card number's checksum,</li>
+  <li>the expiry date.</li>
+</ul>
+<p>Then it decides what the typed code means. For debit it is the PIN. For credit it is the ZIP. The amount it asks the bank to hold is the site's ceiling for that kind of card. That is $30 in the trace, because the test set it there.</p>
+
+<pre class="code"><code>// PaymentGateway.cs
+var check = CardValidator.Check(card, now);
+if (check != CardCheck.Ok)
+    return new PreAuthResult(false, Money.Zero, null, check.ToString(), LocalDeclineMessage(check), NetworkFailure: false);
+
+// The tender decides what the typed code means. Debit sends it as the PIN; a debit sale with no PIN is a PIN failure
+// at the bank, which is what a real terminal sees. Credit sends it as the ZIP for the address check.
+var presented = tender == Tender.Debit
+    ? card with { Kind = CardKind.Debit, Pin = keypad }
+    : card with { Zip = keypad };
+var requested = Site.HoldFor(tender);
+
+var result = await _network.SendAsync(() => _issuer.Authorize(saleId, presented, requested, now), _options.HostTimeout, ct);</code></pre>
+
+<p>The call goes through the network simulator, which today is up with 50 ms of delay. The bank walks its checks in a fixed order:</p>
+<ol>
+  <li>Is this sale already voided or held?</li>
+  <li>Does the account exist?</li>
+  <li>Is the card lost or frozen?</li>
+  <li>Does the PIN match? (debit only)</li>
+  <li>Does the ZIP match? (credit only)</li>
+  <li>Has the card been used too often?</li>
+  <li>Is there any money?</li>
+</ol>
+<p>Check 5, the ZIP check, is the new one.</p>
+
+<pre class="code"><code>// Issuer.cs
+if (card.Kind == CardKind.Debit &amp;&amp; (card.Pin is null || card.Pin != acct.Pin))
+    return IssuerDecision.Decline(DeclineReason.InvalidPin, "invalid PIN");
+// Credit runs the address check: the ZIP typed at the pump against the billing ZIP on file.
+if (card.Kind == CardKind.Credit &amp;&amp; acct.Zip is not null &amp;&amp; card.Zip != acct.Zip)
+    return IssuerDecision.Decline(DeclineReason.ZipMismatch, "billing ZIP does not match");
+...
+// Fuel is MCC 5542, and partial approval is standard for it.
+var granted = Money.Min(hold, acct.Available);
+acct.Available -= granted;
+_holds[saleId] = new Hold(card.Pan, granted);</code></pre>
+
+<p>12345 matches. The bank takes $30 off the balance and holds it under the sale id.</p>
+
+<p>Back at the gateway, the pump's ceiling is the smaller of two numbers: what the bank granted, and what the store allows. (A manager may have lowered the limit while the call was out.)</p>
+
+<p>The gateway then signs a <strong>token</strong>. The token holds six things:</p>
+<ul>
+  <li>the sale id,</li>
+  <li>the pump id,</li>
+  <li>the ceiling,</li>
+  <li>the max gallons,</li>
+  <li>how long it is good for,</li>
+  <li>a one-time number called a nonce.</li>
+</ul>
+<p>The gateway signs all of it with a secret key the dispenser also holds. Think of the token as a permission slip with a wax seal. The payment worker drops <code>Approved(ceiling, token)</code> in the sale tray.</p>
+
+<h2 id="arm">8. Arm: the token crosses the wire</h2>
+<div class="plain"><strong>Short version.</strong> The book writes "money is held" and sends the sealed slip across the cable. The pump worker checks the seal, the pump, and the date. It lowers the amount if the slip asks for too much. Then it reports "armed for $30".</div>
+
+<p><span class="tag s">Station</span> <code>Approved</code> arriving while the page says <code>Authorizing</code> is the moment the money becomes real. The book does four things:</p>
+<ol>
+  <li>It records the ceiling.</li>
+  <li>It keeps the token.</li>
+  <li>It marks the hold <code>Held</code>.</li>
+  <li>It asks for the pump to be armed.</li>
+</ol>
+<p>The page moves to <code>ReadyToPump</code> with a 120 second timer. The timer is long because a card read at the pump means the driver is standing right there, and nobody else can cancel for them.</p>
+
+<pre class="code"><code>// SaleStateMachine.cs
+case (SaleState.Authorizing, SaleEvent.Approved a):
+    Ceiling = a.Ceiling;
+    Token = a.Token;
+    Hold = HoldStatus.Held;
+    commands.Add(new SaleCommand.ArmPump(SaleId, a.Token, GradeSelected ? Grade : null));
+    return Transition(SaleState.ReadyToPump, commands, $"approved, ceiling {a.Ceiling}, {LiftTimeout.TotalSeconds:0} s to lift", timeout: LiftTimeout);</code></pre>
+
+<p><code>Execute</code> turns the <code>ArmPump</code> chore into a <code>PumpMessage.Arm</code> slip and hands it to the link. The link comes in two forms:</p>
+<ul>
+  <li>With both halves in one program, the link is the pump worker's tray.</li>
+  <li>With two programs, the link is <code>SocketDispenserLink</code>. It writes the slip as one line of JSON down the cable.</li>
+</ul>
+<p>The slip is the same either way. That is why the pump could move out to its own program without rewriting a single message.</p>
+
+<p><span class="tag d">Dispenser</span> On the island, <code>Dispenser.Handle</code> is the pump worker's handler. It is a switch with one case per kind of slip. Every case ends by sending zero or more sale events back up the cable.</p>
+
+<pre class="code"><code>// Dispenser.cs
+case PumpMessage.Arm arm:
+    var (ok, reason, armed) = Pump.Arm(arm.SaleId, arm.Token, arm.Grade);
+    if (ok) { Log.Write("pump", "armed {Ceiling} max {MaxVolume} ({ClampNote})", ("Ceiling", armed!.Ceiling), ("MaxVolume", armed.MaxVolume), ("ClampNote", armed.ClampNote)); events.Add(new SaleEvent.PumpArmed(arm.SaleId, armed.Ceiling, armed.MaxVolume)); }
+    else { Log.Warn("pump", "REFUSED arm for {SaleId}: {Reason}", ("SaleId", arm.SaleId), ("Reason", reason)); events.Add(new SaleEvent.PumpRefused(arm.SaleId, reason)); }
+    break;</code></pre>
+
+<p><code>PumpController.Arm</code> says no if fuel is already moving or a part is broken. Otherwise it hands the token to the authority. The authority does two things, always in this order:</p>
+<ol>
+  <li><strong>Verify.</strong> It checks four things:
+    <ul>
+      <li>the seal (the signature) is good,</li>
+      <li>the slip names this pump,</li>
+      <li>the slip is inside its lifetime,</li>
+      <li>the one-time number has never been seen here before.</li>
+    </ul>
+  </li>
+  <li><strong>Clamp.</strong> It takes the dollars and gallons on the slip. If the slip asked for more than the pump's own limits ($500 and 50 gallons), it pulls them down. A $30 slip needs no clamping.</li>
+</ol>
+<p>Then the controller does three things:</p>
+<ul>
+  <li>it zeroes the meter for this sale,</li>
+  <li>it makes sure the valve is shut,</li>
+  <li>it reports <code>Armed</code>.</li>
+</ul>
+
+<pre class="code"><code>// PumpController.cs
+var (armed, refusal) = authority.TryArm(saleId, tokenWire);
+if (armed is null) return (false, refusal, null);
+
+_armed = armed;
+_armedAt = clock.GetUtcNow();
+_grade = preselectedGrade;
+_poured = false;
+_leverHeld = false;
+...
+meter.ResetSale();
+hydraulics.Close();
+foreach (var stage in _stages) stage.OnArmed(saleId);
+Phase = PumpPhase.Armed;
+return (true, "", armed);</code></pre>
+
+<p><code>PumpArmed</code> goes back up the cable. The book notes the ceiling and writes "armed" in its phase column. That is the <code>ReadyToPump/idle &gt; ReadyToPump/armed</code> pair in the trace. First the bank said yes. Then the pump said it heard. The screen reads "Approved for up to $30.00. Select a grade."</p>
+
+<h2 id="hands">9. Hands: grade, lift, insert, squeeze</h2>
+<div class="plain"><strong>Short version.</strong> The driver picks Regular, lifts the nozzle, puts it in the tank, and squeezes. Each of the first three flips one switch. The squeeze checks all the switches and opens the valve. From then on the metronome reports gallons and dollars ten times a second.</div>
+
+<p><span class="tag d">Dispenser</span> Four buttons, four slips, four switches in the controller:</p>
+<ul>
+  <li><code>SelectGrade</code> picks the price.</li>
+  <li><code>Lift</code> is the hook switch.</li>
+  <li><code>InsertSpout</code> is the bellows interlock: the spout is in the fill pipe.</li>
+  <li><code>Squeeze</code> is the lever. The next paragraph covers it.</li>
+</ul>
+<p>The first three each make the pump worker answer with a matching sale event. The book moves the screen's hint along: "Lift the nozzle", then "Put the nozzle in your tank", then "Squeeze the lever to begin". These three open nothing.</p>
+
+<p><code>Squeeze</code> is where the interlocks live. All four must pass. If one fails, the squeeze is written in the ledger as ignored and nothing happens. The first squeeze of a sale is the first pour, and that starts fueling. Lifting the nozzle never starts it.</p>
+
+<pre class="code"><code>// PumpController.cs
+public (bool Ok, string Reason, bool FirstPour) SqueezeLever()
+{
+    _leverHeld = true;
+    if (_armed is null || Phase is not (PumpPhase.Armed or PumpPhase.Paused))
+    {
+        ledger.Append("lever.ignored", $"phase {Phase}");
+        return (false, $"not armed ({Phase})", false);
+    }
+    if (_grade is null) { ledger.Append("lever.ignored", $"{_armed.SaleId} no grade selected"); return (false, "select a grade first", false); }
+    if (!_nozzleLifted) { ledger.Append("lever.ignored", $"{_armed.SaleId} nozzle in boot"); return (false, "lift the nozzle first", false); }
+    if (!_spoutInserted) { ledger.Append("lever.ignored", $"{_armed.SaleId} spout not in the fill pipe"); return (false, "insert the spout first", false); }
+
+    var first = !_poured;
+    _poured = true;
+    Phase = PumpPhase.Dispensing;
+    _noFlowFor = TimeSpan.Zero;
+    hydraulics.SetOpening(1);
+    ...</code></pre>
+
+<p>A first pour becomes <code>FlowStarted</code>. Any later squeeze becomes <code>FlowResumed</code>. <span class="tag s">Station</span> The book takes <code>FlowStarted</code> and moves the page to <code>Fueling</code> with a ten-minute timer. From here the hands go quiet and the ticker does the talking.</p>
+
+<p><span class="tag d">Dispenser</span> Every 100 ms the ticker drops a <code>Tick</code> in the pump worker's tray. <code>PumpController.Tick</code> then does six things:</p>
+<ol>
+  <li>It asks the hydraulics how much fuel moved.</li>
+  <li>It asks the meter how many clicks it counted.</li>
+  <li>It checks that the two agree.</li>
+  <li>It adds the gallons to the totalizer.</li>
+  <li>It prices the slice off the price board.</li>
+  <li>It starts closing the valve as the money nears the ceiling.</li>
+</ol>
+<p>The result is one <code>PumpTick</code>. The pump worker sends it up as <code>Progress</code>.</p>
+
+<pre class="code"><code>// Dispenser.cs, inside the Tick case
+events.Add(new SaleEvent.Progress(saleId, t.Volume, t.Money, t.Flow, t.TaperPhase, t.Lines));</code></pre>
+
+<p><span class="tag s">Station</span> The book copies five things from each <code>Progress</code> slip into the page:</p>
+<ul>
+  <li>gallons,</li>
+  <li>dollars,</li>
+  <li>flow,</li>
+  <li>phase,</li>
+  <li>the itemized lines.</li>
+</ul>
+<p>It hands back no chores at all. A hundred of these slips is the "100 Progress events" line in the trace. Each one refreshes the screen's big numbers.</p>
+
+<pre class="code"><code>// SaleStateMachine.cs
+case (SaleState.Fueling, SaleEvent.Progress p):
+    Volume = p.Volume;
+    Money = p.Money;
+    if (p.Lines is not null) Lines = p.Lines;
+    Flow = p.Flow;
+    Phase = p.Phase;
+    return commands;</code></pre>
+
+<h2 id="phone">10. The phone call</h2>
+<div class="plain"><strong>Short version.</strong> The phone rings. The driver lets go of the lever. The valve shuts and a 60 second clock starts. Ten seconds later the driver squeezes again. The clock is cancelled and fuel moves again. A call longer than a minute would have ended the sale by itself, for the fuel already poured.</div>
+
+<p><span class="tag d">Dispenser</span> Five seconds in, the driver lets go. <code>Release</code> reaches the controller. The controller does three things:</p>
+<ol>
+  <li>It shuts the valve.</li>
+  <li>It moves to <code>Paused</code>.</li>
+  <li>It answers <code>FlowPaused("lever released")</code>.</li>
+</ol>
+<p>Pulling the nozzle out of the tank does the same with a different reason.</p>
+
+<p><span class="tag s">Station</span> The book zeroes the flow, writes "paused", and starts a second timer. This one is tagged <code>idle</code>. It runs 60 seconds beside the ten-minute timer already running. Two timers can be live on one sale, which is why timers carry a tag. A state change cancels all of them. A resume cancels only this one.</p>
+
+<pre class="code"><code>// SaleStateMachine.cs
+case (SaleState.Fueling, SaleEvent.FlowPaused fp):
+    Flow = FlowRate.Zero;
+    Phase = "paused";
+    // The idle timer runs beside the max-fueling timer. A squeeze cancels it; silence lets it finish the sale.
+    commands.Add(new SaleCommand.ArmTimer(SaleId, SaleState.Fueling, _timeouts.PausedFlow, SaleCommand.IdleTimer));
+    commands.Add(new SaleCommand.Log(SaleId, $"flow paused: {fp.Reason}, {Volume} for {Money} so far, finishes in {_timeouts.PausedFlow.TotalSeconds:0} s without a squeeze"));
+    return commands;
+
+case (SaleState.Fueling, SaleEvent.FlowResumed):
+    Phase = "full";
+    commands.Add(new SaleCommand.CancelTimer(SaleId, SaleCommand.IdleTimer));
+    commands.Add(new SaleCommand.Log(SaleId, "flow resumed"));
+    return commands;</code></pre>
+
+<p>The screen shows the money so far and the words "Squeeze the lever to continue. Hang up the nozzle to finish, or the pump finishes by itself after 60 s". The countdown switches to the idle clock because it is the nearer one. The driver talks for ten seconds. The meter stands still. The test checks that the gallons at the end of the call equal the gallons at the start.</p>
+
+<p>Call over, one squeeze. The controller is in <code>Paused</code>, so the interlocks pass and the valve opens again. Three things follow:</p>
+<ul>
+  <li><code>FlowResumed</code> cancels the idle clock.</li>
+  <li>The phase goes back to "full", and the countdown goes back to the ten-minute one.</li>
+  <li>Progress slips start again from where the money left off.</li>
+</ul>
+
+<aside class="rule"><p><strong>If the call had run long.</strong> At 60 seconds the idle timer fires a <code>Timeout</code> tagged <code>idle</code>. The book closes the valve and finishes the sale for the fuel delivered, with the reason <code>NoFlow</code>. A nozzle forgotten in a tank never holds a pump open.</p>
+<p>Say a squeeze and the timer cross in the tray. The timer arrives with the phase already "full", so it is logged and ignored. <code>PausedFlowTests</code> walks both cases.</p></aside>
+
+<h2 id="hang">11. Hang up: settling the bill</h2>
+<div class="plain"><strong>Short version.</strong> The driver hangs up the nozzle. The pump shuts the valve and says "done, 1.7 gallons, $5.95." The book first writes down, on disk, what it is about to tell the bank. Then it tells the bank. The bank keeps $5.95 and gives back the other $24.05. The screen says thank you.</div>
+
+<p><span class="tag d">Dispenser</span> <code>PumpController.HangNozzle</code> drops the three nozzle switches. Fuel was poured, so it calls <code>Stop</code>. <code>Stop</code> does three things:</p>
+<ul>
+  <li>It shuts the valve.</li>
+  <li>It writes a <code>valve.close</code> line in the dispenser's ledger, with gallons, dollars, and the totalizer reading.</li>
+  <li>It clears the sale from the controller.</li>
+</ul>
+<p>The pump rests at <code>Stopped</code>. Every finished delivery ends there, and the next <code>Arm</code> picks up from there. The pump worker answers <code>NozzleHung</code>.</p>
+
+<p><span class="tag s">Station</span> <code>NozzleHung</code> while fueling ends the delivery. The book asks for the valve to close. (It is already shut, and the pump ignores a second close.) Then the book calls <code>Finish</code>. <code>Finish</code> has two branches:</p>
+<ul>
+  <li>No fuel moved: it reverses the hold instead of charging, because a charge for zero is wrong.</li>
+  <li>Fuel moved: it sends the bank the final amount with its itemized lines. It moves the page to <code>Completing</code> with a 30 second timer.</li>
+</ul>
+<p>Fuel did move, so this sale takes the second branch.</p>
+
+<pre class="code"><code>// SaleStateMachine.cs
+case (SaleState.Fueling, SaleEvent.NozzleHung):
+    Flow = FlowRate.Zero;
+    Phase = "hung";
+    NozzleOut = false;
+    SpoutInserted = false;
+    commands.Add(new SaleCommand.CloseValve(SaleId));
+    return Finish(commands, "nozzle hung", EndReason.Completed);
+
+private IReadOnlyList&lt;SaleCommand&gt; Finish(List&lt;SaleCommand&gt; commands, string why, EndReason end)
+{
+    End = end;
+    if (Volume == Volume.Zero)
+    {
+        // No fuel moved. A completion for zero is wrong; the hold must be reversed in full.
+        End = EndReason.DriverCancelled;
+        EndDetail = "no fuel was dispensed";
+        return Transition(SaleState.Cancelled, commands, $"{why}, no fuel, hold reversed", reverse: true);
+    }
+    commands.Add(new SaleCommand.SendCompletion(SaleId, Money, Charges));
+    return Transition(SaleState.Completing, commands, $"{why}, {Volume} for {Money}", timeout: _timeouts.Completion);
+}</code></pre>
+
+<p><code>Execute</code> does something here that it does nowhere else on this path: it writes before it sends. The final amount is money owed to the bank. So the intent goes into the gateway's pending list first, and the journal saves that list to disk. Only then does the payment worker see the slip. If the power dies in the next millisecond, the restart finds the intent and sends it.</p>
+
+<pre class="code"><code>// Simulation.cs, inside Execute
+// Money owed to the bank is written to the compensation log here, on the deciding thread, before the
+// payment worker ever sees the message. A crash between this line and the bank's answer is recoverable.
+case SaleCommand.SendCompletion sc:
+    Gateway.Intend(new PendingAdvice(sc.SaleId, PendingKind.Completion, sc.Final, sc.Lines));
+    _paymentBox.Post(new PaymentMessage.Complete(sc.SaleId, sc.Final, sc.Lines));
+    break;</code></pre>
+
+<p>The payment worker calls <code>CompleteAsync</code>. It records the same intent again. (A second copy of the same sale and kind changes nothing.) Then it sends everything in the pending list, oldest first, down the one path all bank messages use.</p>
+
+<p>The bank's <code>Complete</code> does four things:</p>
+<ul>
+  <li>It removes the $30 hold.</li>
+  <li>It keeps $5.95.</li>
+  <li>It puts $24.05 back on the balance.</li>
+  <li>It files the settlement with its two charge lines for the statement.</li>
+</ul>
+<p>The gateway sees its slip in the sent list and reports success.</p>
+
+<pre class="code"><code>// PaymentGateway.cs
+public async Task&lt;CompletionResult&gt; CompleteAsync(string saleId, Money final, IReadOnlyList&lt;ChargeLine&gt;? lines, CancellationToken ct)
+{
+    ...
+    // Intent first, then one send path for everything owed, oldest first. If an older advice fails, this one waits behind it.
+    var advice = new PendingAdvice(saleId, PendingKind.Completion, final, lines);
+    Intend(advice);
+    var sent = await DrainPendingAsync(ct);
+    return sent.Any(advice.SameAs)
+        ? new CompletionResult(true, false, $"completion {final} sent")
+        : new CompletionResult(false, true, $"host {LastOutcome}, completion {final} queued");
+}</code></pre>
+
+<p><code>CompletionSent</code> goes back in the sale tray. Money slips are legal in every state, so the book handles this one in its money table before the state switch. In <code>Completing</code> it marks the hold <code>Settled</code> and moves to <code>Idle</code>. Then:</p>
+<ul>
+  <li>The screen reads "Thank you: 1.700 gal for $5.95. Your card was charged $5.95."</li>
+  <li>The station ledger gets its <code>sale.close</code> line.</li>
+  <li>The receipt is the page's charge lines.</li>
+</ul>
+<p>The screen stays up until the next card.</p>
+
+<pre class="code"><code>// SaleStateMachine.cs, inside ApplyHoldEvent
+case SaleEvent.CompletionSent cs when State == SaleState.Completing:
+    Hold = HoldStatus.Settled;
+    SettleCash(cs.Final);
+    Transition(SaleState.Idle, commands, Tender == Tender.Cash ? $"cash sale {cs.Final}, change {ChangeDue}" : $"completion sent for {cs.Final}");
+    return true;</code></pre>
+
+<h2 id="quiet">12. What stayed quiet</h2>
+<p>Half the sales book is for days that go worse than this one. None of it ran today, and knowing it is there is part of knowing the path.</p>
+<ul>
+  <li><strong>No reversal.</strong> A reversal gives a hold back when no fuel came out. It covers three cases:
+    <ul>
+      <li>a decline after the hold,</li>
+      <li>a walk-away before the lift,</li>
+      <li>a cancel.</li>
+    </ul>
+    This hold was settled, so it was never reversed.</li>
+  <li><strong>No timer fired.</strong> Six timers were started:
+    <ul>
+      <li>keypad,</li>
+      <li>bank,</li>
+      <li>lift,</li>
+      <li>fueling,</li>
+      <li>idle,</li>
+      <li>finishing.</li>
+    </ul>
+    Each one was cancelled by the event it was waiting for. The timer that clears a finished screen never started, because <code>Idle</code> is a resting state that keeps the receipt up for the next driver.</li>
+  <li><strong>No queue.</strong> The bank answered both calls, so the pending list was written and emptied in the same breath. It exists for the day the line is down at the hang-up.</li>
+  <li><strong>No clamp.</strong> The authority checked a $30 slip against $500 and 50 gallon limits and had nothing to lower. The clamp is for the day the station is lying.</li>
+  <li><strong>No fault.</strong> The flow switch, the pulser, the breakaway, and the tank all reported normal on every tick.</li>
+</ul>
+
+<h2 id="map">13. Who touched what</h2>
+<div class="scroll">
+<table>
+<thead><tr><th>Class</th><th>Where</th><th>Its one job on this path</th><th>File</th></tr></thead>
+<tbody>
+<tr><td><code>Simulation</code></td><td>station</td><td>Owns the trays and the timers. Drops slips in, does the chores the book hands back. Decides nothing about the sale itself.</td><td>GasPump.Dispatch/Simulation.cs</td></tr>
+<tr><td><code>SaleStateMachine</code></td><td>station</td><td>The sales book. One slip in, a list of chores out. Holds the state, the money column, the dollars, and the words on the screen.</td><td>GasPump.Core/SaleStateMachine.cs</td></tr>
+<tr><td><code>SaleEvent</code>, <code>SaleCommand</code>, <code>PumpMessage</code>, <code>PaymentMessage</code></td><td>both</td><td>The slips. With a type name on top they cross between workers and, unchanged, between programs.</td><td>GasPump.Core/Sale.cs, GasPump.Dispatch/Messages.cs</td></tr>
+<tr><td><code>PaymentGateway</code></td><td>station</td><td>Local card checks, the typed code onto the card, the bank call through the network simulator, the token, and the write-first completion.</td><td>GasPump.Payment/PaymentGateway.cs</td></tr>
+<tr><td><code>IssuerSimulator</code></td><td>station</td><td>The bank: accounts with a PIN or billing ZIP on file, holds by sale id, settlements with their lines.</td><td>GasPump.Payment/Issuer.cs</td></tr>
+<tr><td><code>SocketDispenserLink</code> / <code>DispenserServer</code></td><td>both ends of the wire</td><td>One JSON line per slip each way. Pump messages down, events and audit lines up.</td><td>GasPump.Dispatch/DispenserLink.cs, DispenserServer.cs</td></tr>
+<tr><td><code>Dispenser</code></td><td>island</td><td>The pump worker's handler: one case per pump message, each ending in the events to send back.</td><td>GasPump.Dispatch/Dispenser.cs</td></tr>
+<tr><td><code>PumpController</code></td><td>island</td><td>The four interlocks, the valve, the tick, the taper, the meter, the totalizer, the fault checks.</td><td>GasPump.Pump/PumpController.cs</td></tr>
+<tr><td><code>PumpAuthority</code></td><td>island</td><td>Check the token's seal, pump, lifetime, and one-time number, then clamp it to the hard limits.</td><td>GasPump.Security/PumpAuthority.cs</td></tr>
+<tr><td><code>CapabilityHost</code></td><td>station</td><td>Hands every sale event to listeners on their own workers. The trace test is one of them.</td><td>GasPump.Dispatch/Capabilities.cs</td></tr>
+</tbody>
+</table>
+</div>
+
+<h2 id="read">14. Where to start reading</h2>
+<ol>
+  <li><code>tests/GasPump.Tests/HappyPathTraceTests.cs</code>. Thirty lines that drive the whole sale and assert the two traces above. Run it with <code>--logger "console;verbosity=detailed"</code> and the traces print.</li>
+  <li><code>src/GasPump.Core/SaleStateMachine.cs</code>, the <code>Apply</code> switch. Read the cases in the order of the events trace and you have read the sale.</li>
+  <li><code>src/GasPump.Dispatch/Simulation.cs</code>, <code>Execute</code> and <code>HandlePaymentMessage</code>. Every place a chore becomes a slip.</li>
+  <li><code>src/GasPump.Dispatch/Dispenser.cs</code>, <code>Handle</code>. The island end of the wire, one case per slip.</li>
+  <li><code>src/GasPump.Pump/PumpController.cs</code>, <code>Arm</code>, <code>SqueezeLever</code>, and <code>Tick</code>. Where fuel is allowed to move and how it is counted.</li>
+</ol>
+<p>Then pick a wrong turn. The companion articles cover them: the patterns that shape the code, the security checks and what happens when the bank goes quiet, the detergent that rides on the hose, and the receipts and listeners that hang off the sale.</p>
+
+<p class="eyebrow">Source: E:\dev\MMP.GasPumpSimulator at commit 589ee09 (branch refactor/domain-terms, PR #3, on top of PRs #1 and #2). 321 dotnet tests and 10 Playwright specs pass. Companions: Gas Pump Patterns, Gas Pump Security and Audit, Adding Fuel Detergent, Receipts, Lines, and a Video Player.</p>
+</main>
+
+<script>
+(function(){
+  var re = /(\/\/[^\n]*|\/\*[^*]*\*\/)|(\$?"(?:[^"\\\n]|\\.)*")|\b(public|private|static|sealed|readonly|record|struct|class|interface|enum|abstract|override|event|async|await|return|new|var|if|else|switch|case|when|is|not|and|or|out|lock|using|foreach|while|true|false|null|void|bool|long|string|int|decimal|this|yield|default|throw|try|catch|in|const|ref|break)\b|\b([A-Z][A-Za-z0-9]*)\b/g;
+  function esc(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+  document.querySelectorAll('pre.code code').forEach(function(el){
+    var src = el.textContent, out = '', last = 0, m;
+    re.lastIndex = 0;
+    while ((m = re.exec(src)) !== null) {
+      out += esc(src.slice(last, m.index));
+      if (m[1]) out += '<span class="cmt">'+esc(m[1])+'</span>';
+      else if (m[2]) out += '<span class="str">'+esc(m[2])+'</span>';
+      else if (m[3]) out += '<span class="kw">'+esc(m[3])+'</span>';
+      else out += '<span class="ty">'+esc(m[4])+'</span>';
+      last = re.lastIndex;
+    }
+    out += esc(src.slice(last));
+    el.innerHTML = out;
+  });
+})();
+</script>
+
+<!--claude-mermaid-runtime-begin:3477-->
+<style>.mermaid-diagram{margin-block:4px}.mermaid-diagram svg{display:block;margin:0 auto;max-width:100%;height:auto}</style>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11.16.1/dist/mermaid.min.js"></script>
+<script>(function(){
+var CFG={"palettes":{"light":{"surface":"#f4efe4","text":"#42392e","line":"#8a7f6d","border":"#7a6c52","bg":"#fffdf8"},"dark":{"surface":"#262b34","text":"#f2f3f5","line":"#a8adb8","border":"#9aa4b8","bg":"#1f232b"}}};
+if(typeof mermaid==='undefined')return;
+var pres=Array.prototype.slice.call(document.querySelectorAll('pre.mermaid')).filter(function(p){if(p.hasAttribute('data-claude-mermaid-claimed'))return false;p.setAttribute('data-claude-mermaid-claimed','1');return true;});
+if(!pres.length)return;
+var mq=window.matchMedia?window.matchMedia('(prefers-color-scheme: dark)'):null;
+var root=document.documentElement;
+var items=pres.map(function(pre){
+var mount=document.createElement('div');mount.className='mermaid-diagram';
+return {pre:pre,mount:mount,src:pre.textContent||''};
+});
+var seq=0;
+var renderGen=0;
+var lastKey='';
+function pageBg(fallback){
+var els=[document.body,document.documentElement];
+for(var i=0;i<els.length;i++){
+var c=els[i]&&getComputedStyle(els[i]).backgroundColor;
+if(c&&c!=='transparent'&&c!=='rgba(0, 0, 0, 0)')return c;
+}
+return fallback;
+}
+function render(){
+var theme=root.getAttribute('data-theme');
+var dark=theme==='dark'||(!!(mq&&mq.matches)&&theme!=='light');
+var pal=dark?CFG.palettes.dark:CFG.palettes.light;
+var bg=pageBg(pal.bg);
+var key=(dark?'d':'l')+'|'+bg;
+if(key===lastKey)return;
+lastKey=key;
+var gen=++renderGen;
+var font=getComputedStyle(document.body).fontFamily||'sans-serif';
+var nat={useMaxWidth:false};
+mermaid.initialize({
+startOnLoad:false,securityLevel:'strict',theme:'base',
+flowchart:nat,sequence:nat,er:nat,state:nat,class:nat,pie:nat,
+gantt:nat,journey:nat,timeline:nat,gitGraph:nat,mindmap:nat,xyChart:nat,
+quadrantChart:nat,sankey:nat,c4:nat,requirement:nat,block:nat,
+packet:nat,kanban:nat,architecture:nat,radar:nat,
+themeVariables:{background:bg,mainBkg:pal.surface,primaryColor:pal.surface,
+primaryTextColor:pal.text,lineColor:pal.line,primaryBorderColor:pal.border,
+nodeBorder:pal.border,clusterBorder:pal.border,edgeLabelBackground:bg,
+clusterBkg:'rgba(127,127,127,0.07)',titleColor:pal.text,
+darkMode:dark,rowOdd:bg,rowEven:'rgba(127,127,127,0.07)',
+attributeBackgroundColorOdd:bg,attributeBackgroundColorEven:'rgba(127,127,127,0.07)',
+fontSize:'16px',fontFamily:font},
+themeCSS:'.node rect, .node circle, .node polygon, .node path, .cluster rect { stroke-width: 2px; }'
+});
+items.forEach(function(it){
+var id='claude-mermaid-'+seq++;
+mermaid.render(id,it.src).then(function(r){
+if(gen!==renderGen)return;
+var prev=it.pre.previousElementSibling;
+if(prev&&prev.className==='mermaid-diagram'&&prev!==it.mount)return;
+it.mount.innerHTML=r.svg;
+if(!it.mount.parentNode)it.pre.parentNode.insertBefore(it.mount,it.pre);
+it.pre.style.display='none';
+},function(){
+var scratch=document.getElementById(id);
+if(scratch)scratch.parentNode.removeChild(scratch);
+scratch=document.getElementById('d'+id);
+if(scratch)scratch.parentNode.removeChild(scratch);
+if(gen!==renderGen)return;
+if(it.mount.parentNode)it.mount.parentNode.removeChild(it.mount);
+it.pre.style.display='';
+});
+});
+}
+render();
+if(mq&&mq.addEventListener)mq.addEventListener('change',render);
+if(typeof MutationObserver!=='undefined')new MutationObserver(render).observe(root,{attributes:true,attributeFilter:['data-theme']});
+})();</script>
+<!--claude-mermaid-runtime-end-->
+
+</body></html>
