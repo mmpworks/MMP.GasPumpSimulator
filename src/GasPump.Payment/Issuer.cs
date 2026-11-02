@@ -10,6 +10,8 @@ public enum DeclineReason
     LostOrStolen,
     DoNotHonor,
     InvalidPin,
+    /// <summary>The billing ZIP typed at the keypad does not match the one on file. The address check (AVS) failed.</summary>
+    ZipMismatch,
     VelocityExceeded,
     IssuerUnavailable,
     UnknownCard,
@@ -56,6 +58,8 @@ public sealed class IssuerSimulator : IIssuer
         public required Money Available;
         public AccountStatus Status;
         public string? Pin;
+        /// <summary>Billing ZIP on file. Null means the bank has no address check for this card.</summary>
+        public string? Zip;
         public int VelocityLimit = int.MaxValue;
         public readonly List<DateTimeOffset> RecentUses = [];
     }
@@ -81,22 +85,23 @@ public sealed class IssuerSimulator : IIssuer
     public static IssuerSimulator WithTestCards()
     {
         var issuer = new IssuerSimulator();
-        issuer.Seed(TestCards.Get("Good").Pan, Money.FromDollars(5000));
-        issuer.Seed(TestCards.Get("LowBalance").Pan, Money.FromDollars(18.50m));
-        issuer.Seed(TestCards.Get("InsufficientFunds").Pan, Money.Zero);
-        issuer.Seed(TestCards.Get("Expired").Pan, Money.FromDollars(5000));
-        issuer.Seed(TestCards.Get("Stolen").Pan, Money.FromDollars(5000), AccountStatus.LostOrStolen);
-        issuer.Seed(TestCards.Get("Frozen").Pan, Money.FromDollars(5000), AccountStatus.Frozen);
-        issuer.Seed(TestCards.Get("Velocity").Pan, Money.FromDollars(5000), velocityLimit: 2);
-        issuer.Seed(TestCards.Get("DebitGoodPin").Pan, Money.FromDollars(900), pin: "1234");
-        issuer.Seed(TestCards.Get("DebitBadPin").Pan, Money.FromDollars(900), pin: "1234");
+        var zip = TestCards.Zip;
+        issuer.Seed(TestCards.Get("Good").Pan, Money.FromDollars(5000), zip: zip);
+        issuer.Seed(TestCards.Get("LowBalance").Pan, Money.FromDollars(18.50m), zip: zip);
+        issuer.Seed(TestCards.Get("InsufficientFunds").Pan, Money.Zero, zip: zip);
+        issuer.Seed(TestCards.Get("Expired").Pan, Money.FromDollars(5000), zip: zip);
+        issuer.Seed(TestCards.Get("Stolen").Pan, Money.FromDollars(5000), AccountStatus.LostOrStolen, zip: zip);
+        issuer.Seed(TestCards.Get("Frozen").Pan, Money.FromDollars(5000), AccountStatus.Frozen, zip: zip);
+        issuer.Seed(TestCards.Get("Velocity").Pan, Money.FromDollars(5000), velocityLimit: 2, zip: zip);
+        issuer.Seed(TestCards.Get("DebitGoodPin").Pan, Money.FromDollars(900), pin: TestCards.Pin);
+        issuer.Seed(TestCards.Get("DebitBadPin").Pan, Money.FromDollars(900));
         return issuer;
     }
 
-    public void Seed(string pan, Money available, AccountStatus status = AccountStatus.Active, string? pin = null, int velocityLimit = int.MaxValue)
+    public void Seed(string pan, Money available, AccountStatus status = AccountStatus.Active, string? pin = null, int velocityLimit = int.MaxValue, string? zip = null)
     {
         lock (_gate)
-            _accounts[pan] = new Account { Available = available, Status = status, Pin = pin, VelocityLimit = velocityLimit };
+            _accounts[pan] = new Account { Available = available, Status = status, Pin = pin, Zip = zip, VelocityLimit = velocityLimit };
     }
 
     public IssuerDecision Authorize(string saleId, CardData card, Money hold, DateTimeOffset now)
@@ -116,6 +121,9 @@ public sealed class IssuerSimulator : IIssuer
                 return IssuerDecision.Decline(DeclineReason.DoNotHonor, "do not honor");
             if (card.Kind == CardKind.Debit && (card.Pin is null || card.Pin != acct.Pin))
                 return IssuerDecision.Decline(DeclineReason.InvalidPin, "invalid PIN");
+            // Credit runs the address check: the ZIP typed at the pump against the billing ZIP on file.
+            if (card.Kind == CardKind.Credit && acct.Zip is not null && card.Zip != acct.Zip)
+                return IssuerDecision.Decline(DeclineReason.ZipMismatch, "billing ZIP does not match");
 
             acct.RecentUses.RemoveAll(t => now - t > _velocityWindow);
             if (acct.RecentUses.Count >= acct.VelocityLimit)
@@ -182,7 +190,7 @@ public sealed class IssuerSimulator : IIssuer
         lock (_gate)
         {
             return new IssuerState(
-                _accounts.Select(kv => new IssuerAccountState(kv.Key, kv.Value.Available.Cents, kv.Value.Status.ToString(), kv.Value.Pin, kv.Value.VelocityLimit, kv.Value.RecentUses.ToList())).ToList(),
+                _accounts.Select(kv => new IssuerAccountState(kv.Key, kv.Value.Available.Cents, kv.Value.Status.ToString(), kv.Value.Pin, kv.Value.VelocityLimit, kv.Value.RecentUses.ToList(), kv.Value.Zip)).ToList(),
                 _holds.Select(kv => new IssuerHoldState(kv.Key, kv.Value.Pan, kv.Value.Amount.Cents)).ToList(),
                 _voided.ToList());
         }
@@ -195,7 +203,7 @@ public sealed class IssuerSimulator : IIssuer
             _accounts.Clear(); _holds.Clear(); _voided.Clear();
             foreach (var a in state.Accounts)
             {
-                var acct = new Account { Available = new Money(a.AvailableCents), Status = Enum.Parse<AccountStatus>(a.Status), Pin = a.Pin, VelocityLimit = a.VelocityLimit };
+                var acct = new Account { Available = new Money(a.AvailableCents), Status = Enum.Parse<AccountStatus>(a.Status), Pin = a.Pin, Zip = a.Zip, VelocityLimit = a.VelocityLimit };
                 acct.RecentUses.AddRange(a.RecentUses);
                 _accounts[a.Pan] = acct;
             }
@@ -205,6 +213,7 @@ public sealed class IssuerSimulator : IIssuer
     }
 }
 
-public sealed record IssuerAccountState(string Pan, long AvailableCents, string Status, string? Pin, int VelocityLimit, List<DateTimeOffset> RecentUses);
+/// <summary>Zip is last and optional so a journal written before the address check still loads.</summary>
+public sealed record IssuerAccountState(string Pan, long AvailableCents, string Status, string? Pin, int VelocityLimit, List<DateTimeOffset> RecentUses, string? Zip = null);
 public sealed record IssuerHoldState(string SaleId, string Pan, long AmountCents);
 public sealed record IssuerState(List<IssuerAccountState> Accounts, List<IssuerHoldState> Holds, List<string> Voided);

@@ -42,13 +42,26 @@ export async function pickCard(page: Page, column: ReturnType<typeof dispenser>,
   await page.getByRole('option', { name: new RegExp(`^${card} ·`) }).click()
 }
 
-/** Tap a card at the pump's own reader and wait for the approval on the face. */
-export async function tapCardAtPump(page: Page, card = 'Good', tender: 'Credit' | 'Debit' = 'Credit') {
+/** What the test bank has on file: billing ZIP for every credit card, PIN for DebitGoodPin. */
+export const ZIP = '12345'
+export const PIN = '1234'
+
+/** Tap a card at the pump's own reader, answer the keypad, and wait for the approval on the face. */
+export async function tapCardAtPump(page: Page, card = 'Good', tender: 'Credit' | 'Debit' = 'Credit', code = tender === 'Debit' ? PIN : ZIP) {
   const d = dispenser(page)
   await pickCard(page, d, card)
   await d.getByRole('button', { name: tender, exact: true }).click()
   await d.getByRole('button', { name: 'Tap' }).click()
+  await enterCode(page, code)
   await expect(face(page)).toContainText('Approved for up to')
+}
+
+/** The keypad step: the face asks for a PIN or a ZIP, the driver types it and presses Enter. */
+export async function enterCode(page: Page, code: string) {
+  const d = dispenser(page)
+  await expect(face(page)).toContainText(/Enter your \d-digit/)
+  await d.locator('.keypad input').fill(code)
+  await d.getByRole('button', { name: 'Enter', exact: true }).click()
 }
 
 /** Grade, lift, seat, squeeze: the hand sequence, and wait until fuel is moving. */

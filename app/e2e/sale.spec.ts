@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { dispenser, face, open, resetWorld, startFueling, state, station, tapCardAtPump } from './helpers'
+import { dispenser, enterCode, face, open, pickCard, resetWorld, startFueling, state, station, tapCardAtPump } from './helpers'
 
 test.describe('a sale through the wire', () => {
   test.beforeEach(async ({ page, request }) => {
@@ -18,6 +18,20 @@ test.describe('a sale through the wire', () => {
     expect(s.sale.cents).toBe(3000)
     expect(s.sale.source).toBe('PumpTap')
     await expect(station(page)).toContainText('credit: charged')
+  })
+
+  test('a wrong billing ZIP is declined by the bank and nothing is held', async ({ page, request }) => {
+    const d = dispenser(page)
+    await pickCard(page, d, 'Good')
+    await d.getByRole('button', { name: 'Tap' }).click()
+    await expect(face(page)).toContainText('Enter your 5-digit billing ZIP')
+    expect((await state(request)).openHolds).toHaveLength(0)      // the bank has not heard from us yet
+    await enterCode(page, '54321')
+    await expect(face(page)).toContainText('Card declined')
+    await expect(face(page)).toContainText('ZIP does not match')
+    const s = await state(request)
+    expect(s.sale.state).toBe('Declined')
+    expect(s.openHolds).toHaveLength(0)
   })
 
   test('a second card on an untouched approval cancels the first and starts over', async ({ page, request }) => {

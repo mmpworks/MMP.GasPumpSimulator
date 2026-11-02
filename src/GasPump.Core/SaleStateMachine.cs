@@ -8,7 +8,11 @@ public sealed record SaleTimeouts(
     TimeSpan Completion,
     TimeSpan Notice,
     /// <summary>Approved to first lift, card or cash taken at the station. Longer, because the cashier holds the sale and can cancel it by hand.</summary>
-    TimeSpan NozzleLiftAtStation)
+    TimeSpan NozzleLiftAtStation,
+    /// <summary>Card read to PIN or ZIP entered. The driver is at the keypad; a card left in the reader with nobody typing is a walk-away.</summary>
+    TimeSpan CodeEntry,
+    /// <summary>Flow paused to flow resumed. When it runs out the pump closes the valve and settles for the fuel delivered, so a forgotten nozzle never holds the pump open.</summary>
+    TimeSpan PausedFlow)
 {
     public static SaleTimeouts Default => new(
         Authorization: TimeSpan.FromSeconds(30),
@@ -16,7 +20,9 @@ public sealed record SaleTimeouts(
         MaxFueling: TimeSpan.FromMinutes(10),
         Completion: TimeSpan.FromSeconds(30),
         Notice: TimeSpan.FromSeconds(30),
-        NozzleLiftAtStation: TimeSpan.FromSeconds(300));
+        NozzleLiftAtStation: TimeSpan.FromSeconds(300),
+        CodeEntry: TimeSpan.FromSeconds(30),
+        PausedFlow: TimeSpan.FromSeconds(60));
 
     public TimeSpan LiftFor(CardSource source) => source == CardSource.Station ? NozzleLiftAtStation : NozzleLift;
 }
@@ -77,7 +83,15 @@ public sealed class SaleStateMachine
     public ServiceStatus Service { get; private set; }
 
     /// <summary>True while the driver's money is held or requested and no fuel has moved: the sale a newer card may take over.</summary>
-    public bool IsOpenAndUntouched => State is SaleState.Authorizing or SaleState.ReadyToPump && !NozzleOut;
+    public bool IsOpenAndUntouched => State is SaleState.CardRead or SaleState.Authorizing or SaleState.ReadyToPump && !NozzleOut;
+
+    /// <summary>The keypad entry this tender needs: a PIN for debit, a billing ZIP for credit. Cash needs none.</summary>
+    public static (int Digits, string Name, DriverAction Action) CodeFor(Tender tender) => tender switch
+    {
+        Tender.Debit => (4, "PIN", DriverAction.EnterPin),
+        Tender.Credit => (5, "ZIP code", DriverAction.EnterZip),
+        _ => (0, "", DriverAction.None),
+    };
     private TimeSpan LiftTimeout => _timeouts.LiftFor(Source);
     public Money CashPrepaid { get; private set; }
     public Money ChangeDue { get; private set; }
@@ -142,9 +156,27 @@ public sealed class SaleStateMachine
                 GradeSelected = cp.Grade is not null;
                 Tender = cp.Tender;
                 Source = cp.Source;
+                // Nothing has gone to the bank yet. The keypad comes first: a PIN for debit, a ZIP code for credit.
+                return Transition(SaleState.CardRead, commands, $"card {cp.CardName} as {cp.Tender}, {SourceText(cp.Source)}, waiting for {CodeFor(cp.Tender).Name}", timeout: _timeouts.CodeEntry);
+
+            case (SaleState.CardRead, SaleEvent.CodeEntered ce):
+            {
+                var (digits, name, _) = CodeFor(Tender);
+                if (ce.Code.Length != digits || !ce.Code.All(char.IsDigit))
+                {
+                    // The digits never reach a log. Only the shape of the mistake does.
+                    commands.Add(new SaleCommand.Log(SaleId, $"{name} entry refused: {digits} digits expected, {ce.Code.Length} typed; waiting"));
+                    return commands;
+                }
                 Hold = HoldStatus.Requested;
-                commands.Add(new SaleCommand.RequestAuthorization(SaleId, cp.CardName, Grade, cp.Tender));
-                return Transition(SaleState.Authorizing, commands, $"card {cp.CardName} as {cp.Tender}, {SourceText(cp.Source)}", timeout: _timeouts.Authorization);
+                commands.Add(new SaleCommand.RequestAuthorization(SaleId, CardName!, Grade, Tender, ce.Code));
+                return Transition(SaleState.Authorizing, commands, $"{name} entered, asking the bank", timeout: _timeouts.Authorization);
+            }
+
+            case (SaleState.CardRead, SaleEvent.Timeout):
+                End = EndReason.NoCodeEntered;
+                EndDetail = $"no {CodeFor(Tender).Name} was entered within {_timeouts.CodeEntry.TotalSeconds:0} s";
+                return Transition(SaleState.Cancelled, commands, "keypad entry timed out, nothing was sent to the bank");
 
             case (SaleState.Idle, SaleEvent.CashPaid cash):
                 CardName = "cash";
@@ -243,7 +275,9 @@ public sealed class SaleStateMachine
             case (SaleState.Fueling, SaleEvent.FlowPaused fp):
                 Flow = FlowRate.Zero;
                 Phase = "paused";
-                commands.Add(new SaleCommand.Log(SaleId, $"flow paused: {fp.Reason}, {Volume} for {Money} so far"));
+                // The idle timer runs beside the max-fueling timer. A squeeze cancels it; silence lets it finish the sale.
+                commands.Add(new SaleCommand.ArmTimer(SaleId, SaleState.Fueling, _timeouts.PausedFlow, SaleCommand.IdleTimer));
+                commands.Add(new SaleCommand.Log(SaleId, $"flow paused: {fp.Reason}, {Volume} for {Money} so far, finishes in {_timeouts.PausedFlow.TotalSeconds:0} s without a squeeze"));
                 return commands;
 
             case (SaleState.Fueling, SaleEvent.NozzleSeated):
@@ -256,6 +290,7 @@ public sealed class SaleStateMachine
 
             case (SaleState.Fueling, SaleEvent.FlowResumed):
                 Phase = "full";
+                commands.Add(new SaleCommand.CancelTimer(SaleId, SaleCommand.IdleTimer));
                 commands.Add(new SaleCommand.Log(SaleId, "flow resumed"));
                 return commands;
 
@@ -279,6 +314,15 @@ public sealed class SaleStateMachine
                 NozzleSeated = false;
                 commands.Add(new SaleCommand.CloseValve(SaleId));
                 return Finish(commands, "nozzle hung", EndReason.Completed);
+
+            case (SaleState.Fueling, SaleEvent.Timeout { Tag: SaleCommand.IdleTimer }) when Phase != "paused":
+                // The squeeze and the timer crossed in the mailbox. Flow is back, so the timer means nothing.
+                commands.Add(new SaleCommand.Log(SaleId, "idle timer fired after flow resumed, ignored"));
+                return commands;
+
+            case (SaleState.Fueling, SaleEvent.Timeout { Tag: SaleCommand.IdleTimer }):
+                commands.Add(new SaleCommand.CloseValve(SaleId));
+                return Finish(commands, $"no flow for {_timeouts.PausedFlow.TotalSeconds:0} s, valve closed", EndReason.NoFlow);
 
             case (SaleState.Fueling, SaleEvent.Timeout):
                 commands.Add(new SaleCommand.CloseValve(SaleId));
@@ -494,6 +538,12 @@ public sealed class SaleStateMachine
                 return new($"Thank you: {Volume} for {Money}", Join(holdLine, "Insert or tap your card, or pay the cashier, for the next sale."), DriverAction.Leave);
             case SaleState.Idle:
                 return new("Insert or tap your card, or pay the cashier", "Select a grade after approval.", DriverAction.None);
+            case SaleState.CardRead:
+            {
+                var (digits, name, action) = CodeFor(Tender);
+                var what = Tender == Tender.Debit ? $"Enter your {digits}-digit {name}" : $"Enter your {digits}-digit billing {name}";
+                return new(what, $"Press Enter when done. The sale cancels after {_timeouts.CodeEntry.TotalSeconds:0} s with nothing typed. Nothing has been sent to your bank yet.", action);
+            }
             case SaleState.Authorizing when Tender == Tender.Cash:
                 return new($"Cash {CashPrepaid} received", "Setting the pump to your amount.", DriverAction.Wait);
             case SaleState.Authorizing:
@@ -510,7 +560,7 @@ public sealed class SaleStateMachine
                 return new($"Approved for up to {Ceiling}", Join(step, Tender == Tender.Cash ? holdLine : "", leave), DriverAction.LiftNozzle);
             }
             case SaleState.Fueling when Phase == "paused":
-                return new($"Paused at {Money}", Join(NozzleSeated ? "Squeeze the trigger to continue." : "Put the nozzle back in the tank and squeeze to continue.", "Hang up the nozzle to finish."), DriverAction.HangToStop);
+                return new($"Paused at {Money}", Join(NozzleSeated ? "Squeeze the trigger to continue." : "Put the nozzle back in the tank and squeeze to continue.", $"Hang up the nozzle to finish, or the pump finishes by itself after {_timeouts.PausedFlow.TotalSeconds:0} s."), DriverAction.HangToStop);
             case SaleState.Fueling:
                 return new("Fueling", "Let go of the trigger to pause. Hang up the nozzle to finish. The pump stops by itself at your limit.", DriverAction.HangToStop);
             case SaleState.Completing:
@@ -526,6 +576,7 @@ public sealed class SaleStateMachine
             EndReason.BankSilent => new("Bank did not answer", Join("No fuel was dispensed.", holdLine, "Try again here, or use another pump."), DriverAction.TryAgain),
             EndReason.BankDown => new("Bank link is down", "No fuel was dispensed. Nothing was sent to your bank and nothing was charged. Pay the cashier in cash, try again in a few minutes, or use another station.", DriverAction.TryAgain),
             EndReason.NoNozzleLift => new("Sale cancelled", Join("The nozzle was not lifted in time.", holdLine, "Start again when ready."), DriverAction.TryAgain),
+            EndReason.NoCodeEntered => new("Sale cancelled", Join(Sentence(EndDetail), "Nothing was sent to your bank.", "Start again when ready."), DriverAction.TryAgain),
             EndReason.DriverCancelled => new("Sale cancelled", Join(Sentence(EndDetail), holdLine, "Start again when ready."), DriverAction.TryAgain),
             EndReason.PumpFault => FaultNotice(holdLine),
             EndReason.SecurityRefusal => new("Pump refused the sale", Join(Sentence(EndDetail), holdLine, "Please use another pump and tell the attendant."), DriverAction.SeeAttendant),

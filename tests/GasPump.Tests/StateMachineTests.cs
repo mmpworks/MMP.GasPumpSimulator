@@ -1,4 +1,5 @@
 using GasPump.Core;
+using GasPump.Payment;
 using Xunit;
 
 namespace GasPump.Tests;
@@ -12,6 +13,7 @@ public class StateMachineTests
     {
         var m = Machine();
         m.Apply(new SaleEvent.CardPresented("S1", "Good", preselected));
+        m.Apply(new SaleEvent.CodeEntered("S1", TestCards.Zip));
         m.Apply(new SaleEvent.Approved("S1", Money.FromDollars(75), "tok"));
         if (preselected is null) m.Apply(new SaleEvent.GradeSelected("S1", Grade.Regular));
         m.Apply(new SaleEvent.NozzleLifted("S1"));
@@ -59,6 +61,7 @@ public class StateMachineTests
     {
         var m = Machine();
         m.Apply(new SaleEvent.CardPresented("S1", "Good"));
+        m.Apply(new SaleEvent.CodeEntered("S1", TestCards.Zip));
         m.Apply(new SaleEvent.Approved("S1", Money.FromDollars(30), "tok"));
         m.Apply(new SaleEvent.NozzleLifted("S1"));
         var c = m.Apply(new SaleEvent.PumpService("S1", HoseApart));
@@ -102,10 +105,17 @@ public class StateMachineTests
     public void Happy_path_emits_the_right_commands_in_order()
     {
         var m = Machine();
-        var c1 = m.Apply(new SaleEvent.CardPresented("S1", "Good", Grade.Plus));
+        var c0 = m.Apply(new SaleEvent.CardPresented("S1", "Good", Grade.Plus));
+        Assert.Equal(SaleState.CardRead, m.State);                 // the keypad comes before the bank
+        Assert.Equal(HoldStatus.None, m.Hold);
+        Assert.DoesNotContain(c0, c => c is SaleCommand.RequestAuthorization);
+        Assert.Contains(c0, c => c is SaleCommand.ArmTimer { State: SaleState.CardRead });
+        Assert.Equal(DriverAction.EnterZip, m.Notice().Action);
+
+        var c1 = m.Apply(new SaleEvent.CodeEntered("S1", TestCards.Zip));
         Assert.Equal(SaleState.Authorizing, m.State);
         Assert.Equal(HoldStatus.Requested, m.Hold);
-        Assert.Contains(c1, c => c is SaleCommand.RequestAuthorization { Tender: Tender.Credit });
+        Assert.Contains(c1, c => c is SaleCommand.RequestAuthorization { Tender: Tender.Credit, Code: TestCards.Zip });
         Assert.Contains(c1, c => c is SaleCommand.ArmTimer { State: SaleState.Authorizing });
 
         var c2 = m.Apply(new SaleEvent.Approved("S1", Money.FromDollars(30), "tok"));
@@ -137,6 +147,7 @@ public class StateMachineTests
     {
         var m = Machine();
         m.Apply(new SaleEvent.CardPresented("S1", "Good"));
+        m.Apply(new SaleEvent.CodeEntered("S1", TestCards.Zip));
         var c = m.Apply(new SaleEvent.Approved("S1", Money.FromDollars(75), "tok"));
         Assert.Contains(c, x => x is SaleCommand.ArmPump { Grade: null });
         Assert.False(m.GradeSelected);
@@ -172,6 +183,7 @@ public class StateMachineTests
     {
         var m = Machine();
         m.Apply(new SaleEvent.CardPresented("S1", "Good", Grade.Regular));
+        m.Apply(new SaleEvent.CodeEntered("S1", TestCards.Zip));
         m.Apply(new SaleEvent.Approved("S1", Money.FromDollars(75), "tok"));
         m.Apply(new SaleEvent.NozzleLifted("S1"));
         var c = m.Apply(new SaleEvent.NozzleHung("S1"));
@@ -204,6 +216,7 @@ public class StateMachineTests
     {
         var m = Machine();
         m.Apply(new SaleEvent.CardPresented("S1", "Good", Grade.Regular));
+        m.Apply(new SaleEvent.CodeEntered("S1", TestCards.Zip));
         m.Apply(new SaleEvent.Approved("S1", Money.FromDollars(75), "tok"));
         var c = m.Apply(new SaleEvent.Timeout("S1", SaleState.ReadyToPump));
         Assert.Equal(SaleState.Cancelled, m.State);
@@ -218,6 +231,7 @@ public class StateMachineTests
     {
         var m = Machine();
         m.Apply(new SaleEvent.CardPresented("S1", "Good", Grade.Regular));
+        m.Apply(new SaleEvent.CodeEntered("S1", TestCards.Zip));
         m.Apply(new SaleEvent.Approved("S1", Money.FromDollars(75), "tok"));
         m.Apply(new SaleEvent.Timeout("S1", SaleState.Authorizing));
         Assert.Equal(SaleState.ReadyToPump, m.State);
@@ -268,6 +282,7 @@ public class StateMachineTests
     {
         var m = Machine();
         m.Apply(new SaleEvent.CardPresented("S1", "Good", Grade.Regular));
+        m.Apply(new SaleEvent.CodeEntered("S1", TestCards.Zip));
         m.Apply(new SaleEvent.Approved("S1", Money.FromDollars(75), "tok"));
         var c = m.Apply(new SaleEvent.Fault("S1", "stray pulses"));
         Assert.Equal(SaleState.Faulted, m.State);
@@ -279,6 +294,7 @@ public class StateMachineTests
     {
         var m = Machine();
         m.Apply(new SaleEvent.CardPresented("S1", "Stolen", Grade.Regular));
+        m.Apply(new SaleEvent.CodeEntered("S1", TestCards.Zip));
         m.Apply(new SaleEvent.Declined("S1", "LostOrStolen", "card reported lost or stolen, pick up card"));
         Assert.Equal(SaleState.Declined, m.State);
         Assert.Equal(HoldStatus.None, m.Hold);
@@ -294,6 +310,7 @@ public class StateMachineTests
     {
         var m = Machine();
         m.Apply(new SaleEvent.CardPresented("S1", "Good", Grade.Regular));
+        m.Apply(new SaleEvent.CodeEntered("S1", TestCards.Zip));
         var c = m.Apply(new SaleEvent.Timeout("S1", SaleState.Authorizing));
         Assert.Equal(SaleState.Declined, m.State);
         Assert.Equal(EndReason.BankSilent, m.End);
@@ -309,6 +326,7 @@ public class StateMachineTests
     {
         var m = Machine();
         m.Apply(new SaleEvent.CardPresented("S1", "Good", Grade.Regular));
+        m.Apply(new SaleEvent.CodeEntered("S1", TestCards.Zip));
         var c = m.Apply(new SaleEvent.AuthorizationUnreachable("S1", "connection refused"));
         Assert.Equal(SaleState.Declined, m.State);
         Assert.Equal(EndReason.BankDown, m.End);
@@ -325,6 +343,7 @@ public class StateMachineTests
     {
         var m = Machine();
         m.Apply(new SaleEvent.CardPresented("S1", "Good", Grade.Regular));
+        m.Apply(new SaleEvent.CodeEntered("S1", TestCards.Zip));
         m.Apply(new SaleEvent.Timeout("S1", SaleState.Authorizing));
         var c = m.Apply(new SaleEvent.Approved("S1", Money.FromDollars(75), "late-token"));
         Assert.Equal(SaleState.Declined, m.State);
@@ -342,6 +361,7 @@ public class StateMachineTests
     {
         var m = Machine();
         m.Apply(new SaleEvent.CardPresented("S1", "Good", Grade.Regular));
+        m.Apply(new SaleEvent.CodeEntered("S1", TestCards.Zip));
         m.Apply(new SaleEvent.Approved("S1", Money.FromDollars(75), "tok"));
         m.Apply(new SaleEvent.Timeout("S1", SaleState.ReadyToPump));
         m.Apply(new SaleEvent.ReversalQueued("S1"));
@@ -412,6 +432,7 @@ public class StateMachineTests
     {
         var m = Machine();
         m.Apply(new SaleEvent.CardPresented("S1", "Stolen", Grade.Regular));
+        m.Apply(new SaleEvent.CodeEntered("S1", TestCards.Zip));
         var c = m.Apply(new SaleEvent.Declined("S1", "LostOrStolen", "pick up card"));
         Assert.Contains(c, x => x is SaleCommand.ArmTimer { State: SaleState.Declined, After.TotalSeconds: 30 });
         m.Apply(new SaleEvent.Timeout("S1", SaleState.Declined));

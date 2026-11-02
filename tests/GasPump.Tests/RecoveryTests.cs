@@ -38,7 +38,7 @@ public class RecoveryTests : IDisposable
         using (var h = new SimHarness(strategy, Options("RUN-1")))
         {
             before = h.Sim.Issuer.AvailableBalance(card.Pan);
-            saleId = h.Sim.PresentCard("Good");
+            saleId = h.Present("Good");
             h.AdvanceUntilState(SaleState.ReadyToPump, TimeSpan.FromSeconds(5));
             h.Sim.StartFueling(Grade.Plus);
             h.AdvanceUntilState(SaleState.Fueling, TimeSpan.FromSeconds(1));
@@ -77,7 +77,7 @@ public class RecoveryTests : IDisposable
             Assert.Contains(h2.Sim.Log.Snapshot(), l => l.Source == "recovery" && l.Severity == LogSeverity.Error);
 
             // The next driver is unaffected.
-            h2.Sim.PresentCard("Good");
+            h2.Present("Good");
             h2.AdvanceUntilState(SaleState.ReadyToPump, TimeSpan.FromSeconds(5));
             Assert.NotEqual(saleId, h2.State.SaleId);
         }
@@ -92,7 +92,7 @@ public class RecoveryTests : IDisposable
         using (var h = new SimHarness(strategy, Options("RUN-1")))
         {
             before = h.Sim.Issuer.AvailableBalance(card.Pan);
-            h.Sim.PresentCard("Good");
+            h.Present("Good");
             h.AdvanceUntilState(SaleState.ReadyToPump, TimeSpan.FromSeconds(5));
             h.Advance(TimeSpan.FromSeconds(2));
             Assert.Equal(before - Money.FromDollars(30), h.Sim.Issuer.AvailableBalance(card.Pan));
@@ -138,7 +138,7 @@ public class RecoveryTests : IDisposable
             h.Sim.AdminSetHold("1234", Tender.Debit, Money.FromDollars(35));
             h.Sim.AttackBruteForceAdminPin();          // locks the panel
             h.Sim.Network.Mode = NetworkMode.Down;
-            h.Sim.PresentCard("Good");                  // refused at once, nothing queued
+            h.Present("Good");                  // refused at once, nothing queued
             h.AdvanceUntilState(SaleState.Declined, TimeSpan.FromSeconds(2));
             h.Advance(TimeSpan.FromSeconds(1));
             h.Sim.SimulatePowerLoss();
@@ -156,7 +156,7 @@ public class RecoveryTests : IDisposable
         string token;
         using (var h = new SimHarness(strategy, Options("RUN-1")))
         {
-            h.Sim.PresentCard("Good");
+            h.Present("Good");
             h.AdvanceUntilState(SaleState.ReadyToPump, TimeSpan.FromSeconds(5));
             h.Advance(TimeSpan.FromSeconds(1));
             token = h.Sim.LastToken!;
@@ -176,7 +176,7 @@ public class RecoveryTests : IDisposable
         using (var h = new SimHarness("channel", Options("RUN-1")))
         {
             path = h.Sim.CustodyPath!;
-            h.Sim.PresentCard("Good");
+            h.Present("Good");
             h.AdvanceUntilState(SaleState.ReadyToPump, TimeSpan.FromSeconds(5));
             h.Sim.StartFueling();
             h.AdvanceUntil(() => h.State.State == SaleState.Idle, TimeSpan.FromMinutes(3));
@@ -214,7 +214,7 @@ public class RecoveryTests : IDisposable
     {
         using (var h = new SimHarness("channel", Options("RUN-1")))
         {
-            h.Sim.PresentCard("Good");
+            h.Present("Good");
             h.AdvanceUntilState(SaleState.ReadyToPump, TimeSpan.FromSeconds(5));
             h.Advance(TimeSpan.FromSeconds(2));
             h.Sim.SimulatePowerLoss();
@@ -241,7 +241,7 @@ public class RecoveryTests : IDisposable
         {
             before = h.Sim.Issuer.AvailableBalance(card.Pan);
             custodyPath = h.Sim.CustodyPath!;
-            h.Sim.PresentCard("Good");
+            h.Present("Good");
             h.AdvanceUntilState(SaleState.ReadyToPump, TimeSpan.FromSeconds(5));
             h.Sim.StartFueling();
             h.AdvanceUntilState(SaleState.Fueling, TimeSpan.FromSeconds(1));
@@ -277,7 +277,7 @@ public class RecoveryTests : IDisposable
             Directory.CreateDirectory(_dir);
             // A late subscriber, as a station server that connects after the pump booted. Replay gives it the header too.
             h.Sim.Custody!.SubscribeWithReplay(line => { received.Add(line); File.AppendAllText(copy, line + "\n"); });
-            h.Sim.PresentCard("Good");
+            h.Present("Good");
             h.AdvanceUntilState(SaleState.ReadyToPump, TimeSpan.FromSeconds(5));
             h.Sim.StartFueling();
             h.AdvanceUntil(() => h.State.State == SaleState.Idle, TimeSpan.FromMinutes(3));
@@ -307,14 +307,14 @@ public class RecoveryTests : IDisposable
         h2.Advance(TimeSpan.FromMilliseconds(300));
         Assert.True(h2.Sim.View.Service.Holds("PUMP.HOSE.BREAKAWAY"));
         Assert.Equal("Out of service: hose breakaway coupling", h2.State.Notice.Headline);
-        var (ok, _, reason) = h2.Sim.TryPresentCard("Good");
+        var (ok, _, reason) = h2.TryPresent("Good");
         Assert.False(ok);
         Assert.Contains("PUMP.HOSE.BREAKAWAY", reason);
 
         h2.Sim.ResetBreakaway();
         h2.Advance(TimeSpan.FromMilliseconds(300));
         Assert.True(h2.Sim.View.Service.InService);
-        Assert.True(h2.Sim.TryPresentCard("Good").Ok);
+        Assert.True(h2.TryPresent("Good").Ok);
         h2.AdvanceUntilState(SaleState.ReadyToPump, TimeSpan.FromSeconds(5));
     }
 
@@ -328,7 +328,7 @@ public class RecoveryTests : IDisposable
         using (var h = new SimHarness(strategy, Options("RUN-1")))
         {
             before = h.Sim.Issuer.AvailableBalance(card.Pan);
-            saleId = h.Sim.PresentCard("Good");
+            saleId = h.Present("Good");
             h.AdvanceUntilState(SaleState.ReadyToPump, TimeSpan.FromSeconds(5));
             h.Sim.Network.Latency = TimeSpan.FromSeconds(2);      // the reversal will sit on the wire
             h.Sim.TankRunsDry();
@@ -358,10 +358,10 @@ public class RecoveryTests : IDisposable
         {
             goodBefore = h.Sim.Issuer.AvailableBalance(good.Pan);
             debitBefore = h.Sim.Issuer.AvailableBalance(debit.Pan);
-            h.Sim.PresentCard("Good");
+            h.Present("Good");
             h.AdvanceUntilState(SaleState.ReadyToPump, TimeSpan.FromSeconds(5));
             h.Sim.Network.Latency = TimeSpan.FromSeconds(2);
-            Assert.True(h.Sim.TryPresentCard("DebitGoodPin", tender: Tender.Debit).Ok);   // first reversed on the wire, second authorizing on the wire
+            Assert.True(h.TryPresent("DebitGoodPin", tender: Tender.Debit).Ok);   // first reversed on the wire, second authorizing on the wire
             h.Advance(TimeSpan.FromMilliseconds(200));
             h.Sim.SimulatePowerLoss();
         }

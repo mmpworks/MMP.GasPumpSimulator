@@ -138,6 +138,8 @@ export const api = {
     const body = (await r.json()) as { saleId: string; error?: string }
     return { ok: r.ok, ...body }
   },
+  /** The keypad: a 4-digit PIN for debit, a 5-digit billing ZIP for credit. */
+  enterCode: (code: string) => post('/api/code', { code }),
   payCash: (cents: number) => post('/api/cash', { cents }),
   changeCollected: () => post('/api/cash/collected'),
   adminSetHold: async (pin: string, tender: 'Credit' | 'Debit', cents: number) =>

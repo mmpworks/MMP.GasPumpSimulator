@@ -40,6 +40,23 @@ public sealed class LinkTests : IDisposable
             Dispenser = new DispenserLinkOptions("127.0.0.1", port),
         });
 
+    /// <summary>Card in, wait for the keypad prompt to cross the wire, type the test ZIP.</summary>
+    private static void Present(Simulation station, string card)
+    {
+        station.PresentCard(card);
+        WaitFor(() => station.Snapshot().State == SaleState.CardRead, TimeSpan.FromSeconds(5), () => "keypad never asked\n" + Tail(station));
+        station.EnterCode(TestCards.Zip);
+    }
+
+    private static (bool Ok, string SaleId, string Reason) TryPresent(Simulation station, string card)
+    {
+        var r = station.TryPresentCard(card);
+        if (!r.Ok) return r;
+        WaitFor(() => station.Snapshot().State == SaleState.CardRead, TimeSpan.FromSeconds(5), () => "keypad never asked\n" + Tail(station));
+        station.EnterCode(TestCards.Zip);
+        return r;
+    }
+
     private static void WaitFor(Func<bool> done, TimeSpan budget, Func<string> onTimeout)
     {
         var sw = Stopwatch.StartNew();
@@ -73,7 +90,7 @@ public sealed class LinkTests : IDisposable
 
         var card = TestCards.Get("Good");
         var before = station.Issuer.AvailableBalance(card.Pan);
-        station.PresentCard("Good");
+        Present(station, "Good");
         WaitFor(() => station.Snapshot().State == SaleState.ReadyToPump, TimeSpan.FromSeconds(5), () => "never armed\n" + Tail(station));
         station.StartFueling();
         WaitFor(() => station.Snapshot().State == SaleState.Fueling, TimeSpan.FromSeconds(5), () => "never fueled\n" + Tail(station));
@@ -116,7 +133,7 @@ public sealed class LinkTests : IDisposable
         WaitFor(() => station.Link.Connected && station.View.Phase != "Offline", TimeSpan.FromSeconds(5), () => "station never connected\n" + Tail(station));
         var card = TestCards.Get("Good");
         var before = station.Issuer.AvailableBalance(card.Pan);
-        station.PresentCard("Good");
+        Present(station, "Good");
         WaitFor(() => station.Snapshot().State == SaleState.ReadyToPump, TimeSpan.FromSeconds(5), () => "never armed\n" + Tail(station));
         station.StartFueling();
         WaitFor(() => station.Snapshot().Volume > Volume.Zero && station.Snapshot().Money > new Money(50), TimeSpan.FromSeconds(5), () => "no fuel recorded\n" + Tail(station));
@@ -162,7 +179,7 @@ public sealed class LinkTests : IDisposable
 
         station.ResetBreakaway();
         WaitFor(() => station.View.Service.InService, TimeSpan.FromSeconds(3), () => "reset never reached the station\n" + Tail(station));
-        Assert.True(station.TryPresentCard("Good").Ok);
+        Assert.True(TryPresent(station, "Good").Ok);
         WaitFor(() => station.Snapshot().State == SaleState.ReadyToPump, TimeSpan.FromSeconds(5), () => "never armed after the reset\n" + Tail(station));
         dispenser.Dispose();
     }
@@ -180,7 +197,7 @@ public sealed class LinkTests : IDisposable
         {
             WaitFor(() => station.Link.Connected && station.View.Phase != "Offline", TimeSpan.FromSeconds(5), () => "station never connected\n" + Tail(station));
             before = station.Issuer.AvailableBalance(card.Pan);
-            station.PresentCard("Good");
+            Present(station, "Good");
             WaitFor(() => station.Snapshot().State == SaleState.ReadyToPump, TimeSpan.FromSeconds(5), () => "never armed\n" + Tail(station));
             station.StartFueling();
             WaitFor(() => station.Snapshot().Money > new Money(50), TimeSpan.FromSeconds(5), () => "no fuel recorded\n" + Tail(station));
@@ -220,7 +237,7 @@ public sealed class LinkTests : IDisposable
         var port = dispenser.Port;
         using var station = NewStation(port, "STN-1");
         WaitFor(() => station.Link.Connected && station.View.Phase != "Offline", TimeSpan.FromSeconds(5), () => "station never connected\n" + Tail(station));
-        station.PresentCard("Good");
+        Present(station, "Good");
         WaitFor(() => station.Snapshot().State == SaleState.ReadyToPump, TimeSpan.FromSeconds(5), () => "never armed\n" + Tail(station));
         station.StartFueling();
         WaitFor(() => station.Snapshot().Volume > Volume.Zero, TimeSpan.FromSeconds(5), () => "no fuel recorded\n" + Tail(station));
@@ -236,7 +253,7 @@ public sealed class LinkTests : IDisposable
         WaitFor(() => station.Snapshot().State == SaleState.Idle, TimeSpan.FromSeconds(5), () => "LINK fault never cleared\n" + Tail(station));
         Assert.Equal("Pump back in service", station.Snapshot().Notice.Headline);
         Assert.True(station.View.Service.InService);
-        Assert.True(station.TryPresentCard("Good").Ok);
+        Assert.True(TryPresent(station, "Good").Ok);
         WaitFor(() => station.Snapshot().State == SaleState.ReadyToPump, TimeSpan.FromSeconds(5), () => "never armed after the link returned\n" + Tail(station));
     }
 
@@ -248,7 +265,7 @@ public sealed class LinkTests : IDisposable
         using (var station = NewStation(dispenser.Port, "STN-1"))
         {
             WaitFor(() => station.Link.Connected && station.View.Phase != "Offline", TimeSpan.FromSeconds(5), () => "station never connected\n" + Tail(station));
-            station.PresentCard("Good");
+            Present(station, "Good");
             WaitFor(() => station.Snapshot().State == SaleState.ReadyToPump, TimeSpan.FromSeconds(5), () => "never armed\n" + Tail(station));
             station.StartFueling();
             WaitFor(() => station.Snapshot().Volume > Volume.Zero && station.Snapshot().Money > new Money(50), TimeSpan.FromSeconds(5), () => "no fuel recorded\n" + Tail(station));

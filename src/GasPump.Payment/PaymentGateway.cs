@@ -128,7 +128,8 @@ public sealed class PaymentGateway
     /// line: a $50 debit ceiling against a $900 balance holds $50, and against
     /// an $18.50 balance it holds $18.50.
     /// </summary>
-    public async Task<PreAuthResult> PreAuthorizeAsync(string saleId, CardData card, Tender tender, CancellationToken ct)
+    /// <param name="keypad">What the driver typed at the keypad: the PIN for debit, the billing ZIP for credit. It rides to the bank on the card data and is checked there.</param>
+    public async Task<PreAuthResult> PreAuthorizeAsync(string saleId, CardData card, Tender tender, string? keypad, CancellationToken ct)
     {
         if (tender == Tender.Cash) throw new ArgumentException("cash does not pre-authorize; use CashAuthorize", nameof(tender));
         lock (_gate) _tenders[saleId] = tender;
@@ -138,8 +139,11 @@ public sealed class PaymentGateway
         if (check != CardCheck.Ok)
             return new PreAuthResult(false, Money.Zero, null, check.ToString(), LocalDeclineMessage(check), NetworkFailure: false);
 
-        // Paying debit with a card that has no PIN on file is a PIN failure at the bank, which is what a real terminal sees.
-        var presented = tender == Tender.Debit ? card with { Kind = CardKind.Debit } : card;
+        // The tender decides what the typed code means. Debit sends it as the PIN; a debit sale with no PIN is a PIN failure
+        // at the bank, which is what a real terminal sees. Credit sends it as the ZIP for the address check.
+        var presented = tender == Tender.Debit
+            ? card with { Kind = CardKind.Debit, Pin = keypad }
+            : card with { Zip = keypad };
         var requested = Site.HoldFor(tender);
 
         var result = await _network.SendAsync(() => _issuer.Authorize(saleId, presented, requested, now), _options.HostTimeout, ct);

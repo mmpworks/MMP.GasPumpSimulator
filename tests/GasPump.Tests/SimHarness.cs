@@ -39,6 +39,27 @@ public sealed class SimHarness : IDisposable
 
     public SaleSnapshot State => Sim.Snapshot();
 
+    /// <summary>The whole reader step as a driver does it: card in, then the keypad. Credit types the test ZIP, debit the test PIN.</summary>
+    public string Present(string card, Grade? grade = null, Tender tender = Tender.Credit, CardSource source = CardSource.PumpInsert, string? code = null)
+    {
+        var id = Sim.PresentCard(card, grade, tender, source);
+        Settle();
+        Sim.EnterCode(code ?? CodeFor(tender));
+        return id;
+    }
+
+    /// <summary>Same as <see cref="Present"/>, but reports a refused reader instead of logging it.</summary>
+    public (bool Ok, string SaleId, string Reason) TryPresent(string card, Grade? grade = null, Tender tender = Tender.Credit, CardSource source = CardSource.PumpInsert, string? code = null)
+    {
+        var r = Sim.TryPresentCard(card, grade, tender, source);
+        if (!r.Ok) return r;
+        Settle();
+        Sim.EnterCode(code ?? CodeFor(tender));
+        return r;
+    }
+
+    public static string CodeFor(Tender tender) => tender == Tender.Debit ? TestCards.Pin : TestCards.Zip;
+
     /// <summary>
     /// Let the workers finish whatever is queued, without moving the clock.
     /// Quiet must hold for a short stretch of real time, because a pool
