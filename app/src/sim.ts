@@ -47,7 +47,12 @@ export interface Pump {
   /** Empty codes means in service. Each code names the part that holds the pump out of service until its repair. */
   inService: boolean; serviceCodes: string[]; serviceParts: string[]
   openTransactions: OpenTransaction[]
+  /** The board the pump bills by, in mills per gallon ($3.499 is 3499). Null until a dispenser has answered. */
+  prices: Record<string, number> | null
 }
+/** The island's counters as last read: the sealed totalizer live, the grade rows by finished delivery. */
+export interface GradeTotal { grade: string; gallons: number; cents: number; deliveries: number }
+export interface Totals { totalizerGallons: number; lastTxSeq: number; readAt: string; byGrade: GradeTotal[] }
 export interface State {
   strategy: string; pumpId: string; sale: Sale
   station: Station
@@ -64,7 +69,13 @@ export interface State {
   custody: { path: string | null; journalPath: string | null }
   now: string
   limits: { maxCents: number; maxGallons: number; maxMinutes: number; maxGpm: number }
+  /** What the pump bills by, as the face shows it. The station's board stands in until a dispenser has answered. */
   prices: Record<string, string>
+  /** The station's posted board in mills, for the admin fields. */
+  priceBoard: Record<string, number>
+  /** False while the island still bills by an older board: a write waiting for a delivery to end, refused, or unanswered. */
+  pricesInSync: boolean
+  totals: Totals | null
   ledgerOk: boolean
 }
 export interface LogLine { origin: Origin; at: string; source: string; message: string; severity: 'Info' | 'Warn' | 'Error'; props: Record<string, string | null> }
@@ -150,6 +161,11 @@ export const api = {
   changeCollected: () => post('/api/cash/collected'),
   adminSetHold: async (pin: string, tender: 'Credit' | 'Debit', cents: number) =>
     (await (await fetch(`${HOST}/api/admin/limits`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ pin, tender, cents }) })).json()) as { ok: boolean; reason: string },
+  /** A posted price in mills per gallon. The station writes the whole board to the island, which answers. */
+  adminSetPrice: async (pin: string, grade: string, mills: number) =>
+    (await (await fetch(`${HOST}/api/admin/prices`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ pin, grade, mills }) })).json()) as { ok: boolean; reason: string },
+  /** The inspector's close-out: ask the island for its counters. The answer lands in state.totals. */
+  readTotals: () => post('/api/station/totals'),
   selectGrade: (grade: string) => post('/api/grade', { grade }),
   lift: () => post('/api/nozzle/lift'),
   insertSpout: () => post('/api/spout/insert'),

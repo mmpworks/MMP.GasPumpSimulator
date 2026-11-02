@@ -43,7 +43,9 @@ public sealed record DispenserView(
     /// <summary>The conditions holding the pump out of service. The station tells the sale whenever this changes.</summary>
     ServiceStatus Service,
     /// <summary>Delivered transactions the island still holds for the station. Empty is the normal resting state.</summary>
-    IReadOnlyList<PumpTransaction>? OpenTransactions = null)
+    IReadOnlyList<PumpTransaction>? OpenTransactions = null,
+    /// <summary>The board the pump bills by, in mills per gallon. Null until a dispenser has answered, or when it bills by a schedule that is not a plain board.</summary>
+    IReadOnlyDictionary<Grade, long>? Prices = null)
 {
     /// <summary>The pump is out of service from the station's side: no dispenser has answered, or the link dropped.</summary>
     private static readonly ServiceStatus LinkLost = new([DiagnosticCodes.LinkDispenserLost.Code]);
@@ -89,6 +91,17 @@ public sealed class Dispenser
     public PumpController Pump { get; }
 
     /// <summary>
+    /// Why the last message was refused, when the refusal is not a sale event.
+    /// A refused arm reaches the sale as <see cref="SaleEvent.PumpRefused"/>; a
+    /// refused price board concerns no sale, so it is reported here for the
+    /// answer. Set by <see cref="Handle"/>, on the pump worker only.
+    /// </summary>
+    public string? LastRefusal { get; private set; }
+
+    /// <summary>A note for a Done answer, when the pump did what was asked with a caveat: a price board that waits for the delivery to end, or one that changed nothing.</summary>
+    public string? LastNote { get; private set; }
+
+    /// <summary>
     /// One message in, zero or more sale events out. Runs on the pump worker
     /// only. The sale id is the station's current sale, which the pump needs
     /// only to address the events it sends back.
@@ -96,6 +109,8 @@ public sealed class Dispenser
     public IReadOnlyList<SaleEvent> Handle(PumpMessage m, string saleId)
     {
         var events = new List<SaleEvent>(2);
+        LastRefusal = null;
+        LastNote = null;
         switch (m)
         {
             case PumpMessage.Arm arm:
@@ -175,6 +190,15 @@ public sealed class Dispenser
             case PumpMessage.Clear clr:
                 var cleared = Pump.Transactions.Clear(clr.TxSeq, clr.By);
                 if (!cleared.Ok) Log.Warn("pump", "clear #{TxSeq} refused: {Reason}", ("TxSeq", clr.TxSeq), ("Reason", cleared.Reason));
+                break;
+
+            case PumpMessage.SetPrices sp:
+                var (priced, priceWhy, deferred) = Pump.SetPrices(new Pricing(sp.TenthCentsPerGallon), sp.By);
+                if (!priced) { LastRefusal = priceWhy; Log.Warn("pump", "price board from {By} refused: {Reason}", ("By", sp.By), ("Reason", priceWhy)); break; }
+                LastNote = priceWhy.Length == 0 ? null : priceWhy;
+                if (deferred) Log.Write("pump", "price board from {By} waits for the delivery to end: {Board}", ("By", sp.By), ("Board", Pump.PendingPrices?.Describe()));
+                else if (priceWhy == "unchanged") Log.Write("pump", "price board from {By} unchanged", ("By", sp.By));
+                else Log.Write("pump", "price board from {By}: {Board}", ("By", sp.By), ("Board", (Pump.Prices as Pricing)?.Describe()));
                 break;
 
             case PumpMessage.Stop stop:
@@ -274,7 +298,8 @@ public sealed class Dispenser
     public DispenserView View(string runId, int pid, string? custodyPath) => new(
         Options.PumpId, runId, pid, Pump.Phase.ToString(), Pump.LastFault, Pump.LastFaultCode, Totalizer.Total.MilliGallons,
         Pump.NozzleLifted, Pump.SpoutInserted, Pump.LeverHeld, Pump.SelectedGrade, Pump.Poured,
-        Pump.SupplyAvailable, Pump.BreakawayOpen, Meter.PulserDead, Pump.Armed, Ledger.Verify() == 0, custodyPath, Pump.Service, Pump.Transactions.Open);
+        Pump.SupplyAvailable, Pump.BreakawayOpen, Meter.PulserDead, Pump.Armed, Ledger.Verify() == 0, custodyPath, Pump.Service, Pump.Transactions.Open,
+        (Pump.Prices as Pricing)?.TenthCentsPerGallon);
 }
 
 /// <summary>
@@ -288,7 +313,7 @@ public static class Origins
     public const string Dispenser = "dispenser";
     public const string Station = "station";
 
-    private static readonly string[] DispenserLedgerPrefixes = ["valve.", "nozzle.", "grade.", "lever.", "arm.", "pump.", "hose.", "totalizer"];
+    private static readonly string[] DispenserLedgerPrefixes = ["valve.", "nozzle.", "grade.", "lever.", "arm.", "pump.", "hose.", "totalizer", "price."];
 
     public static string OfLedger(string kind) => DispenserLedgerPrefixes.Any(kind.StartsWith) ? Dispenser : Station;
 

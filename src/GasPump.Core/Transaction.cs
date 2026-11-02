@@ -30,3 +30,19 @@ public sealed record PumpTransaction(
     TransactionState State,
     /// <summary>Who locked it, when it is locked.</summary>
     string? LockedBy = null);
+
+/// <summary>
+/// Lifetime totals for one grade, the way the forecourt standard keeps them
+/// per nozzle: volume, money, and how many deliveries. Counted when a
+/// delivery ends, so a read during a pour shows the deliveries before it.
+/// </summary>
+public sealed record GradeTotal(Grade Grade, Volume Volume, Money Money, long Deliveries);
+
+/// <summary>
+/// What a read of totals returns: the sealed counter, which counts every
+/// slice as it moves; the per-grade totals, which count finished deliveries;
+/// the number of the last transaction written; and the island's clock when
+/// it answered. An inspector's close-out and the station's restart both read
+/// this instead of trusting their own last copy.
+/// </summary>
+public sealed record PumpTotals(Volume Totalizer, IReadOnlyList<GradeTotal> ByGrade, long LastTxSeq, DateTimeOffset ReadAt);

@@ -60,19 +60,9 @@ public sealed class SiteLimits
         bool ok;
         lock (_gate)
         {
-            if (IsLocked())
+            if (Admit(pin) is { } refused)
             {
-                (ok, kind, detail) = (false, "admin.refused", $"panel locked until {_lockedUntil:HH:mm:ss}");
-            }
-            else if (pin != _adminPin)
-            {
-                _failedPins++;
-                if (_failedPins >= MaxPinFailures)
-                {
-                    _lockedUntil = _clock.GetUtcNow() + Lockout;
-                    (ok, kind, detail) = (false, "admin.locked", $"{_failedPins} wrong PINs, panel locked for {Lockout.TotalMinutes:0} min");
-                }
-                else (ok, kind, detail) = (false, "admin.refused", $"wrong PIN ({_failedPins} of {MaxPinFailures})");
+                (ok, kind, detail) = refused;
             }
             else if (tender == Tender.Cash)
             {
@@ -92,6 +82,39 @@ public sealed class SiteLimits
         }
         Changed?.Invoke(kind, detail);
         return (ok, detail);
+    }
+
+    /// <summary>
+    /// The PIN check alone, for a back-office action that is not a hold ceiling,
+    /// such as a price change. A wrong PIN counts toward the lockout and goes to
+    /// the ledger the same way; a right one resets the count and records nothing
+    /// here, because the caller records the action itself.
+    /// </summary>
+    public (bool Ok, string Reason) TryAdmit(string pin)
+    {
+        (bool Ok, string Kind, string Detail)? refused;
+        lock (_gate)
+        {
+            refused = Admit(pin);
+            if (refused is null) _failedPins = 0;
+        }
+        if (refused is not { } r) return (true, "");
+        Changed?.Invoke(r.Kind, r.Detail);
+        return (false, r.Detail);
+    }
+
+    /// <summary>Under _gate. Null when the PIN is right and the panel is open; otherwise the refusal to record.</summary>
+    private (bool Ok, string Kind, string Detail)? Admit(string pin)
+    {
+        if (IsLocked()) return (false, "admin.refused", $"panel locked until {_lockedUntil:HH:mm:ss}");
+        if (pin == _adminPin) return null;
+        _failedPins++;
+        if (_failedPins >= MaxPinFailures)
+        {
+            _lockedUntil = _clock.GetUtcNow() + Lockout;
+            return (false, "admin.locked", $"{_failedPins} wrong PINs, panel locked for {Lockout.TotalMinutes:0} min");
+        }
+        return (false, "admin.refused", $"wrong PIN ({_failedPins} of {MaxPinFailures})");
     }
 
     /// <summary>For the journal. A reboot must not reset a lockout. If it did, three wrong PINs and a power cycle would get around it.</summary>

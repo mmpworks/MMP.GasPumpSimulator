@@ -154,6 +154,49 @@ public class WireEnvelopeTests
     }
 
     [Fact]
+    public void A_price_write_and_a_totals_report_round_trip_the_codec_with_their_grade_keys()
+    {
+        var station = new WireSequencer(WireNode.Station);
+        var board = Pricing.Default.With(Grade.Plus, 3851);
+        var write = station.Next(WireKind.Write, WireNode.Pump(7), new LinkFrame(LinkFrame.TagMsg, SaleId: "S1", M: new PumpMessage.SetPrices(board.TenthCentsPerGallon, "admin")), T0, "w-1", TimeSpan.FromSeconds(3));
+        var (back, fault, _) = FrameCodec.Decode(FrameCodec.Encode(write), WireNode.Pump(7));
+        Assert.Equal(FrameFault.None, fault);
+        Assert.Equal(WireKind.Write, back!.Kind);
+        var m = Assert.IsType<PumpMessage.SetPrices>(back.Body.M);
+        Assert.Equal("admin", m.By);
+        Assert.True(new Pricing(m.TenthCentsPerGallon).SameAs(board));
+        Assert.Equal(3851, m.TenthCentsPerGallon[Grade.Plus]);
+
+        var pump = new WireSequencer(WireNode.Pump(7));
+        var totals = new PumpTotals(Volume.FromGallons(12.345m), [new GradeTotal(Grade.Regular, Volume.FromGallons(10), Money.FromDollars(34.99m), 3), new GradeTotal(Grade.Premium, Volume.FromGallons(2.345m), Money.FromDollars(9.61m), 1)], 4, T0);
+        var report = pump.Next(WireKind.Event, WireNode.Station, new LinkFrame(LinkFrame.TagTotals, Totals: totals), T0);
+        var (got, fault2, _) = FrameCodec.Decode(FrameCodec.Encode(report), WireNode.Station);
+        Assert.Equal(FrameFault.None, fault2);
+        Assert.Equal(LinkFrame.TagTotals, got!.Body.T);
+        Assert.Equal(totals.Totalizer, got.Body.Totals!.Totalizer);
+        Assert.Equal(4, got.Body.Totals.LastTxSeq);
+        Assert.Equal([Grade.Regular, Grade.Premium], got.Body.Totals.ByGrade.Select(g => g.Grade));
+        Assert.Equal(3, got.Body.Totals.ByGrade[0].Deliveries);
+        Assert.Equal(Money.FromDollars(9.61m), got.Body.Totals.ByGrade[1].Money);
+
+        // A read for totals is one more thing the station can ask for.
+        var read = station.Next(WireKind.Read, WireNode.Pump(7), new LinkFrame(LinkFrame.TagRead, Read: new WireRead(WireRead.Totals)), T0);
+        Assert.Equal(WireRead.Totals, FrameCodec.Decode(FrameCodec.Encode(read), WireNode.Pump(7)).Frame!.Body.Read!.What);
+    }
+
+    [Fact]
+    public void A_price_board_is_valid_only_when_every_grade_is_priced_above_zero()
+    {
+        Assert.True(Pricing.Default.Validate().Ok);
+        var missing = new Pricing(new Dictionary<Grade, long> { [Grade.Regular] = 3499, [Grade.Plus] = 3799 });
+        Assert.Equal((false, "no price for Premium"), missing.Validate());
+        Assert.Equal((false, "Plus priced at 0 mills"), Pricing.Default.With(Grade.Plus, 0).Validate());
+        Assert.True(Pricing.Default.SameAs(Pricing.Default.With(Grade.Regular, 3499)));
+        Assert.False(Pricing.Default.SameAs(Pricing.Default.With(Grade.Regular, 3498)));
+        Assert.Equal("Regular $3.499 Plus $3.799 Premium $4.099", Pricing.Default.Describe());
+    }
+
+    [Fact]
     public void The_watchdog_is_alive_until_two_beats_are_missed_and_a_beat_brings_it_back()
     {
         var live = new Liveness(TimeSpan.FromSeconds(1), missedBeatsAllowed: 2);

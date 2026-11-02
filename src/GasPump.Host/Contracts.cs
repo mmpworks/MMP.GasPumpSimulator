@@ -83,10 +83,28 @@ public static class Contracts
                 maxMinutes = sim.Options.HardLimits.MaxSaleDuration.TotalMinutes,
                 maxGpm = sim.Options.HardLimits.MaxFlow.GallonsPerMinuteValue,
             },
-            prices = Enum.GetValues<Grade>().ToDictionary(g => g.ToString(), g => sim.Options.Pricing.Display(g)),
+            // What the pump bills by, as the pump face shows it. The station's own board stands in until a dispenser has answered.
+            prices = Display(sim.View.Prices is { } inForce ? new Pricing(inForce) : sim.Prices),
+            // The station's posted board in mills, for the admin panel's fields.
+            priceBoard = sim.Prices.TenthCentsPerGallon.ToDictionary(kv => kv.Key.ToString(), kv => kv.Value),
+            // False while the island still bills by an older board: a write refused, unanswered, or waiting for a delivery to end.
+            pricesInSync = sim.View.Prices is null || sim.Prices.SameAs(new Pricing(sim.View.Prices)),
+            totals = sim.LastTotals is { } t ? Totals(t) : null,
             ledgerOk = sim.Ledger.Verify() == 0,
         };
     }
+
+    private static Dictionary<string, string> Display(Pricing board) =>
+        Enum.GetValues<Grade>().Where(board.TenthCentsPerGallon.ContainsKey).ToDictionary(g => g.ToString(), board.Display);
+
+    /// <summary>The island's counters as last read: the sealed totalizer live, the per-grade rows by finished delivery.</summary>
+    public static object Totals(PumpTotals t) => new
+    {
+        totalizerGallons = t.Totalizer.Gallons,
+        lastTxSeq = t.LastTxSeq,
+        readAt = t.ReadAt,
+        byGrade = t.ByGrade.Select(g => new { grade = g.Grade.ToString(), gallons = g.Volume.Gallons, cents = g.Money.Cents, g.Deliveries }),
+    };
 
     private static readonly ServiceStatus EStopStatus = new([DiagnosticCodes.StationEStop.Code]);
 
@@ -114,6 +132,7 @@ public static class Contracts
         runId = v.RunId,
         pid = v.Pid,
         openTransactions = (v.OpenTransactions ?? []).Select(t => new { txSeq = t.TxSeq, t.SaleId, grade = t.Grade.ToString(), gallons = t.Volume.Gallons, cents = t.Money.Cents, state = t.State.ToString(), t.LockedBy, t.EndReason }),
+        prices = v.Prices?.ToDictionary(kv => kv.Key.ToString(), kv => kv.Value),
     };
 
     public static object Sale(SaleSnapshot s) => new

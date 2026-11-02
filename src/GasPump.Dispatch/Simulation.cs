@@ -92,6 +92,7 @@ public sealed class Simulation : IDisposable
         _dispatch = dispatch;
         _clock = clock;
         _options = options ?? SimulationOptions.Default;
+        _prices = _options.Pricing;
         _ownsLog = log is null;
         // Two files with two jobs. The Herald debug log takes everything. The TesseraSeal custody file takes the
         // evidence: what the pump did, what the sale did, where the money went, and who touched the admin panel.
@@ -141,6 +142,11 @@ public sealed class Simulation : IDisposable
         _saleBox = dispatch.CreateMailbox<SaleEvent>("sale", 1024);
         _paymentBox = dispatch.CreateMailbox<PaymentMessage>("payment", 64);
 
+        // The journal is read here, before the link exists: a socket link connects at once and writes the price board on
+        // connect, so the board must be the journaled one by then or a restart would push the built-in prices onto the island.
+        var snapshot = _options.Journal is { } jo ? StateJournal.Load(jo.StatePath) : null;
+        if (snapshot?.Prices is { Count: > 0 } journaled && new Pricing(journaled) is { } board && board.Validate().Ok) _prices = board;
+
         // The dispenser: here, behind a mailbox on the same strategy, or in another process behind a socket.
         if (_options.Dispenser is { } where)
         {
@@ -181,10 +187,10 @@ public sealed class Simulation : IDisposable
         _link.Answered += OnAnswered;
         _link.PeerAlive += OnPeerAlive;
         _link.TransactionsReported += OnTransactionsReported;
+        _link.TotalsReported += OnTotalsReported;
         _link.LateEvent += OnLateEvent;
 
-        // Restore from the journal before any worker runs, then decide what to do about the sale that was open.
-        var snapshot = _options.Journal is { } jo ? StateJournal.Load(jo.StatePath) : null;
+        // Restore the rest of the journal before any worker runs, then decide what to do about the sale that was open.
         if (snapshot is not null)
         {
             Restore(snapshot);
@@ -270,6 +276,9 @@ public sealed class Simulation : IDisposable
             Command(new PumpMessage.Stop("station connected"), CurrentSaleId);
             // What the island still holds for us: deliveries whose money this station never settled.
             _link.RequestTransactions();
+            // The controller owns the price board. Write it, so the island never bills by a stale one, then read the island's counters.
+            Command(new PumpMessage.SetPrices(Prices.TenthCentsPerGallon, "station"), CurrentSaleId);
+            _link.RequestTotals();
             return;
         }
         var s = Snapshot();
@@ -314,6 +323,8 @@ public sealed class Simulation : IDisposable
         cmd.Timer.Dispose();
         Ledger.Append("cmd.answer", $"{cmd.M.GetType().Name} {cmd.SaleId} {a.Code}{(a.Detail is { } d ? $" {d}" : "")}");
         if (a.Code == AnswerCode.Stale) FaultIfWaitingOn(cmd.M, cmd.SaleId, $"{cmd.M.GetType().Name} refused as stale by the dispenser");
+        // A refused board means the pump bills by the old one. The screen shows the pump's prices, so the operator sees it; say why here.
+        if (cmd.M is PumpMessage.SetPrices && a.Code != AnswerCode.Done) Log.Error("station", "price board {Code} by the dispenser: {Reason}", ("Code", a.Code), ("Reason", a.Detail));
     }
 
     private void Unanswered(string corr)
@@ -424,6 +435,64 @@ public sealed class Simulation : IDisposable
         }
     }
 
+    // ----- The price board and the island's totals
+
+    private Pricing _prices;
+    private PumpTotals? _lastTotals;
+
+    /// <summary>The station's posted prices, in mills per gallon. Written to the island on every connect and on every change.</summary>
+    public Pricing Prices { get { lock (_gate) return _prices; } }
+
+    /// <summary>The island's counters as last read. Null until the first read answers.</summary>
+    public PumpTotals? LastTotals { get { lock (_gate) return _lastTotals; } }
+
+    /// <summary>Ask the island for its sealed counter and per-grade totals. The answer lands in <see cref="LastTotals"/> and the ledger.</summary>
+    public void ReadTotals() => _link.RequestTotals();
+
+    /// <summary>
+    /// The back office changes one posted price. The PIN rule is the admin
+    /// panel's. The new board goes to the island as a write, which the pump
+    /// answers; a change during a delivery takes effect at the next one. The
+    /// board is journaled, so a station restart writes the operator's prices
+    /// back and never the built-in ones.
+    /// </summary>
+    public (bool Ok, string Reason) AdminSetPrice(string pin, Grade grade, long tenthCentsPerGallon)
+    {
+        var (admitted, why) = Site.TryAdmit(pin);
+        if (!admitted) return (false, why);
+        Pricing board;
+        string before;
+        lock (_gate)
+        {
+            board = _prices.With(grade, tenthCentsPerGallon);
+            before = _prices.Display(grade);
+        }
+        var (valid, invalid) = board.Validate();
+        if (!valid)
+        {
+            Ledger.Append("admin.refused", $"price {grade} {tenthCentsPerGallon} mills: {invalid}");
+            return (false, invalid);
+        }
+        lock (_gate) _prices = board;
+        Ledger.Append("admin.prices", $"{grade} {before} -> {board.Display(grade)}");
+        Log.Write("admin", "price {Grade} {Before} -> {After}", ("Grade", grade), ("Before", before), ("After", board.Display(grade)));
+        Command(new PumpMessage.SetPrices(board.TenthCentsPerGallon, "admin"), CurrentSaleId);
+        SaveJournal();
+        return (true, $"{grade} {before} -> {board.Display(grade)}");
+    }
+
+    private void OnTotalsReported(PumpTotals t)
+    {
+        lock (_gate) _lastTotals = t;
+        var byGrade = t.ByGrade.Count == 0 ? "no deliveries" : string.Join("; ", t.ByGrade.Select(g => $"{g.Grade} {g.Volume} {g.Money} in {g.Deliveries}"));
+        Ledger.Append("totals.read", $"totalizer {t.Totalizer}; {byGrade}; last tx #{t.LastTxSeq}");
+        Log.Write("station", "island totals: {Totalizer}, {ByGrade}, last tx #{LastTxSeq}", ("Totalizer", t.Totalizer), ("ByGrade", byGrade), ("LastTxSeq", t.LastTxSeq));
+        TotalsRead?.Invoke(t);
+    }
+
+    /// <summary>The island answered a read of its totals.</summary>
+    public event Action<PumpTotals>? TotalsRead;
+
     /// <summary>The grace period ran out with no word from the dispenser. Close out from what the journal recorded, as before.</summary>
     private void CloseOutFromJournal()
     {
@@ -488,12 +557,14 @@ public sealed class Simulation : IDisposable
 
     private void Restore(JournalSnapshot s)
     {
-        // A dispenser in another process keeps its own counter and nonces across its own restarts.
+        // The price board was taken from the snapshot in the constructor, before the link was built.
+        // A dispenser in another process keeps its own counter, nonces, and prices across its own restarts.
         if (_local is { } d)
         {
             d.Totalizer.Restore(new Volume(s.TotalizerMilliGallons));
             d.Nonces.Import(s.Nonces);
             if (s.DispenserConditions is { Count: > 0 } c) d.RestoreConditions(c);
+            d.Pump.RestorePrices(_prices);
         }
         Issuer.Import(s.Issuer);
         Site.Restore(new Money(s.CreditHoldCents), new Money(s.DebitHoldCents), s.FailedPins, s.LockedUntil);
@@ -566,7 +637,8 @@ public sealed class Simulation : IDisposable
             Drawer.ChangeDue.ToDictionary(kv => kv.Key, kv => kv.Value.Cents),
             Site.CreditHold.Cents, Site.DebitHold.Cents, Site.FailedPins, Site.LockedUntil,
             view.TotalizerMilliGallons, _local?.Nonces.Export().ToList() ?? [], Issuer.Export(), stopReason,
-            _local?.ConditionCodes.ToList());
+            _local?.ConditionCodes.ToList(),
+            Prices.TenthCentsPerGallon.ToDictionary(kv => kv.Key, kv => kv.Value));
     }
 
     /// <summary>Write the snapshot. Called by the one-second timer and on every sale change, serialized so two never interleave.</summary>

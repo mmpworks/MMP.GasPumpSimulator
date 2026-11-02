@@ -48,7 +48,9 @@ public sealed record JournalSnapshot(
     /// <summary>Set only when the stop was deliberate and had time to say so: "ESTOP". A crash leaves it null.</summary>
     string? StopReason = null,
     /// <summary>The broken parts on an in-process dispenser, by diagnostic code. A restart repairs nothing.</summary>
-    List<string>? DispenserConditions = null)
+    List<string>? DispenserConditions = null,
+    /// <summary>The station's price board in mills per gallon, so a restart writes the operator's prices to the island and never the built-in ones.</summary>
+    Dictionary<Grade, long>? Prices = null)
 {
     public const int CurrentVersion = 1;
 }

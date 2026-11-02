@@ -27,8 +27,10 @@ public enum WireKind
     Answer,
     /// <summary>I am alive, here is my status and my last sequence number. Once a second, each way.</summary>
     Heartbeat,
-    /// <summary>Send me something: the frames I missed, or your payable transactions.</summary>
+    /// <summary>Send me something: the frames I missed, your payable transactions, or your totals.</summary>
     Read,
+    /// <summary>Data the station sets on the device, such as the price board. Carries a correlation id and is answered like a Command.</summary>
+    Write,
 }
 
 /// <summary>What a Command came back as.</summary>
@@ -51,10 +53,10 @@ public sealed record WireAnswer(string CorrelationId, AnswerCode Code, string? D
 /// <summary>The sender's pulse: its run, its one-word status, and how far its own sequence has gone, so the other side can see a gap.</summary>
 public sealed record WireHeartbeat(string RunId, string Status, long LastSeqSent, long LastSeqReceived);
 
-/// <summary>Send me frames from this sequence number on (gap fill), or your payable transactions.</summary>
+/// <summary>Send me frames from this sequence number on (gap fill), your payable transactions, or your totals.</summary>
 public sealed record WireRead(string What, long? FromSeq = null, long? ToSeq = null)
 {
-    public const string Frames = "frames", Transactions = "transactions";
+    public const string Frames = "frames", Transactions = "transactions", Totals = "totals";
 }
 
 /// <summary>

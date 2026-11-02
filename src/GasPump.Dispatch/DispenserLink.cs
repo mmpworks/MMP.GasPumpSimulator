@@ -59,6 +59,8 @@ public interface IDispenserLink : IDisposable
     string Command(PumpMessage m, string saleId, TimeSpan ttl);
     /// <summary>Ask the island for the deliveries it still holds. Answered through <see cref="TransactionsReported"/>.</summary>
     void RequestTransactions();
+    /// <summary>Ask the island for its sealed counter and per-grade totals. Answered through <see cref="TotalsReported"/>.</summary>
+    void RequestTotals();
     /// <summary>The station cuts the dispenser's power. In-process this is a no-op; the process ends with the station's.</summary>
     void PowerOff();
 
@@ -67,6 +69,7 @@ public interface IDispenserLink : IDisposable
     event Action<bool>? ConnectionChanged;
     event Action<WireAnswer>? Answered;
     event Action<IReadOnlyList<PumpTransaction>>? TransactionsReported;
+    event Action<PumpTotals>? TotalsReported;
     /// <summary>The heartbeat watchdog: false when the peer missed its beats with the socket still open, true when they return.</summary>
     event Action<bool>? PeerAlive;
     /// <summary>A sale event that arrived late, filling a gap the receiver had reported. Recorded, never applied to the sale.</summary>
@@ -144,6 +147,7 @@ public sealed class LocalDispenserLink : IDispenserLink
     public event Action<bool>? ConnectionChanged { add { } remove { } }
     public event Action<WireAnswer>? Answered;
     public event Action<IReadOnlyList<PumpTransaction>>? TransactionsReported;
+    public event Action<PumpTotals>? TotalsReported;
     public event Action<bool>? PeerAlive { add { } remove { } }
     public event Action<SaleEvent>? LateEvent { add { } remove { } }
     public event Action<LogLine>? RemoteLog { add { } remove { } }
@@ -162,21 +166,29 @@ public sealed class LocalDispenserLink : IDispenserLink
 
     public void RequestTransactions() => TransactionsReported?.Invoke(_dispenser.Pump.Transactions.Open);
 
+    public void RequestTotals() => TotalsReported?.Invoke(_dispenser.Pump.ReadTotals(_clock.GetUtcNow()));
+
     public void PowerOff() { }
 
     private void Handle(PumpEnvelope env)
     {
         var events = _dispenser.Handle(env.M, env.SaleId ?? _currentSaleId());
         foreach (var e in events) { Interlocked.Increment(ref _received); Event?.Invoke(e); }
-        if (env.CorrelationId is { } corr) Answered?.Invoke(AnswerFor(corr, events));
+        if (env.CorrelationId is { } corr) Answered?.Invoke(AnswerFor(corr, events, _dispenser.LastRefusal, _dispenser.LastNote));
         if (env.M is not PumpMessage.Tick || events.Count > 0) ViewChanged?.Invoke(View);
     }
 
-    /// <summary>The answer a command earned: Refused or Busy when the pump said no, Done otherwise.</summary>
-    internal static WireAnswer AnswerFor(string corr, IReadOnlyList<SaleEvent> events)
+    /// <summary>
+    /// The answer a command earned: Refused or Busy when the pump said no, Done
+    /// otherwise. A refusal that is not a sale event (a bad price board) arrives
+    /// as <paramref name="refusal"/>; a caveat on a Done (a board that waits for
+    /// the delivery to end) arrives as <paramref name="note"/>.
+    /// </summary>
+    internal static WireAnswer AnswerFor(string corr, IReadOnlyList<SaleEvent> events, string? refusal = null, string? note = null)
     {
+        if (refusal is not null) return new WireAnswer(corr, AnswerCode.Refused, refusal);
         var refused = events.OfType<SaleEvent.PumpRefused>().FirstOrDefault();
-        if (refused is null) return new WireAnswer(corr, AnswerCode.Done);
+        if (refused is null) return new WireAnswer(corr, AnswerCode.Done, note);
         return new WireAnswer(corr, refused.Reason == Pump.PumpController.TransactionPayable ? AnswerCode.Busy : AnswerCode.Refused, refused.Reason);
     }
 
@@ -209,10 +221,11 @@ public sealed record LinkFrame(
     WireHeartbeat? Hb = null,
     WireAnswer? A = null,
     WireRead? Read = null,
-    IReadOnlyList<PumpTransaction>? Tx = null)
+    IReadOnlyList<PumpTransaction>? Tx = null,
+    PumpTotals? Totals = null)
 {
     public const string TagHello = "hello", TagMsg = "msg", TagPower = "power", TagEvent = "event", TagView = "view", TagLog = "log", TagLedger = "ledger", TagCustody = "custody";
-    public const string TagHeartbeat = "heartbeat", TagAnswer = "answer", TagRead = "read", TagTransactions = "transactions";
+    public const string TagHeartbeat = "heartbeat", TagAnswer = "answer", TagRead = "read", TagTransactions = "transactions", TagTotals = "totals";
 }
 
 /// <summary>The first frame each way. LastSeqReceived tells the other side where to replay from; 0 on a fresh station.</summary>
@@ -313,6 +326,7 @@ public sealed class SocketDispenserLink : IDispenserLink
     public event Action<bool>? ConnectionChanged;
     public event Action<WireAnswer>? Answered;
     public event Action<IReadOnlyList<PumpTransaction>>? TransactionsReported;
+    public event Action<PumpTotals>? TotalsReported;
     public event Action<bool>? PeerAlive;
     public event Action<SaleEvent>? LateEvent;
     public event Action<LogLine>? RemoteLog;
@@ -320,14 +334,18 @@ public sealed class SocketDispenserLink : IDispenserLink
 
     public void Post(PumpMessage m, string saleId) => Send(new LinkFrame(LinkFrame.TagMsg, SaleId: saleId, M: m), WireKind.Command);
 
+    /// <summary>A price board is data the station sets, so it goes out as a Write frame; everything else that wants an answer is a Command. Both are answered the same way.</summary>
     public string Command(PumpMessage m, string saleId, TimeSpan ttl)
     {
         var corr = Guid.NewGuid().ToString("N")[..8];
-        Send(new LinkFrame(LinkFrame.TagMsg, SaleId: saleId, M: m), WireKind.Command, corr, ttl);
+        var kind = m is PumpMessage.SetPrices ? WireKind.Write : WireKind.Command;
+        Send(new LinkFrame(LinkFrame.TagMsg, SaleId: saleId, M: m), kind, corr, ttl);
         return corr;
     }
 
     public void RequestTransactions() => Send(new LinkFrame(LinkFrame.TagRead, Read: new WireRead(WireRead.Transactions)), WireKind.Read);
+
+    public void RequestTotals() => Send(new LinkFrame(LinkFrame.TagRead, Read: new WireRead(WireRead.Totals)), WireKind.Read);
 
     public void PowerOff()
     {
@@ -497,6 +515,9 @@ public sealed class SocketDispenserLink : IDispenserLink
                 break;
             case LinkFrame.TagTransactions when f.Body.Tx is { } tx:
                 TransactionsReported?.Invoke(tx);
+                break;
+            case LinkFrame.TagTotals when f.Body.Totals is { } totals:
+                TotalsReported?.Invoke(totals);
                 break;
             case LinkFrame.TagCustody when f.Body.Line is { } line:
                 Action<string, string>[] subs;
