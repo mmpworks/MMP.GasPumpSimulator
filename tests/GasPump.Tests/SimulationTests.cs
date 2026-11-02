@@ -52,6 +52,83 @@ public class SimulationTests
 
     [Theory]
     [MemberData(nameof(SimHarness.Strategies), MemberType = typeof(SimHarness))]
+    public void The_bank_receives_the_charges_itemized_and_the_receipt_reads_the_same_lines(string strategy)
+    {
+        using var h = new SimHarness(strategy, ThirtyDollarHold);
+        h.Sim.PresentCard("Good");
+        h.AdvanceUntilState(SaleState.ReadyToPump, TimeSpan.FromSeconds(5));
+        Assert.Empty(h.State.Charges);   // nothing to itemize before fuel moves
+
+        h.Sim.StartFueling();
+        h.AdvanceUntilState(SaleState.Fueling, TimeSpan.FromSeconds(1));
+        h.AdvanceUntil(() => h.State.State is SaleState.Completing or SaleState.Idle, TimeSpan.FromMinutes(3));
+        h.AdvanceUntilState(SaleState.Idle, TimeSpan.FromSeconds(5));
+
+        // What the driver can print: the same lines the pump priced, summing to the money on the screen.
+        var receipt = h.State.Charges;
+        Assert.Single(receipt);
+        Assert.Equal(ChargeLine.Fuel, receipt[0].Code);
+        Assert.Equal(h.State.Money, ChargeLine.Total(receipt));
+        Assert.Contains("Regular", receipt[0].Description);
+
+        // What the bank kept: the same lines, under the same sale id, summing to the settled amount.
+        var settlement = Assert.Single(h.Sim.Issuer.Settlements);
+        Assert.Equal(h.State.SaleId, settlement.SaleId);
+        Assert.Equal(Money.FromDollars(30), settlement.Final);
+        Assert.Equal(receipt, settlement.Lines);
+        Assert.Equal(settlement.Final, ChargeLine.Total(settlement.Lines));
+    }
+
+    private sealed class Recorder : IStationCapability
+    {
+        public string Name => "recorder";
+        public int FlowStarts;
+        public int Views;
+        public void OnSaleEvent(SaleEvent e) { if (e is SaleEvent.FlowStarted) Interlocked.Increment(ref FlowStarts); }
+        public void OnPumpView(DispenserView v) => Interlocked.Increment(ref Views);
+    }
+
+    private sealed class Bomb : IStationCapability
+    {
+        public string Name => "bomb";
+        public void OnSaleEvent(SaleEvent e) { if (e is SaleEvent.FlowStarted) throw new InvalidOperationException("video player crashed"); }
+    }
+
+    [Theory]
+    [MemberData(nameof(SimHarness.Strategies), MemberType = typeof(SimHarness))]
+    public void A_capability_sees_the_telemetry_on_its_own_worker_and_one_that_throws_cannot_touch_the_sale(string strategy)
+    {
+        using var h = new SimHarness(strategy, ThirtyDollarHold);
+        var recorder = new Recorder();
+        var bomb = new Bomb();
+        h.Sim.Capabilities.Register(recorder);
+        h.Sim.Capabilities.Register(bomb);
+
+        h.Sim.PresentCard("Good");
+        h.AdvanceUntilState(SaleState.ReadyToPump, TimeSpan.FromSeconds(5));
+        h.Sim.StartFueling();
+        h.AdvanceUntilState(SaleState.Fueling, TimeSpan.FromSeconds(1));
+        h.AdvanceUntil(() => h.State.State is SaleState.Completing or SaleState.Idle, TimeSpan.FromMinutes(3));
+        h.AdvanceUntilState(SaleState.Idle, TimeSpan.FromSeconds(5));
+
+        // The sale finished as if nothing were attached.
+        Assert.Equal(3000, h.State.Money.Cents);
+        Assert.Equal(HoldStatus.Settled, h.State.Hold);
+        Assert.Equal(0, h.Sim.Ledger.Verify());
+
+        // The recorder saw fueling start once, and the pump views as they came.
+        Assert.Equal(1, recorder.FlowStarts);
+        Assert.True(recorder.Views > 0);
+        Assert.True(h.Sim.Capabilities.HandledFor("recorder") > 1);
+        Assert.Equal(0, h.Sim.Capabilities.DroppedFor("recorder"));
+
+        // The bomb went off once, was switched off, and the log says so.
+        Assert.Equal(["bomb"], h.Sim.Capabilities.Disabled);
+        Assert.Contains(h.Sim.Log.Snapshot(), l => l.Source == "capability" && l.Message.Contains("switched off"));
+    }
+
+    [Theory]
+    [MemberData(nameof(SimHarness.Strategies), MemberType = typeof(SimHarness))]
     public void Driver_can_stop_and_start_the_trigger_and_hanging_ends_the_sale(string strategy)
     {
         using var h = new SimHarness(strategy, ThirtyDollarHold);

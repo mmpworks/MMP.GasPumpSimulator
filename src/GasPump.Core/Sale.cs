@@ -140,9 +140,10 @@ public abstract record SaleEvent(string SaleId)
     public sealed record PumpArmed(string SaleId, Money Ceiling, Volume MaxVolume) : SaleEvent(SaleId);
     public sealed record PumpRefused(string SaleId, string Reason) : SaleEvent(SaleId);
     public sealed record NozzleLifted(string SaleId) : SaleEvent(SaleId);
-    public sealed record Progress(string SaleId, Volume Volume, Money Money, FlowRate Flow, string Phase) : SaleEvent(SaleId);
+    /// <summary>Lines is the money itemized, from the pump's price schedule. Null when the sender has no breakdown; the sale then carries one fuel line.</summary>
+    public sealed record Progress(string SaleId, Volume Volume, Money Money, FlowRate Flow, string Phase, IReadOnlyList<ChargeLine>? Lines = null) : SaleEvent(SaleId);
     public sealed record NozzleHung(string SaleId) : SaleEvent(SaleId);
-    public sealed record CeilingReached(string SaleId, Volume Volume, Money Money) : SaleEvent(SaleId);
+    public sealed record CeilingReached(string SaleId, Volume Volume, Money Money, IReadOnlyList<ChargeLine>? Lines = null) : SaleEvent(SaleId);
     public sealed record CompletionSent(string SaleId, Money Final) : SaleEvent(SaleId);
     public sealed record CompletionQueued(string SaleId, Money Final) : SaleEvent(SaleId);
     public sealed record Reversed(string SaleId) : SaleEvent(SaleId);
@@ -165,7 +166,8 @@ public abstract record SaleCommand(string SaleId)
     public sealed record RequestCashAuthorization(string SaleId, Money Amount) : SaleCommand(SaleId);
     public sealed record ArmPump(string SaleId, string Token, Grade? Grade) : SaleCommand(SaleId);
     public sealed record CloseValve(string SaleId) : SaleCommand(SaleId);
-    public sealed record SendCompletion(string SaleId, Money Final) : SaleCommand(SaleId);
+    /// <summary>Settle the hold to Final. Lines itemize Final for the bank's record and the driver's receipt; their sum is Final.</summary>
+    public sealed record SendCompletion(string SaleId, Money Final, IReadOnlyList<ChargeLine> Lines) : SaleCommand(SaleId);
     public sealed record Reverse(string SaleId) : SaleCommand(SaleId);
     public sealed record ArmTimer(string SaleId, SaleState State, TimeSpan After) : SaleCommand(SaleId);
     public sealed record CancelTimer(string SaleId) : SaleCommand(SaleId);
@@ -199,4 +201,9 @@ public sealed record SaleSnapshot(
     /// <summary>Change the cashier owes after a cash sale settled or refunded.</summary>
     Money ChangeDue,
     /// <summary>When the armed timer fires, on the simulation clock. Null when no timer is armed.</summary>
-    DateTimeOffset? DeadlineAt);
+    DateTimeOffset? DeadlineAt,
+    /// <summary>Money itemized. Empty before any fuel moves. The sum is Money.</summary>
+    IReadOnlyList<ChargeLine>? Lines = null)
+{
+    public IReadOnlyList<ChargeLine> Charges => Lines ?? [];
+}

@@ -134,6 +134,7 @@ public static class Contracts
         cashPrepaidCents = s.CashPrepaid.Cents,
         changeDueCents = s.ChangeDue.Cents,
         s.DeadlineAt,
+        lines = s.Charges.Select(l => new { l.Code, l.Description, cents = l.Amount.Cents }).ToArray(),
     };
 
     public static object Recovery(RecoveryOutcome r) => new

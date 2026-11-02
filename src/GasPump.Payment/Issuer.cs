@@ -32,9 +32,14 @@ public interface IIssuer
 {
     IssuerDecision Authorize(string saleId, CardData card, Money hold, DateTimeOffset now);
     void Complete(string saleId, Money final);
+    /// <summary>Complete with the charges itemized for the bank's record. An issuer that keeps no itemization settles the total.</summary>
+    void Complete(string saleId, Money final, IReadOnlyList<ChargeLine> lines) => Complete(saleId, final);
     void Reverse(string saleId);
     Money AvailableBalance(string pan);
 }
+
+/// <summary>What the bank kept about a settled sale: the amount and its breakdown, for the statement and the dispute desk.</summary>
+public sealed record Settlement(string SaleId, Money Final, IReadOnlyList<ChargeLine> Lines);
 
 public enum AccountStatus { Active, Frozen, LostOrStolen }
 
@@ -128,7 +133,9 @@ public sealed class IssuerSimulator : IIssuer
         }
     }
 
-    public void Complete(string saleId, Money final)
+    public void Complete(string saleId, Money final) => Complete(saleId, final, []);
+
+    public void Complete(string saleId, Money final, IReadOnlyList<ChargeLine> lines)
     {
         lock (_gate)
         {
@@ -137,8 +144,14 @@ public sealed class IssuerSimulator : IIssuer
             // Give back the part of the hold that was not spent.
             var refund = hold.Amount - Money.Min(final, hold.Amount);
             acct.Available += refund;
+            _settlements[saleId] = new Settlement(saleId, final, lines);
         }
     }
+
+    private readonly Dictionary<string, Settlement> _settlements = new();
+
+    /// <summary>The bank's record of every settled sale this run, itemized as the terminal sent it.</summary>
+    public IReadOnlyList<Settlement> Settlements { get { lock (_gate) return _settlements.Values.ToArray(); } }
 
     public void Reverse(string saleId)
     {

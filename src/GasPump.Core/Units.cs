@@ -58,6 +58,32 @@ public interface IPriceSchedule
     Money CentsFor(Grade grade, Volume volume);
     Volume MaxVolumeFor(Grade grade, Money money);
     string Display(Grade grade);
+
+    /// <summary>
+    /// The same money as <see cref="CentsFor"/>, broken into the lines a receipt
+    /// and a settlement carry. The sum of the lines is the money, always. The
+    /// board answers with one fuel line; a schedule that wraps it adds its own.
+    /// </summary>
+    IReadOnlyList<ChargeLine> Lines(Grade grade, Volume volume) =>
+        [new ChargeLine(ChargeLine.Fuel, $"{grade} {volume} at {Display(grade)}/gal", CentsFor(grade, volume))];
+}
+
+/// <summary>
+/// One line of a sale's charges: fuel, a fee, a discount. Code is stable and
+/// machine-readable; Description is for the receipt. A discount is a negative
+/// amount. The bank receives the list with the completion and the driver can
+/// print it, so the two always agree with each other and with the total.
+/// </summary>
+public sealed record ChargeLine(string Code, string Description, Money Amount)
+{
+    public const string Fuel = "FUEL";
+
+    public static Money Total(IEnumerable<ChargeLine> lines)
+    {
+        var total = Money.Zero;
+        foreach (var l in lines) total += l.Amount;
+        return total;
+    }
 }
 
 /// <summary>

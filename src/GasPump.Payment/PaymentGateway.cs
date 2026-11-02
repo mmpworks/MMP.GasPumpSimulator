@@ -10,8 +10,16 @@ public sealed record CompletionResult(bool Sent, bool Queued, string Message, Mo
 /// <summary>Refund is the cash handed back after a cash sale that pumped nothing. Zero for card sales.</summary>
 public sealed record ReversalResult(bool Sent, bool Queued, string Message, Money Refund = default);
 
-/// <summary>One message the host owes the bank. Kind is Completion or Reversal; Final is zero for a reversal.</summary>
-public sealed record PendingAdvice(string SaleId, PendingKind Kind, Money Final);
+/// <summary>
+/// One message the host owes the bank. Kind is Completion or Reversal; Final is
+/// zero for a reversal. Lines itemize Final for the bank's record; null when the
+/// sender had no breakdown. Two advices are the same advice when SaleId and Kind
+/// match, whatever their lines, so the queue never holds two for one sale.
+/// </summary>
+public sealed record PendingAdvice(string SaleId, PendingKind Kind, Money Final, IReadOnlyList<ChargeLine>? Lines = null)
+{
+    public bool SameAs(PendingAdvice other) => SaleId == other.SaleId && Kind == other.Kind;
+}
 
 public enum PendingKind { Completion, Reversal }
 
@@ -160,7 +168,10 @@ public sealed class PaymentGateway
         return new PreAuthResult(true, amount, token.Serialize(), "CashPrepaid", $"cash {amount} taken at the cashier", NetworkFailure: false);
     }
 
-    public async Task<CompletionResult> CompleteAsync(string saleId, Money final, CancellationToken ct)
+    public Task<CompletionResult> CompleteAsync(string saleId, Money final, CancellationToken ct) => CompleteAsync(saleId, final, null, ct);
+
+    /// <summary>Settle the hold to <paramref name="final"/>. <paramref name="lines"/> itemize it for the bank's record; the sum must be <paramref name="final"/>.</summary>
+    public async Task<CompletionResult> CompleteAsync(string saleId, Money final, IReadOnlyList<ChargeLine>? lines, CancellationToken ct)
     {
         if (TenderOf(saleId) == Tender.Cash)
         {
@@ -168,10 +179,10 @@ public sealed class PaymentGateway
             return new CompletionResult(true, false, change > Money.Zero ? $"cash sale {final}, change due {change}" : $"cash sale {final}, paid in full", change);
         }
         // Intent first, then one send path for everything owed, oldest first. If an older advice fails, this one waits behind it.
-        var advice = new PendingAdvice(saleId, PendingKind.Completion, final);
+        var advice = new PendingAdvice(saleId, PendingKind.Completion, final, lines);
         Intend(advice);
         var sent = await DrainPendingAsync(ct);
-        return sent.Contains(advice)
+        return sent.Any(advice.SameAs)
             ? new CompletionResult(true, false, $"completion {final} sent")
             : new CompletionResult(false, true, $"host {LastOutcome}, completion {final} queued");
     }
@@ -191,7 +202,7 @@ public sealed class PaymentGateway
         var advice = new PendingAdvice(saleId, PendingKind.Reversal, Money.Zero);
         Intend(advice);
         var sent = await DrainPendingAsync(ct);
-        return sent.Contains(advice)
+        return sent.Any(advice.SameAs)
             ? new ReversalResult(true, false, "hold reversed")
             : new ReversalResult(false, true, $"host {LastOutcome}, reversal queued");
     }
@@ -213,7 +224,7 @@ public sealed class PaymentGateway
                 next = _pending[0];
             }
             var result = next.Kind == PendingKind.Completion
-                ? await _network.SendAsync(() => { _issuer.Complete(next.SaleId, next.Final); return true; }, _options.HostTimeout, ct)
+                ? await _network.SendAsync(() => { _issuer.Complete(next.SaleId, next.Final, next.Lines ?? []); return true; }, _options.HostTimeout, ct)
                 : await _network.SendAsync(() => { _issuer.Reverse(next.SaleId); return true; }, _options.HostTimeout, ct);
             lock (_gate) _lastOutcome = result.Outcome;
             if (!result.Delivered) return sent;
@@ -228,7 +239,7 @@ public sealed class PaymentGateway
     {
         lock (_gate)
         {
-            if (_pending.Any(p => p.SaleId == advice.SaleId && p.Kind == advice.Kind)) return false;
+            if (_pending.Any(advice.SameAs)) return false;
             _pending.Add(advice);
             return true;
         }

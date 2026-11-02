@@ -217,6 +217,14 @@ Two seams in the pump controller for parts that are not here yet, added 2026-11-
 
 `Dispenser` takes both as optional constructor arguments. Nothing is built on them yet. Three tests in `PumpTests.cs` prove the contract: a stage sees every slice and their sum is the sale volume; a broken stage refuses the arm with its code in the ledger and clears when fixed; a wrapped schedule bills more and the sale still stops under the ceiling.
 
+## Charge lines
+
+The money is itemized from the pump outward. `IPriceSchedule.Lines(grade, volume)` returns the `ChargeLine`s (code, description, amount) whose sum is `CentsFor`; the board answers with one `FUEL` line, a wrapping schedule appends its own. The controller sets `Lines` beside `Money` on every tick; `Progress` and `CeilingReached` carry them to the station; the sale machine keeps the last breakdown and puts it on `SendCompletion`, `PendingAdvice`, `PaymentMessage.Complete`, and the journal (`JournalLine`), so a completion resent after a restart carries the same lines. `IIssuer.Complete(saleId, final, lines)` records a `Settlement` at the bank. `SaleSnapshot.Charges` is what a receipt prints; it is empty before fuel moves and reads the same lines the bank received. A sale whose pump sent no breakdown gets one fuel line for its money.
+
+## Capabilities
+
+`Simulation.Capabilities` is a `CapabilityHost`. An `IStationCapability` receives every `SaleEvent` the sale worker applied and every `DispenserView` the dispenser sent, on its own worker behind its own bounded mailbox (256). It has no way to post back. A full mailbox drops and counts; a capability that throws is switched off for the run and logged under `capability`; the sale never waits on one and never hears from one. Register before the first sale. A video that plays on `FlowStarted`, a loyalty prompt, and a forecourt display are the intended users. Proof: `SimulationTests`, a recorder sees one `FlowStarted` per sale while a capability that throws on it is switched off and the sale settles to the cent.
+
 ## Logging on Herald.OSS
 
 `HeraldEventLog` in `GasPump.Dispatch` implements the simulator's `IEventLog` over a Herald.OSS `QuickLogBuilder` pipeline. Each worker's source (sale, pump, payment, admin, attack, network, host) is a Herald category. Workers write templates with properties; Herald renders the message and keeps the properties. Three sinks:

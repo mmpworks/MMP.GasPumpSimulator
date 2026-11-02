@@ -26,7 +26,9 @@ public sealed record RecoveryOutcome(
     /// <summary>How much more fuel may have left the hose after the last snapshot: one snapshot period at the last flow rate. An estimate, never a count.</summary>
     Volume UnrecordedUpTo,
     TimeSpan SnapshotAge,
-    string Note)
+    string Note,
+    /// <summary>The itemized charges a resent completion carries, from the journal. Null when the journal had none.</summary>
+    IReadOnlyList<ChargeLine>? Lines = null)
 {
     public bool UnderRecorded => Kind == RecoveryKind.ClosedOut && UnrecordedUpTo > Volume.Zero;
 }
@@ -57,6 +59,7 @@ public static class RecoveryPlan
         var estop = snapshot.StopReason == "ESTOP";
         var unrecorded = estop ? Volume.Zero : flow.Over(snapshotPeriod);
         var how = estop ? $"restarted after the station E-stop ({DiagnosticCodes.StationEStop.Code})" : $"pump restarted {age.TotalSeconds:0.0} s after the last record";
+        var lines = JournalLine.To(s.Lines);
 
         switch (state)
         {
@@ -64,7 +67,8 @@ public static class RecoveryPlan
                 return new(RecoveryKind.ClosedOut, snapshot.RunId, s.SaleId, tender, grade, volume, money, unrecorded, age,
                     estop
                         ? $"{how} while fueling; closed for {volume} at {money}; the E-stop cut power with the valve open, so the record is exact to the last tick"
-                        : $"{how} while fueling; closed for {volume} at {money}; delivery likely under-recorded by up to {unrecorded}");
+                        : $"{how} while fueling; closed for {volume} at {money}; delivery likely under-recorded by up to {unrecorded}",
+                    lines);
             case SaleState.Fueling:
             case SaleState.Authorizing:
             case SaleState.ReadyToPump:
@@ -72,11 +76,11 @@ public static class RecoveryPlan
                     $"{how} in {state} with no fuel delivered; {(tender == Tender.Cash ? "cash refunded" : "hold reversed")}");
             case SaleState.Completing:
                 return new(RecoveryKind.CompletionResent, snapshot.RunId, s.SaleId, tender, grade, volume, money, Volume.Zero, age,
-                    $"{how} while settling {money}; completion sent again");
+                    $"{how} while settling {money}; completion sent again", lines);
             // The sale had ended but the bank still held the money: the compensation never left. Finish it.
             case SaleState.Faulted or SaleState.Cancelled or SaleState.Declined when hold is HoldStatus.Requested or HoldStatus.Held && volume > Volume.Zero:
                 return new(RecoveryKind.CompletionResent, snapshot.RunId, s.SaleId, tender, grade, volume, money, Volume.Zero, age,
-                    $"{how} after the sale ended {state} with {money} still held for {volume} delivered; completion sent");
+                    $"{how} after the sale ended {state} with {money} still held for {volume} delivered; completion sent", lines);
             case SaleState.Faulted or SaleState.Cancelled or SaleState.Declined when hold is HoldStatus.Requested or HoldStatus.Held:
                 return new(RecoveryKind.Reversed, snapshot.RunId, s.SaleId, tender, grade, Volume.Zero, Money.Zero, Volume.Zero, age,
                     $"{how} after the sale ended {state} with the hold still at the bank and no fuel delivered; {(tender == Tender.Cash ? "cash refunded" : "hold reversed")}");

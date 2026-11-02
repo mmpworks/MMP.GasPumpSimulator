@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using GasPump.Core;
 using GasPump.Payment;
 
 namespace GasPump.Dispatch;
@@ -16,9 +17,20 @@ public sealed record JournalOptions(string Directory, string TenantId, byte[] Ik
 public sealed record JournalSale(
     string SaleId, string State, string Tender, string Grade, bool GradeSelected, string? CardName,
     long CeilingCents, long VolumeMilliGallons, long MoneyCents, long FlowMilliGallonsPerSecond,
-    string Hold, long CashPrepaidCents);
+    string Hold, long CashPrepaidCents,
+    /// <summary>The money itemized, so a completion resent after a restart carries the same breakdown the driver saw.</summary>
+    List<JournalLine>? Lines = null);
 
-public sealed record JournalPending(string SaleId, string Kind, long FinalCents);
+public sealed record JournalPending(string SaleId, string Kind, long FinalCents, List<JournalLine>? Lines = null);
+
+/// <summary>One charge line as the journal keeps it.</summary>
+public sealed record JournalLine(string Code, string Description, long Cents)
+{
+    public static JournalLine From(ChargeLine l) => new(l.Code, l.Description, l.Amount.Cents);
+    public ChargeLine ToLine() => new(Code, Description, new Money(Cents));
+    public static List<JournalLine>? From(IReadOnlyList<ChargeLine>? lines) => lines is null || lines.Count == 0 ? null : lines.Select(From).ToList();
+    public static IReadOnlyList<ChargeLine>? To(List<JournalLine>? lines) => lines?.Select(l => l.ToLine()).ToList();
+}
 
 /// <summary>
 /// One snapshot of everything a fresh process needs: the open sale, the money

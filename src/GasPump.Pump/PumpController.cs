@@ -21,7 +21,9 @@ public sealed record PumpTick(
     bool CeilingReached,
     bool Stopped,
     string? Fault,
-    string? FaultCode);
+    string? FaultCode,
+    /// <summary>Money itemized by the price schedule. The sum is Money.</summary>
+    IReadOnlyList<ChargeLine> Lines);
 
 /// <summary>
 /// The dispenser's brain. Single-threaded by contract: the pump worker is the
@@ -79,6 +81,8 @@ public sealed class PumpController(
 
     public PumpPhase Phase { get; private set; } = PumpPhase.Disarmed;
     public Money Money { get; private set; }
+    /// <summary>Money itemized by the price schedule, for the receipt and the settlement. Empty until fuel moves.</summary>
+    public IReadOnlyList<ChargeLine> Lines { get; private set; } = [];
     public Volume Volume => meter.SaleVolume;
     public string? LastFault { get; private set; }
     public string? LastFaultCode { get; private set; }
@@ -114,6 +118,7 @@ public sealed class PumpController(
         _noFlowFor = TimeSpan.Zero;
         _noPulseFor = TimeSpan.Zero;
         Money = Money.Zero;
+        Lines = [];
         LastFault = null;
         LastFaultCode = null;
         meter.ResetSale();
@@ -367,6 +372,7 @@ public sealed class PumpController(
         totalizer.Add(delivered);
         foreach (var stage in _stages) stage.OnDelivered(grade, delivered);
         Money = pricing.CentsFor(grade, Volume);
+        Lines = pricing.Lines(grade, Volume);
 
         if (Money > armed.Ceiling)
         {
@@ -419,6 +425,6 @@ public sealed class PumpController(
     private PumpTick Current(bool ceilingReached, bool stopped)
     {
         var phaseName = Phase == PumpPhase.Dispensing ? _tickPhase : Phase.ToString().ToLowerInvariant();
-        return new PumpTick(Phase, Volume, Money, hydraulics.CurrentFlow, phaseName, ceilingReached, stopped, LastFault, LastFaultCode);
+        return new PumpTick(Phase, Volume, Money, hydraulics.CurrentFlow, phaseName, ceilingReached, stopped, LastFault, LastFaultCode, Lines);
     }
 }

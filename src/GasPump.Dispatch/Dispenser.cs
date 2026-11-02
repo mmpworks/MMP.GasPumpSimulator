@@ -201,7 +201,7 @@ public sealed class Dispenser
                 }
                 else if (t.CeilingReached)
                 {
-                    events.Add(new SaleEvent.CeilingReached(saleId, t.Volume, t.Money));
+                    events.Add(new SaleEvent.CeilingReached(saleId, t.Volume, t.Money, t.Lines));
                 }
                 else if ((before is PumpPhase.Dispensing or PumpPhase.Paused) && t.Stopped)
                 {
@@ -210,7 +210,7 @@ public sealed class Dispenser
                 }
                 else if (t.Phase == PumpPhase.Dispensing)
                 {
-                    events.Add(new SaleEvent.Progress(saleId, t.Volume, t.Money, t.Flow, t.TaperPhase));
+                    events.Add(new SaleEvent.Progress(saleId, t.Volume, t.Money, t.Flow, t.TaperPhase, t.Lines));
                 }
                 break;
         }

@@ -82,6 +82,13 @@ public sealed class SaleStateMachine
     public Money CashPrepaid { get; private set; }
     public Money ChangeDue { get; private set; }
 
+    /// <summary>The money itemized, as the pump last reported it. Empty until the pump sends a breakdown.</summary>
+    public IReadOnlyList<ChargeLine> Lines { get; private set; } = [];
+
+    /// <summary>The lines the completion and the receipt carry. A pump that sent no breakdown gets one fuel line for the money.</summary>
+    public IReadOnlyList<ChargeLine> Charges =>
+        Lines.Count > 0 ? Lines : Money == Money.Zero ? [] : [new ChargeLine(ChargeLine.Fuel, $"{Grade} {Volume}", Money)];
+
     /// <summary>True while the bank still owes an answer about the driver's money.</summary>
     public bool HoldUnsettled => Hold is HoldStatus.Requested or HoldStatus.Held or HoldStatus.ReleasePending or HoldStatus.SettlePending;
 
@@ -89,7 +96,7 @@ public sealed class SaleStateMachine
         s is SaleState.Declined or SaleState.Cancelled or SaleState.Faulted or SaleState.StoreAndForward;
 
     public SaleSnapshot Snapshot(DateTimeOffset? deadlineAt = null) =>
-        new(SaleId, State, CardName, Grade, Ceiling, Volume, Money, Flow, Phase, LastMessage, Hold, End, Notice(), GradeSelected, NozzleOut, NozzleSeated, Tender, Source, FaultCode, CashPrepaid, ChangeDue, deadlineAt);
+        new(SaleId, State, CardName, Grade, Ceiling, Volume, Money, Flow, Phase, LastMessage, Hold, End, Notice(), GradeSelected, NozzleOut, NozzleSeated, Tender, Source, FaultCode, CashPrepaid, ChangeDue, deadlineAt, Charges);
 
     public IReadOnlyList<SaleCommand> Apply(SaleEvent e)
     {
@@ -227,6 +234,7 @@ public sealed class SaleStateMachine
             case (SaleState.Fueling, SaleEvent.Progress p):
                 Volume = p.Volume;
                 Money = p.Money;
+                if (p.Lines is not null) Lines = p.Lines;
                 Flow = p.Flow;
                 Phase = p.Phase;
                 return commands;
@@ -257,6 +265,7 @@ public sealed class SaleStateMachine
             case (SaleState.Fueling, SaleEvent.CeilingReached cr):
                 Volume = cr.Volume;
                 Money = cr.Money;
+                if (cr.Lines is not null) Lines = cr.Lines;
                 Flow = FlowRate.Zero;
                 Phase = "ceiling";
                 commands.Add(new SaleCommand.CloseValve(SaleId));
@@ -365,7 +374,7 @@ public sealed class SaleStateMachine
         FaultCode = code;
         if (Volume > Volume.Zero)
         {
-            commands.Add(new SaleCommand.SendCompletion(SaleId, Money));
+            commands.Add(new SaleCommand.SendCompletion(SaleId, Money, Charges));
             return Transition(SaleState.Faulted, commands, $"FAULT: {reason}, settling {Money} for fuel already dispensed", closeValve: true);
         }
         return Transition(SaleState.Faulted, commands, $"FAULT: {reason}", closeValve: true, reverse: Hold is HoldStatus.Held or HoldStatus.Requested);
@@ -430,7 +439,7 @@ public sealed class SaleStateMachine
             EndDetail = "no fuel was dispensed";
             return Transition(SaleState.Cancelled, commands, $"{why}, no fuel, hold reversed", reverse: true);
         }
-        commands.Add(new SaleCommand.SendCompletion(SaleId, Money));
+        commands.Add(new SaleCommand.SendCompletion(SaleId, Money, Charges));
         return Transition(SaleState.Completing, commands, $"{why}, {Volume} for {Money}", timeout: _timeouts.Completion);
     }
 

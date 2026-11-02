@@ -183,6 +183,9 @@ public sealed class Simulation : IDisposable
         // A dispenser not yet answering, or one that started with a part already broken, is out of service from the first sale.
         OnServiceView(_link.View.Service);
 
+        // Capabilities ride beside the sale on their own workers. A capability that throws is switched off and logged; the sale never notices.
+        Capabilities = new CapabilityHost(dispatch, Log);
+        _link.ViewChanged += v => Capabilities.Publish(v);
         _owned.Add(dispatch.StartWorker("sale", _saleBox, HandleSaleEvent));
         _owned.Add(dispatch.StartWorker("payment", _paymentBox, HandlePaymentMessage));
 
@@ -329,7 +332,7 @@ public sealed class Simulation : IDisposable
             s.CashOpenCents.ToDictionary(kv => kv.Key, kv => new Money(kv.Value)),
             s.CashChangeDueCents.ToDictionary(kv => kv.Key, kv => new Money(kv.Value)));
         Gateway.Restore(
-            s.Pending.Select(p => new PendingAdvice(p.SaleId, Enum.Parse<PendingKind>(p.Kind), new Money(p.FinalCents))),
+            s.Pending.Select(p => new PendingAdvice(p.SaleId, Enum.Parse<PendingKind>(p.Kind), new Money(p.FinalCents), JournalLine.To(p.Lines))),
             s.Tenders.ToDictionary(kv => kv.Key, kv => Enum.Parse<Tender>(kv.Value)));
         _saleCounter = s.SaleCounter;
     }
@@ -348,7 +351,7 @@ public sealed class Simulation : IDisposable
             case RecoveryKind.ClosedOut:
                 Ledger.Append("recovery.closeout", $"{r.SaleId} {r.Tender} {r.Grade} {r.Volume} {r.Money} DELIVERY LIKELY UNDER-RECORDED by up to {r.UnrecordedUpTo}");
                 Log.Error("recovery", "{Note}", ("Note", r.Note), ("SaleId", r.SaleId), ("Tender", r.Tender), ("Grade", r.Grade), ("Volume", r.Volume), ("Money", r.Money), ("UnrecordedUpTo", r.UnrecordedUpTo), ("DeliveryConfidence", "under-recorded"));
-                _paymentBox.Post(new PaymentMessage.Complete(r.SaleId!, r.Money));
+                _paymentBox.Post(new PaymentMessage.Complete(r.SaleId!, r.Money, r.Lines));
                 break;
             case RecoveryKind.Reversed:
                 Ledger.Append("recovery.reversed", $"{r.SaleId} {r.Tender} no fuel recorded, hold or cash returned");
@@ -358,7 +361,7 @@ public sealed class Simulation : IDisposable
             case RecoveryKind.CompletionResent:
                 Ledger.Append("recovery.completion", $"{r.SaleId} {r.Tender} {r.Volume} {r.Money} completion sent again");
                 Log.Warn("recovery", "{Note}", ("Note", r.Note), ("SaleId", r.SaleId), ("Money", r.Money));
-                _paymentBox.Post(new PaymentMessage.Complete(r.SaleId!, r.Money));
+                _paymentBox.Post(new PaymentMessage.Complete(r.SaleId!, r.Money, r.Lines));
                 break;
             default:
                 Log.Write("recovery", "{Note}", ("Note", r.Note));
@@ -376,9 +379,10 @@ public sealed class Simulation : IDisposable
         return new JournalSnapshot(
             JournalSnapshot.CurrentVersion, _clock.GetUtcNow(), RunId, _options.PumpId, counter,
             new JournalSale(s.SaleId, s.State.ToString(), s.Tender.ToString(), s.Grade.ToString(), s.GradeSelected, s.CardName,
-                s.Ceiling.Cents, s.Volume.MilliGallons, s.Money.Cents, s.Flow.MilliGallonsPerSecond, s.Hold.ToString(), s.CashPrepaid.Cents),
+                s.Ceiling.Cents, s.Volume.MilliGallons, s.Money.Cents, s.Flow.MilliGallonsPerSecond, s.Hold.ToString(), s.CashPrepaid.Cents,
+                JournalLine.From(s.Lines)),
             view.Phase, view.SelectedGrade?.ToString(),
-            Gateway.Pending.Select(p => new JournalPending(p.SaleId, p.Kind.ToString(), p.Final.Cents)).ToList(),
+            Gateway.Pending.Select(p => new JournalPending(p.SaleId, p.Kind.ToString(), p.Final.Cents, JournalLine.From(p.Lines))).ToList(),
             Gateway.Tenders.ToDictionary(kv => kv.Key, kv => kv.Value.ToString()),
             Drawer.Open.ToDictionary(kv => kv.Key, kv => kv.Value.Cents),
             Drawer.ChangeDue.ToDictionary(kv => kv.Key, kv => kv.Value.Cents),
@@ -732,7 +736,15 @@ public sealed class Simulation : IDisposable
         foreach (var c in commands) Execute(c);
         RecordSaleBoundary(e, before, after, snap);
         Publish();
+        Capabilities.Publish(e);
     }
+
+    /// <summary>
+    /// Telemetry listeners that run beside the sale: a video that plays when
+    /// fueling starts, a loyalty prompt, a forecourt display. Each one has its
+    /// own worker and mailbox. Register one before the first sale.
+    /// </summary>
+    public CapabilityHost Capabilities { get; }
 
     /// <summary>
     /// The session between the driver and the pump, as ledger entries: one at
@@ -796,8 +808,8 @@ public sealed class Simulation : IDisposable
             // Money owed to the bank is written to the compensation log here, on the deciding thread, before the
             // payment worker ever sees the message. A crash between this line and the bank's answer is recoverable.
             case SaleCommand.SendCompletion sc:
-                Gateway.Intend(new PendingAdvice(sc.SaleId, PendingKind.Completion, sc.Final));
-                _paymentBox.Post(new PaymentMessage.Complete(sc.SaleId, sc.Final));
+                Gateway.Intend(new PendingAdvice(sc.SaleId, PendingKind.Completion, sc.Final, sc.Lines));
+                _paymentBox.Post(new PaymentMessage.Complete(sc.SaleId, sc.Final, sc.Lines));
                 break;
             case SaleCommand.Reverse rv:
                 Gateway.Intend(new PendingAdvice(rv.SaleId, PendingKind.Reversal, Money.Zero));
@@ -866,7 +878,7 @@ public sealed class Simulation : IDisposable
                     break;
 
                 case PaymentMessage.Complete cp:
-                    var completion = await Gateway.CompleteAsync(cp.SaleId, cp.Final, _cts.Token);
+                    var completion = await Gateway.CompleteAsync(cp.SaleId, cp.Final, cp.Lines, _cts.Token);
                     Log.Write("payment", completion.Message);
                     if (completion.Sent) _saleBox.Post(new SaleEvent.CompletionSent(cp.SaleId, cp.Final));
                     else _saleBox.Post(new SaleEvent.CompletionQueued(cp.SaleId, cp.Final));

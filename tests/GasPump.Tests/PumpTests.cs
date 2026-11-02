@@ -89,6 +89,31 @@ public class PumpTests
         // The fee comes off the top, then the board decides how much fuel fits in what is left.
         public Volume MaxVolumeFor(Grade grade, Money money) => money <= fee ? Volume.Zero : inner.MaxVolumeFor(grade, money - fee);
         public string Display(Grade grade) => inner.Display(grade);
+        public IReadOnlyList<ChargeLine> Lines(Grade grade, Volume volume) => [.. inner.Lines(grade, volume), new ChargeLine("ADDITIVE", "detergent additive", fee)];
+    }
+
+    [Fact]
+    public void Every_tick_itemizes_the_money_and_the_lines_always_sum_to_it()
+    {
+        var fee = Money.FromDollars(1.50m);
+        var rig = new Rig(prices: new FlatFee(Pricing.Default, fee));
+        rig.ArmAndPour(Money.FromDollars(30));
+        var trace = rig.RunToStop();
+
+        Assert.All(trace.Where(t => t.Volume > Volume.Zero), t => Assert.Equal(t.Money, ChargeLine.Total(t.Lines)));
+        var last = trace[^1];
+        Assert.Equal(2, last.Lines.Count);
+        Assert.Equal(ChargeLine.Fuel, last.Lines[0].Code);
+        Assert.Equal(Pricing.Default.CentsFor(Grade.Regular, last.Volume), last.Lines[0].Amount);
+        Assert.Equal("ADDITIVE", last.Lines[1].Code);
+        Assert.Equal(fee, last.Lines[1].Amount);
+
+        // The plain board answers with one fuel line, and it is the whole money.
+        var plain = new Rig();
+        plain.ArmAndPour(Money.FromDollars(20));
+        var end = plain.RunToStop()[^1];
+        Assert.Single(end.Lines);
+        Assert.Equal(end.Money, end.Lines[0].Amount);
     }
 
     [Fact]
