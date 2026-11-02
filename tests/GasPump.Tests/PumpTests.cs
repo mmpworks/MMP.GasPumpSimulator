@@ -82,17 +82,12 @@ public class PumpTests
         public bool TryRestoreCondition(string code) { if (code != Code.Code) return false; Broken = true; return true; }
     }
 
-    /// <summary>A price schedule that wraps the price board and adds a per-gallon surcharge, as an additive would.</summary>
-    private sealed class Surcharge(IPriceSchedule inner, long tenthCentsPerGallon) : IPriceSchedule
+    /// <summary>A price schedule that wraps the price board and adds one flat fee to the sale, as a detergent additive would.</summary>
+    private sealed class FlatFee(IPriceSchedule inner, Money fee) : IPriceSchedule
     {
-        public Money CentsFor(Grade grade, Volume volume) =>
-            inner.CentsFor(grade, volume) + new Money((volume.MilliGallons * tenthCentsPerGallon + 5_000) / 10_000);
-        public Volume MaxVolumeFor(Grade grade, Money money)
-        {
-            var v = inner.MaxVolumeFor(grade, money);
-            while (v > Volume.Zero && CentsFor(grade, v) > money) v = new Volume(v.MilliGallons - 1);
-            return v;
-        }
+        public Money CentsFor(Grade grade, Volume volume) => inner.CentsFor(grade, volume) + fee;
+        // The fee comes off the top, then the board decides how much fuel fits in what is left.
+        public Volume MaxVolumeFor(Grade grade, Money money) => money <= fee ? Volume.Zero : inner.MaxVolumeFor(grade, money - fee);
         public string Display(Grade grade) => inner.Display(grade);
     }
 
@@ -135,8 +130,9 @@ public class PumpTests
     [Fact]
     public void A_wrapped_price_schedule_changes_the_money_and_the_sale_still_lands_under_the_ceiling()
     {
-        // 50 cents a gallon on top of the board.
-        var rig = new Rig(prices: new Surcharge(Pricing.Default, 500));
+        // A $1.50 detergent fee on top of the board, once per sale.
+        var fee = Money.FromDollars(1.50m);
+        var rig = new Rig(prices: new FlatFee(Pricing.Default, fee));
         rig.ArmAndPour(Money.FromDollars(30));
         var trace = rig.RunToStop();
         var last = trace[^1];
@@ -144,10 +140,10 @@ public class PumpTests
         Assert.All(trace, t => Assert.True(t.Money.Cents <= 3000, $"{t.Money} over ceiling"));
         Assert.InRange(last.Money.Cents, 2999, 3000);
         Assert.True(last.CeilingReached);
-        // The surcharge was billed: the same volume on the plain board costs less.
-        Assert.True(Pricing.Default.CentsFor(Grade.Regular, last.Volume) < last.Money);
-        // And less fuel fits under $30 than the board alone would allow.
-        Assert.True(last.Volume < Pricing.Default.MaxVolumeFor(Grade.Regular, Money.FromDollars(30)));
+        // The fee was billed: the same volume on the plain board costs the fee less.
+        Assert.Equal(Pricing.Default.CentsFor(Grade.Regular, last.Volume) + fee, last.Money);
+        // And the fuel that fits under $30 is the fuel that fits under $28.50 on the board.
+        Assert.Equal(Pricing.Default.MaxVolumeFor(Grade.Regular, Money.FromDollars(28.50m)), last.Volume);
         Assert.Equal(0, rig.Ledger.Verify());
     }
 
