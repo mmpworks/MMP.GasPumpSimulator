@@ -15,6 +15,8 @@ const adminLocked = computed(() => !!state.value?.site.lockedUntil)
 const estop = computed(() => !!state.value?.station.estopActive)
 const recovery = computed(() => state.value?.recovery && state.value.recovery.kind !== 'CleanStart' ? state.value.recovery : null)
 const d = computed(() => state.value?.dispenser)
+const pumpClosed = computed(() => state.value?.pump.phase === 'Closed' || !!state.value?.pump.serviceParts.includes('pump switch'))
+const pumpCalling = computed(() => state.value?.pump.phase === 'Calling')
 </script>
 
 <template>
@@ -29,6 +31,13 @@ const d = computed(() => state.value?.dispenser)
       <NetworkPanel v-show="tab === 'bank'" />
       <AdminPanel v-show="tab === 'admin'" />
       <div v-show="tab === 'station'">
+        <div class="step">Pump switch <v-chip v-if="pumpClosed" size="small" color="warning" variant="flat">CLOSED</v-chip><v-chip v-else-if="pumpCalling" size="small" color="info" variant="flat">CALLING</v-chip></div>
+        <div class="row-wrap mb-3">
+          <v-btn v-if="!pumpClosed" color="warning" variant="flat" prepend-icon="mdi-lock" :disabled="estop" @click="api.closePump('operator')">Close pump for sales</v-btn>
+          <v-btn v-else color="success" variant="flat" prepend-icon="mdi-lock-open-variant" :disabled="estop" @click="api.openPump('operator')">Open pump for sales</v-btn>
+          <span class="muted">Closed is a state, never a fault. The pump keeps working, refuses every card at the reader and the counter, and finishes a delivery in progress first. It stays closed across a restart until opened here.</span>
+        </div>
+
         <div class="step">Emergency stop</div>
         <v-alert v-if="estop" type="error" variant="flat" class="mb-2" title="E-STOP ACTIVE">
           Power is off at every dispenser and every submersible pump. The record was written before the power dropped. Reset at the cashier to restore it.

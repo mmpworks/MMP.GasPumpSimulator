@@ -178,6 +178,32 @@ public sealed class SaleStateMachine
                 EndDetail = $"no {CodeFor(Tender).Name} was entered within {_timeouts.CodeEntry.TotalSeconds:0} s";
                 return Transition(SaleState.Cancelled, commands, "keypad entry timed out, nothing was sent to the bank");
 
+            // The pump is calling: a nozzle came off the boot with no sale behind it. Nothing opens; the screen asks for a card.
+            case (SaleState.Idle, SaleEvent.NozzleLifted):
+            case (SaleState.CardRead, SaleEvent.NozzleLifted):
+            case (SaleState.Authorizing, SaleEvent.NozzleLifted):
+                NozzleOut = true;
+                commands.Add(new SaleCommand.Log(SaleId, $"nozzle lifted with no authorization ({State}), pump calling"));
+                return commands;
+
+            case (SaleState.Idle, SaleEvent.NozzleHung):
+            case (SaleState.CardRead, SaleEvent.NozzleHung):
+            case (SaleState.Authorizing, SaleEvent.NozzleHung):
+                NozzleOut = false;
+                SpoutInserted = false;
+                commands.Add(new SaleCommand.Log(SaleId, $"nozzle hung with no authorization ({State})"));
+                return commands;
+
+            case (SaleState.CardRead, SaleEvent.SpoutInserted):
+            case (SaleState.Authorizing, SaleEvent.SpoutInserted):
+                SpoutInserted = true;
+                return commands;
+
+            case (SaleState.CardRead, SaleEvent.SpoutWithdrawn):
+            case (SaleState.Authorizing, SaleEvent.SpoutWithdrawn):
+                SpoutInserted = false;
+                return commands;
+
             case (SaleState.Idle, SaleEvent.CashPaid cash):
                 CardName = "cash";
                 Grade = cash.Grade ?? Grade.Regular;
@@ -536,6 +562,9 @@ public sealed class SaleStateMachine
             case SaleState.Idle when Hold == HoldStatus.Settled:
                 // The last sale's receipt stays on the screen until the next driver starts or the screen is reset.
                 return new($"Thank you: {Volume} for {Money}", Join(holdLine, "Insert or tap your card, or pay the cashier, for the next sale."), DriverAction.Leave);
+            case SaleState.Idle when NozzleOut:
+                // The pump is calling. The driver has the nozzle in hand and no authorization yet.
+                return new("Nozzle lifted. Insert or tap your card, or pay the cashier, to begin", "Nothing flows until a payment is approved. Hang the nozzle back up to cancel.", DriverAction.None);
             case SaleState.Idle:
                 return new("Insert or tap your card, or pay the cashier", "Select a grade after approval.", DriverAction.None);
             case SaleState.CardRead:

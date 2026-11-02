@@ -690,6 +690,11 @@ public sealed class Simulation : IDisposable
     /// <summary>The attendant reconnected the coupling.</summary>
     public void ResetBreakaway() => ToPump(new PumpMessage.ResetBreakaway());
 
+    /// <summary>The operator takes this pump out of sales. It keeps working, refuses every card, and finishes any delivery in progress first.</summary>
+    public void ClosePump(string by = "operator") => ToPump(new PumpMessage.CloseForSales(by));
+    /// <summary>The operator puts the pump back into sales.</summary>
+    public void OpenPump(string by = "operator") => ToPump(new PumpMessage.OpenForSales(by));
+
     /// <summary>
     /// The station emergency stop. It models the power going away under the
     /// pump, the STPs, and every signal circuit at once, and sends no message

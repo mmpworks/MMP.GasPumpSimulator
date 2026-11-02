@@ -9,7 +9,14 @@ namespace GasPump.Pump;
 /// or the nozzle is out, valve shut, the driver may squeeze again. Stopped:
 /// the delivery ended. Faulted: something looked like tampering or a part failed.
 /// </summary>
-public enum PumpPhase { Disarmed, Armed, Dispensing, Paused, Stopped, Faulted }
+/// <summary>
+/// Where the pump is. Disarmed and Stopped are the resting phases between
+/// sales. Calling is the nozzle off the boot with no authorization: the pump
+/// is asking for one. Closed is the operator's switch: the pump works and
+/// refuses sales. Armed, Dispensing, and Paused are a sale in progress.
+/// Faulted is a part that stopped the pump.
+/// </summary>
+public enum PumpPhase { Disarmed, Armed, Dispensing, Paused, Stopped, Faulted, Calling, Closed }
 
 /// <summary>What one tick produced. The worker turns this into sale events. Fault carries the formatted code and detail; FaultCode the code alone.</summary>
 public sealed record PumpTick(
@@ -82,7 +89,11 @@ public sealed class PumpController(
     private TimeSpan _pouredFor;
     private IDeliveryStage? _hoseOwner;
 
+    private bool _closedForSales;
+
     public PumpPhase Phase { get; private set; } = PumpPhase.Disarmed;
+    /// <summary>True while the operator holds the pump out of sales. Takes effect at once when idle, and at the end of a delivery in progress.</summary>
+    public bool ClosedForSales => _closedForSales;
     public Money Money { get; private set; }
     /// <summary>Money itemized by the price schedule, for the receipt and the settlement. Empty until fuel moves.</summary>
     public IReadOnlyList<ChargeLine> Lines { get; private set; } = [];
@@ -143,18 +154,59 @@ public sealed class PumpController(
         return (true, "");
     }
 
-    /// <summary>The boot switch. Lifting with no authorization is recorded and does nothing else.</summary>
+    /// <summary>
+    /// The boot switch. With a sale armed, the lift is part of the hand
+    /// sequence. With no sale, a resting pump moves to Calling: the nozzle is
+    /// out and the pump is asking the station for an authorization. A closed
+    /// or faulted pump records the lift and stays where it is. Returns true
+    /// when the station should hear about it.
+    /// </summary>
     public bool LiftNozzle()
     {
         _nozzleLifted = true;
-        if (_armed is null)
+        if (_armed is not null)
         {
-            ledger.Append("nozzle.lift.ignored", $"phase {Phase}");
-            return false;
+            ledger.Append("nozzle.lift", $"{_armed.SaleId}");
+            return true;
         }
-        ledger.Append("nozzle.lift", $"{_armed.SaleId}");
-        return true;
+        if (Phase is PumpPhase.Disarmed or PumpPhase.Stopped)
+        {
+            Phase = PumpPhase.Calling;
+            ledger.Append("nozzle.lift.calling", "no authorization, waiting for one");
+            return true;
+        }
+        ledger.Append("nozzle.lift.ignored", $"phase {Phase}");
+        return false;
     }
+
+    /// <summary>
+    /// The operator's switch. Idle, the pump closes now. Mid-delivery, the
+    /// close waits for the stop, so a driver is never cut off. A faulted pump
+    /// remembers the close and shows it once the part is fixed.
+    /// </summary>
+    public void CloseForSales(string by)
+    {
+        _closedForSales = true;
+        ledger.Append("pump.closed", DiagnosticCodes.PumpClosed.Format($"by {by} while {Phase}"));
+        if (Phase is PumpPhase.Disarmed or PumpPhase.Stopped or PumpPhase.Calling)
+        {
+            _nozzleLifted = false;
+            _spoutInserted = false;
+            _leverHeld = false;
+            Phase = PumpPhase.Closed;
+        }
+    }
+
+    /// <summary>The operator's switch, the other way. A closed pump goes back to Disarmed. A pending close is forgotten.</summary>
+    public void OpenForSales(string by)
+    {
+        _closedForSales = false;
+        ledger.Append("pump.opened", DiagnosticCodes.PumpClosed.Format($"by {by}"));
+        if (Phase == PumpPhase.Closed) Phase = PumpPhase.Disarmed;
+    }
+
+    /// <summary>The phase a delivery or a fault returns to: Closed if the operator asked for it meanwhile, Disarmed otherwise.</summary>
+    private PumpPhase RestingPhase => _closedForSales ? PumpPhase.Closed : PumpPhase.Disarmed;
 
     /// <summary>The bellows interlock: the spout is in a tank or can.</summary>
     public bool InsertSpout()
@@ -214,6 +266,13 @@ public sealed class PumpController(
         _nozzleLifted = false;
         _spoutInserted = false;
         _leverHeld = false;
+        if (Phase == PumpPhase.Calling)
+        {
+            // The driver put it back without paying. The call is withdrawn.
+            Phase = RestingPhase;
+            ledger.Append("nozzle.hang.calling", "call withdrawn, no sale");
+            return false;
+        }
         if (_armed is null || !_poured) return false;
         if (Phase is PumpPhase.Dispensing or PumpPhase.Paused) { Stop("nozzle hung"); return true; }
         return false;
@@ -234,6 +293,7 @@ public sealed class PumpController(
     /// <summary>One sensor per row, then each delivery stage in order. The order is fixed, so the first entry is the one an arm refusal names.</summary>
     private IEnumerable<DiagnosticCode> Conditions()
     {
+        if (_closedForSales) yield return DiagnosticCodes.PumpClosed;
         if (hydraulics.BreakawaySeparated) yield return DiagnosticCodes.PumpHoseBreakaway;
         if (!hydraulics.SupplyAvailable) yield return DiagnosticCodes.PumpSupplyNoFlow;
         if (meter.PulserDead) yield return DiagnosticCodes.PumpMeterNoPulse;
@@ -250,8 +310,8 @@ public sealed class PumpController(
     {
         if (Phase != PumpPhase.Faulted) return false;
         if (LastFaultCode is not { } code || DiagnosticCodes.Find(code) is not { OutOfService: true } fault) return false;
-        if (Conditions().Any()) return false;
-        Phase = PumpPhase.Disarmed;
+        if (Conditions().Any(c => c != DiagnosticCodes.PumpClosed)) return false;
+        Phase = RestingPhase;
         LastFault = null;
         LastFaultCode = null;
         ledger.Append("pump.in-service", fault.Format($"{fault.Part} {fault.ClearedBy}; pump disarmed and ready"));
@@ -430,11 +490,13 @@ public sealed class PumpController(
 
     private void Stop(string reason)
     {
-        if (Phase is PumpPhase.Stopped or PumpPhase.Faulted or PumpPhase.Disarmed) return;
+        if (Phase is PumpPhase.Stopped or PumpPhase.Faulted or PumpPhase.Disarmed or PumpPhase.Closed) return;
         hydraulics.Close();
         Phase = PumpPhase.Stopped;
         ledger.Append("valve.close", $"{_armed?.SaleId} {reason} {Volume} {Money} totalizer {totalizer.Total}");
         ClearSale();
+        // A close the operator asked for during the delivery takes effect now that it is over.
+        if (_closedForSales) { Phase = PumpPhase.Closed; ledger.Append("pump.closed", DiagnosticCodes.PumpClosed.Format("pending close applied after the delivery")); }
     }
 
     /// <summary>The delivery is over. Drop what the driver chose so the next driver starts from nothing. Volume and Money stay for the receipt.</summary>
@@ -450,7 +512,7 @@ public sealed class PumpController(
     {
         hydraulics.Close();
         ClearSale();
-        Phase = PumpPhase.Disarmed;
+        Phase = RestingPhase;
     }
 
     /// <summary>The stage holding the hose right now, or null while fuel flows.</summary>
