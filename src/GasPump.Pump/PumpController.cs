@@ -34,6 +34,12 @@ public sealed record PumpTick(
 /// separated hose, a sale running past its time. Every stop carries a
 /// diagnostic code naming the part.
 ///
+/// Two seams for parts that are not here yet. The price schedule is an
+/// interface, so a surcharge or a discount wraps the price board without this
+/// class knowing. The delivery stages see every metered slice and can hold the
+/// pump out of service, so an additive injector or a vapor monitor bolts on
+/// without this class changing.
+///
 /// Nozzle lifecycle. Lift takes the nozzle off the harness. Seat puts it in
 /// the tank or can. Squeeze opens the valve, Release shuts it, as many times
 /// as the driver likes. Hang after any pour ends the delivery. Hang before
@@ -45,10 +51,16 @@ public sealed class PumpController(
     Meter meter,
     Totalizer totalizer,
     EventLedger ledger,
-    Pricing pricing,
+    IPriceSchedule pricing,
     TaperPolicy taper,
-    TimeProvider clock)
+    TimeProvider clock,
+    IReadOnlyList<IDeliveryStage>? stages = null)
 {
+    private readonly IReadOnlyList<IDeliveryStage> _stages = stages ?? [];
+
+    /// <summary>The parts on the delivery path downstream of the meter, in the order they see each slice.</summary>
+    public IReadOnlyList<IDeliveryStage> Stages => _stages;
+
     /// <summary>Valve open and nothing moving for this long is a supply fault. Three seconds covers a slow-flow solenoid opening.</summary>
     public static readonly TimeSpan NoFlowWindow = TimeSpan.FromSeconds(3);
     /// <summary>Fuel moving with no pulses for this long is a dead pulser. Short, because every tick of it is unmetered fuel.</summary>
@@ -106,6 +118,7 @@ public sealed class PumpController(
         LastFaultCode = null;
         meter.ResetSale();
         hydraulics.Close();
+        foreach (var stage in _stages) stage.OnArmed(saleId);
         Phase = PumpPhase.Armed;
         return (true, "", armed);
     }
@@ -208,12 +221,14 @@ public sealed class PumpController(
     /// <summary>The conditions holding this pump out of service, read from the part sensors now. Nothing is stored, so a fixed part can never still read as broken.</summary>
     public ServiceStatus Service => ServiceStatus.Of(Conditions());
 
-    /// <summary>One sensor per row. The order is fixed, so the first entry is the one an arm refusal names.</summary>
+    /// <summary>One sensor per row, then each delivery stage in order. The order is fixed, so the first entry is the one an arm refusal names.</summary>
     private IEnumerable<DiagnosticCode> Conditions()
     {
         if (hydraulics.BreakawaySeparated) yield return DiagnosticCodes.PumpHoseBreakaway;
         if (!hydraulics.SupplyAvailable) yield return DiagnosticCodes.PumpSupplyNoFlow;
         if (meter.PulserDead) yield return DiagnosticCodes.PumpMeterNoPulse;
+        foreach (var stage in _stages)
+            foreach (var condition in stage.Conditions()) yield return condition;
     }
 
     /// <summary>
@@ -350,6 +365,7 @@ public sealed class PumpController(
         }
 
         totalizer.Add(delivered);
+        foreach (var stage in _stages) stage.OnDelivered(grade, delivered);
         Money = pricing.CentsFor(grade, Volume);
 
         if (Money > armed.Ceiling)

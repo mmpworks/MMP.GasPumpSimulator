@@ -206,6 +206,17 @@ The pump's ceiling is the lesser of gates 1 and 2, then clamped by gate 3. The a
 
 Cash settles at the till (`CashDrawer`): the driver prepays, the pump stops on that amount to the cent, and whatever was not pumped comes back as change. A cash sale abandoned before any pour refunds in full. No network, so a dead bank link never touches a cash sale.
 
+## Delivery stages and the price schedule
+
+Two seams in the pump controller for parts that are not here yet, added 2026-11-01 so an additive injector, a vapor-recovery monitor, or a blend check can bolt on without the controller changing.
+
+| Seam | Type | What it replaces | How a new part uses it |
+|---|---|---|---|
+| Price schedule | `IPriceSchedule` (Core) | The controller took the concrete `Pricing` record | A schedule that wraps the price board, for a surcharge or a discount. `MaxVolumeFor` must agree with `CentsFor`, so the sale still lands on the cent. |
+| Delivery stage | `IDeliveryStage` (Pump) | Nothing; the tick had no hook after the totalizer | `OnArmed` per sale, `OnDelivered` per metered slice after the totalizer counted it, `Conditions()` to hold the pump out of service with its own diagnostic code, `TryRestoreCondition` so a restart repairs nothing. |
+
+`Dispenser` takes both as optional constructor arguments. Nothing is built on them yet. Three tests in `PumpTests.cs` prove the contract: a stage sees every slice and their sum is the sale volume; a broken stage refuses the arm with its code in the ledger and clears when fixed; a wrapped schedule bills more and the sale still stops under the ceiling.
+
 ## Logging on Herald.OSS
 
 `HeraldEventLog` in `GasPump.Dispatch` implements the simulator's `IEventLog` over a Herald.OSS `QuickLogBuilder` pipeline. Each worker's source (sale, pump, payment, admin, attack, network, host) is a Herald category. Workers write templates with properties; Herald renders the message and keeps the properties. Three sinks:

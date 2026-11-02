@@ -24,12 +24,12 @@ public class PumpTests
         public HmacAuthorizationSigner Signer = new(Key);
         public HardLimits Limits;
 
-        public Rig(HardLimits? limits = null, TaperPolicy? taper = null)
+        public Rig(HardLimits? limits = null, TaperPolicy? taper = null, IPriceSchedule? prices = null, IReadOnlyList<IDeliveryStage>? stages = null)
         {
             Limits = limits ?? HardLimits.Default;
             Ledger = new EventLedger(Clock);
             Authority = new PumpAuthority(new HmacAuthorizationVerifier(Key, "PUMP-07", new NonceStore(), TimeSpan.FromSeconds(5)), Limits, Ledger, Clock);
-            Pump = new PumpController(Authority, Hydraulics, Meter, Totalizer, Ledger, Pricing.Default, taper ?? TaperPolicy.Default, Clock);
+            Pump = new PumpController(Authority, Hydraulics, Meter, Totalizer, Ledger, prices ?? Pricing.Default, taper ?? TaperPolicy.Default, Clock, stages);
         }
 
         public string Token(string saleId, Money ceiling, Volume? max = null) =>
@@ -66,6 +66,89 @@ public class PumpTests
         {
             for (int i = 0; i < ticks; i++) { Clock.Advance(Tick); Pump.Tick(Tick); }
         }
+    }
+
+    /// <summary>A part downstream of the meter, as an additive injector would be. Counts what it saw and can be broken.</summary>
+    private sealed class CountingStage : IDeliveryStage
+    {
+        public static readonly DiagnosticCode Code = new("PUMP.TST.BROKEN", "test stage", "the test stage cannot run", ServiceAction.AttendantReset);
+        public string Name => "counter";
+        public Volume Seen = Volume.Zero;
+        public int Arms;
+        public bool Broken;
+        public void OnArmed(string saleId) { Arms++; Seen = Volume.Zero; }
+        public void OnDelivered(Grade grade, Volume delivered) => Seen += delivered;
+        public IEnumerable<DiagnosticCode> Conditions() { if (Broken) yield return Code; }
+        public bool TryRestoreCondition(string code) { if (code != Code.Code) return false; Broken = true; return true; }
+    }
+
+    /// <summary>A price schedule that wraps the price board and adds a per-gallon surcharge, as an additive would.</summary>
+    private sealed class Surcharge(IPriceSchedule inner, long tenthCentsPerGallon) : IPriceSchedule
+    {
+        public Money CentsFor(Grade grade, Volume volume) =>
+            inner.CentsFor(grade, volume) + new Money((volume.MilliGallons * tenthCentsPerGallon + 5_000) / 10_000);
+        public Volume MaxVolumeFor(Grade grade, Money money)
+        {
+            var v = inner.MaxVolumeFor(grade, money);
+            while (v > Volume.Zero && CentsFor(grade, v) > money) v = new Volume(v.MilliGallons - 1);
+            return v;
+        }
+        public string Display(Grade grade) => inner.Display(grade);
+    }
+
+    [Fact]
+    public void A_delivery_stage_sees_every_metered_slice_and_their_sum_is_the_sale_volume()
+    {
+        var stage = new CountingStage();
+        var rig = new Rig(stages: [stage]);
+        rig.ArmAndPour(Money.FromDollars(20));
+        var last = rig.RunToStop()[^1];
+
+        Assert.Equal(1, stage.Arms);
+        Assert.Equal(last.Volume, stage.Seen);
+        Assert.Equal(rig.Totalizer.Total, stage.Seen);
+        Assert.Equal(2000, last.Money.Cents);
+    }
+
+    [Fact]
+    public void A_broken_delivery_stage_holds_the_pump_out_of_service_until_it_is_fixed()
+    {
+        var stage = new CountingStage { Broken = true };
+        var rig = new Rig(stages: [stage]);
+
+        var (ok, reason, _) = rig.Pump.Arm("S1", rig.Token("S1", Money.FromDollars(20)));
+        Assert.False(ok);
+        Assert.Equal(CountingStage.Code.Code, reason);
+        Assert.True(rig.Pump.Service.Holds(CountingStage.Code.Code));
+        Assert.Contains(rig.Ledger.Snapshot(), e => e.Kind == "arm.refused" && e.Detail.Contains(CountingStage.Code.Code));
+
+        stage.Broken = false;
+        Assert.True(rig.Pump.Service.InService);
+        Assert.True(rig.Pump.Arm("S2", rig.Token("S2", Money.FromDollars(20))).Ok);
+
+        // A saved code comes back to the stage that owns it, and only that one.
+        Assert.False(stage.TryRestoreCondition(DiagnosticCodes.PumpHoseBreakaway.Code));
+        Assert.True(stage.TryRestoreCondition(CountingStage.Code.Code));
+        Assert.True(stage.Broken);
+    }
+
+    [Fact]
+    public void A_wrapped_price_schedule_changes_the_money_and_the_sale_still_lands_under_the_ceiling()
+    {
+        // 50 cents a gallon on top of the board.
+        var rig = new Rig(prices: new Surcharge(Pricing.Default, 500));
+        rig.ArmAndPour(Money.FromDollars(30));
+        var trace = rig.RunToStop();
+        var last = trace[^1];
+
+        Assert.All(trace, t => Assert.True(t.Money.Cents <= 3000, $"{t.Money} over ceiling"));
+        Assert.InRange(last.Money.Cents, 2999, 3000);
+        Assert.True(last.CeilingReached);
+        // The surcharge was billed: the same volume on the plain board costs less.
+        Assert.True(Pricing.Default.CentsFor(Grade.Regular, last.Volume) < last.Money);
+        // And less fuel fits under $30 than the board alone would allow.
+        Assert.True(last.Volume < Pricing.Default.MaxVolumeFor(Grade.Regular, Money.FromDollars(30)));
+        Assert.Equal(0, rig.Ledger.Verify());
     }
 
     [Fact]

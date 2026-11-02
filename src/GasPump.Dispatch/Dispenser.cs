@@ -60,7 +60,10 @@ public sealed record DispenserView(
 /// </summary>
 public sealed class Dispenser
 {
-    public Dispenser(DispenserOptions options, byte[] tokenKey, EventLedger ledger, IEventLog log, TimeProvider clock)
+    /// <param name="prices">The price schedule the pump bills by. Null means the posted price board in <paramref name="options"/>.</param>
+    /// <param name="stages">Parts on the delivery path downstream of the meter. Null means none.</param>
+    public Dispenser(DispenserOptions options, byte[] tokenKey, EventLedger ledger, IEventLog log, TimeProvider clock,
+        IPriceSchedule? prices = null, IReadOnlyList<IDeliveryStage>? stages = null)
     {
         Options = options;
         Ledger = ledger;
@@ -70,7 +73,7 @@ public sealed class Dispenser
         Meter = new Meter();
         Hydraulics = new Hydraulics(options.NominalFlow);
         Authority = new PumpAuthority(new HmacAuthorizationVerifier(tokenKey, options.PumpId, Nonces, TimeSpan.FromSeconds(5)), options.HardLimits, ledger, clock);
-        Pump = new PumpController(Authority, Hydraulics, Meter, Totalizer, ledger, options.Pricing, options.Taper, clock);
+        Pump = new PumpController(Authority, Hydraulics, Meter, Totalizer, ledger, prices ?? options.Pricing, options.Taper, clock, stages);
     }
 
     public DispenserOptions Options { get; }
@@ -225,7 +228,7 @@ public sealed class Dispenser
     /// </summary>
     public IReadOnlyList<string> ConditionCodes => Pump.Service.Codes;
 
-    /// <summary>Set the part sensors back to a saved state. The inverse of <see cref="ConditionCodes"/>; unknown codes are ignored.</summary>
+    /// <summary>Set the part sensors back to a saved state. The inverse of <see cref="ConditionCodes"/>. A code no part owns is ignored.</summary>
     public void RestoreConditions(IEnumerable<string> codes)
     {
         foreach (var code in codes)
@@ -233,6 +236,7 @@ public sealed class Dispenser
             if (code == DiagnosticCodes.PumpHoseBreakaway.Code) Hydraulics.BreakawaySeparated = true;
             else if (code == DiagnosticCodes.PumpSupplyNoFlow.Code) Hydraulics.SupplyAvailable = false;
             else if (code == DiagnosticCodes.PumpMeterNoPulse.Code) Meter.PulserDead = true;
+            else foreach (var stage in Pump.Stages) if (stage.TryRestoreCondition(code)) break;
         }
     }
 

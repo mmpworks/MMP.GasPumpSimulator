@@ -46,11 +46,26 @@ public readonly record struct FlowRate(long MilliGallonsPerSecond)
 public enum Grade { Regular = 87, Plus = 89, Premium = 93 }
 
 /// <summary>
+/// What the pump asks when it prices a slice: how much is this volume of this
+/// grade, and how much volume fits under this money. The posted price board is
+/// one answer. A schedule that wraps it (an additive surcharge, a loyalty
+/// discount) is another, and the controller cannot tell them apart. Both
+/// methods must agree with each other: MaxVolumeFor(g, m) is the largest v with
+/// CentsFor(g, v) at or under m.
+/// </summary>
+public interface IPriceSchedule
+{
+    Money CentsFor(Grade grade, Volume volume);
+    Volume MaxVolumeFor(Grade grade, Money money);
+    string Display(Grade grade);
+}
+
+/// <summary>
 /// Price in tenths of a cent per gallon, so $3.499 is 3499. Converts volume to
 /// money with integer math and rounds half up, the same way everywhere, so the
 /// ceiling check and the display agree.
 /// </summary>
-public sealed record Pricing(IReadOnlyDictionary<Grade, long> TenthCentsPerGallon)
+public sealed record Pricing(IReadOnlyDictionary<Grade, long> TenthCentsPerGallon) : IPriceSchedule
 {
     public static Pricing Default => new(new Dictionary<Grade, long>
     {
