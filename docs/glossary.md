@@ -52,6 +52,16 @@ Each entry gives the trade term, what it is, and the names the code uses for it.
 | **Custody chain** | The tamper-evident record (TesseraSeal) each process writes and the station copies. | `ImmutableAuditFileSink`, `CustodyStream`, `CustodyCopy` |
 | **Journal** | The station's one-second snapshot of the open sale, for restart recovery. | `StateJournal`, `state.json` |
 
+## The wire
+
+| Term | What it is | In the code |
+|---|---|---|
+| **Forecourt protocol** | The language the station (forecourt controller) and each dispenser speak over the cable. It carries, in both directions: authorize this pump up to an amount, here is the price, nozzle lifted, delivering, here is the running volume and money, delivery ended, here are the totals, here is a fault. It never carries card data; the payment terminal has its own secured link. Three generations exist side by side on real forecourts. | The whole `PumpMessage` and `SaleEvent` traffic on `SocketDispenserLink` / `DispenserServer` is this protocol for one pump, as one JSON object per line over TCP |
+| **Current loop (legacy)** | Each maker's own two-wire serial link, a current loop rather than a voltage signal so it survives long noisy runs across the forecourt. Slow, a few thousand bits per second. The controller is the master and polls each dispenser in turn; a dispenser speaks only when asked. Gilbarco Two-Wire, Wayne, and Tokheim each had one, and they are not interchangeable. | The simulator has no polling; the dispenser pushes events as they happen |
+| **IFSF** | The International Forecourt Standards Forum. Its Dispenser application standard (Part 3-01) defines the messages; its transport parts carry them first over LON twisted pair (Part 2-01, IFSF-LON, the large installed base in Europe) and since 2015 over Ethernet as IFSF-IP (Part 2-02), with the same application layer. A REST API over HTTP (Part 2-03, with OpenRetailing) is the newest layer. One controller can then drive mixed makers. | Closest real shape to the simulator's wire: fixed message types, one link per dispenser, Ethernet transport |
+| **CAN bus** | A multi-master serial bus made for short noisy runs between controller boards. It appears **inside** some dispenser cabinets, between the pump control board, pulser and valve drivers, and displays. It is not the station-to-dispenser link. | Nothing. The simulator's `PumpController` talks to `Hydraulics` and `Meter` as in-process objects, which stands in for whatever bus a cabinet uses internally |
+| **Connected dispenser (IoT)** | A dispenser with its own network identity that reports totals, faults, and tamper events to a cloud service, takes price and software updates over the air, and plays media on its screen. Both large makers sell this. It widens the attack surface, which is why the custody chain and "the pump pumps only under its own limits" matter more as dispensers connect. | The custody stream and the station's verified copy are the simulator's version of a dispenser reporting out; the hard limits in `PumpAuthority` are its defense |
+
 ## Software words that stay software words
 
 | Term | Meaning here |
