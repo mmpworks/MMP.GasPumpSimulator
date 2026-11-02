@@ -14,6 +14,15 @@ const HOST_URL = `http://localhost:${PORT}`
 const STATION = process.env.GASPUMP_STATION || "Howard's"
 let host = null
 
+// The host's log is forwarded to our own stdout. When that stream is a pipe nobody reads any more (the
+// launcher closed it), a write throws EPIPE from the main process and Electron shows an error box on every
+// line. Swallow the stream error and skip writes once the stream is gone; the window does not need them.
+function say(stream, text) {
+  if (stream.destroyed) return
+  try { stream.write(text) } catch (e) { /* a dead pipe: nothing to tell */ }
+}
+for (const s of [process.stdout, process.stderr]) s.on('error', () => {})
+
 function startHost() {
   if (process.env.GASPUMP_HOST === 'external') return
   const project = path.resolve(__dirname, '..', '..', 'src', 'GasPump.Host')
@@ -23,9 +32,9 @@ function startHost() {
     stdio: ['ignore', 'pipe', 'pipe'],
     windowsHide: true,
   })
-  host.stdout.on('data', d => process.stdout.write(`[host] ${d}`))
-  host.stderr.on('data', d => process.stderr.write(`[host] ${d}`))
-  host.on('exit', code => { process.stdout.write(`[host] exited ${code}\n`); host = null })
+  host.stdout.on('data', d => say(process.stdout, `[host] ${d}`))
+  host.stderr.on('data', d => say(process.stderr, `[host] ${d}`))
+  host.on('exit', code => { say(process.stdout, `[host] exited ${code}\n`); host = null })
 }
 
 function waitForHost(timeoutMs = 60000) {
