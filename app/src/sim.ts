@@ -19,6 +19,8 @@ export interface Sale {
 }
 export type CardSource = 'PumpInsert' | 'PumpTap' | 'Station'
 export interface Station {
+  /** The sign over the door and the colour theme the host was started with (GASPUMP_STATION, GASPUMP_THEME). */
+  name: string; theme: string
   pid: number; port: number; runId: string; custodyPath: string | null
   estopActive: boolean; estopAt: string | null
   custodyLinesPublished: number; custodyLinesReceived: number; custodyCopyPath: string | null; custodyCopyRunId: string | null

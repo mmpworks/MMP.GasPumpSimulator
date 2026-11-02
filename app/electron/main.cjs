@@ -2,12 +2,16 @@
 // Set GASPUMP_HOST=external to skip spawning and use a host you started yourself.
 // Set GASPUMP_STRATEGY=channel to run the Task/Channel dispatch instead of threads.
 // Set GASPUMP_DISPENSER=inproc to keep the pump inside the station process instead of GasPump.Dispenser.exe.
+// Set GASPUMP_STATION, GASPUMP_THEME, GASPUMP_PORT, and GASPUMP_DISPENSER_PORT to run a second station beside the
+// first. The host reads the same variables, so the spawned host and this window agree on the port.
 const { app, BrowserWindow } = require('electron')
 const { spawn } = require('node:child_process')
 const path = require('node:path')
 const http = require('node:http')
 
-const HOST_URL = 'http://localhost:5177'
+const PORT = Number(process.env.GASPUMP_PORT) || 5177
+const HOST_URL = `http://localhost:${PORT}`
+const STATION = process.env.GASPUMP_STATION || "Howard's"
 let host = null
 
 function startHost() {
@@ -42,8 +46,8 @@ async function createWindow() {
   const win = new BrowserWindow({
     width: 1360,
     height: 900,
-    title: 'Gas Pump Simulator',
-    backgroundColor: '#0f1115',
+    title: `${STATION} · Gas Pump Simulator`,
+    backgroundColor: '#0e1412',
     webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true },
   })
   const devUrl = process.env.VITE_DEV_SERVER_URL

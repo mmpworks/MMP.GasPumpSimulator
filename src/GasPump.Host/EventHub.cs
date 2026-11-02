@@ -20,6 +20,7 @@ public sealed class EventHub
     private readonly List<Channel<object>> _clients = [];
     private StationServer? _station;
     private DispenserProcess? _process;
+    private StationIdentity _identity = StationIdentity.Default;
 
     public EventHub(SimulationHost host)
     {
@@ -37,9 +38,9 @@ public sealed class EventHub
     }
 
     /// <summary>The station server and the dispenser process, once built, so the state push can carry their counters.</summary>
-    public void Attach(StationServer station, DispenserProcess? process) { _station = station; _process = process; }
+    public void Attach(StationServer station, DispenserProcess? process, StationIdentity identity) { _station = station; _process = process; _identity = identity; }
 
-    private object StateFor(Simulation sim) => Contracts.State(sim, _host, _station, _process);
+    private object StateFor(Simulation sim) => Contracts.State(sim, _host, _station, _process, _identity);
 
     private void Bind(Simulation sim)
     {

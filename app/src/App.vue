@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { onMounted, computed } from 'vue'
+import { onMounted, computed, watch } from 'vue'
 import { Splitpanes, Pane } from 'splitpanes'
 import { connect, connected, state, basename } from './sim'
+import { applyTheme } from './theme'
 import PumpFace from './components/PumpFace.vue'
 import DispenserControls from './components/DispenserControls.vue'
 import PaymentPanel from './components/PaymentPanel.vue'
@@ -12,6 +13,10 @@ import LinkStrip from './components/LinkStrip.vue'
 onMounted(connect)
 const d = computed(() => state.value?.dispenser)
 const st = computed(() => state.value?.station)
+const stationName = computed(() => st.value?.name ?? 'Gas Pump Simulator')
+// The host names the station and its theme. The window title, the stylesheet, and Vuetify follow it.
+watch(() => st.value?.theme, theme => { if (theme) applyTheme(theme) }, { immediate: true })
+watch(stationName, name => { document.title = `${name} · Gas Pump Simulator` }, { immediate: true })
 const dispenserTitle = computed(() => {
   if (!d.value) return 'DISPENSER'
   if (d.value.link === 'in-process') return `DISPENSER · in the station process`
@@ -22,7 +27,7 @@ const dispenserTitle = computed(() => {
 <template>
   <v-app>
     <v-app-bar density="compact" flat color="surface">
-      <v-app-bar-title class="text-subtitle-1 font-weight-bold">Gas Pump Simulator</v-app-bar-title>
+      <v-app-bar-title class="text-subtitle-1 font-weight-bold" data-testid="station-name">{{ stationName }}</v-app-bar-title>
       <v-chip :color="connected ? 'success' : 'error'" class="mr-2">{{ connected ? 'station connected' : 'connecting to station' }}</v-chip>
       <v-chip v-if="state" color="info" class="mr-2">dispatch: {{ state.strategy }}</v-chip>
       <v-chip v-if="d" :color="d.link === 'socket' ? 'warning' : undefined" class="mr-4">{{ d.link === 'socket' ? 'two processes, TCP ' + d.port : 'one process' }}</v-chip>

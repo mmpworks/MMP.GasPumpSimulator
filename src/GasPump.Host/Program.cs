@@ -6,8 +6,16 @@ using GasPump.Dispatch;
 using GasPump.Host;
 using GasPump.Payment;
 
+// --strategy threaded|channel|asyncproxy. Threaded is the default so the "old way" is what you see first.
+// --dispenser socket|inproc. Socket is the default: the pump runs in GasPump.Dispenser.exe and this process is the station.
+// --dispenser-port 5178. GASPUMP_STATION, GASPUMP_THEME, GASPUMP_PORT, and GASPUMP_DISPENSER_PORT name the station and
+// its ports, so two stations can run on one machine (see README, "Two stations across the street").
+string Arg(string name, string fallback) => args.SkipWhile(a => a != name).Skip(1).FirstOrDefault() ?? fallback;
+string? ArgOrNull(string name) => args.SkipWhile(a => a != name).Skip(1).FirstOrDefault();
+var identity = StationIdentity.FromEnvironment(Environment.GetEnvironmentVariable, ArgOrNull("--dispenser-port"));
+
 var builder = WebApplication.CreateBuilder(args);
-builder.WebHost.UseUrls("http://localhost:5177");
+builder.WebHost.UseUrls(identity.Url);
 builder.Services.AddCors(o => o.AddDefaultPolicy(p => p.AllowAnyOrigin().AllowAnyHeader().AllowAnyMethod()));
 builder.Services.ConfigureHttpJsonOptions(o =>
 {
@@ -15,13 +23,9 @@ builder.Services.ConfigureHttpJsonOptions(o =>
     o.SerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.CamelCase;
 });
 
-// --strategy threaded|channel|asyncproxy. Threaded is the default so the "old way" is what you see first.
-// --dispenser socket|inproc. Socket is the default: the pump runs in GasPump.Dispenser.exe and this process is the station.
-// --dispenser-port 5178.
-string Arg(string name, string fallback) => args.SkipWhile(a => a != name).Skip(1).FirstOrDefault() ?? fallback;
 var strategyName = Arg("--strategy", "threaded");
 var dispenserMode = Arg("--dispenser", "socket");
-var dispenserPort = int.Parse(Arg("--dispenser-port", "5178"));
+var dispenserPort = identity.DispenserPort;
 var clock = TimeProvider.System;
 
 // One directory holds the files of both processes: the station's Herald log (gaspump-*.ndjson), the state journal
@@ -63,7 +67,8 @@ var hub = new EventHub(simHost);
 var station = new StationServer(logDir, ikm);
 station.Bind(simHost.Current);
 simHost.Swapped += station.Bind;
-hub.Attach(station, dispenserProcess);
+hub.Attach(station, dispenserProcess, identity);
+builder.Services.AddSingleton(identity);
 builder.Services.AddSingleton(simHost);
 builder.Services.AddSingleton(hub);
 builder.Services.AddSingleton(station);
@@ -75,7 +80,7 @@ app.UseWebSockets();
 var json = new JsonSerializerOptions(JsonSerializerDefaults.Web) { Converters = { new JsonStringEnumConverter() } };
 Simulation Sim() => simHost.Current;
 
-app.MapGet("/api/state", () => Results.Json(Contracts.State(Sim(), simHost, station, dispenserProcess), json));
+app.MapGet("/api/state", () => Results.Json(Contracts.State(Sim(), simHost, station, dispenserProcess, identity), json));
 
 // The dispenser process: its power, from the station's side of the seam.
 app.MapGet("/api/dispenser", () => Results.Json(new { view = Contracts.Pump(Sim().View), link = Sim().Link.Kind, connected = Sim().Link.Connected, pid = Sim().Link.RemotePid, runId = Sim().Link.RemoteRunId, custodyPath = Sim().Link.RemoteCustodyPath, framesSent = Sim().Link.FramesSent, framesReceived = Sim().Link.FramesReceived, processRunning = dispenserProcess?.Running, external = dispenserProcess?.External, lastExit = dispenserProcess?.LastExit, port = dispenserProcess?.Port }, json));
@@ -250,8 +255,8 @@ app.Map("/ws", async (HttpContext ctx) =>
 });
 
 app.Lifetime.ApplicationStopping.Register(() => { station.Dispose(); simHost.Dispose(); dispenserProcess?.Dispose(); });
-Sim().Log.Write("host", "station pid {Pid} listening on {Url} with {Dispatch} dispatch, dispenser via {Link}{Port}, Herald.OSS log at {LogPath}, custody at {Custody}",
-    ("Pid", Environment.ProcessId), ("Url", "http://localhost:5177"), ("Dispatch", Sim().StrategyName), ("Link", Sim().Link.Kind), ("Port", options.Dispenser is { } d ? $" port {d.Port}" : ""), ("LogPath", heraldLogPath), ("Custody", Sim().CustodyPath));
+Sim().Log.Write("host", "station {Station} pid {Pid} listening on {Url} with {Dispatch} dispatch, dispenser via {Link}{Port}, Herald.OSS log at {LogPath}, custody at {Custody}",
+    ("Station", identity.Name), ("Pid", Environment.ProcessId), ("Url", identity.Url), ("Dispatch", Sim().StrategyName), ("Link", Sim().Link.Kind), ("Port", options.Dispenser is { } d ? $" port {d.Port}" : ""), ("LogPath", heraldLogPath), ("Custody", Sim().CustodyPath));
 app.Run();
 
 record CardRequest(string Name, Grade? Grade, Tender? Tender, CardSource? Source);
