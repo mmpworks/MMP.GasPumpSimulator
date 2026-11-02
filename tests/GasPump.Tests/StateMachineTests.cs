@@ -17,7 +17,7 @@ public class StateMachineTests
         m.Apply(new SaleEvent.Approved("S1", Money.FromDollars(75), "tok"));
         if (preselected is null) m.Apply(new SaleEvent.GradeSelected("S1", Grade.Regular));
         m.Apply(new SaleEvent.NozzleLifted("S1"));
-        m.Apply(new SaleEvent.NozzleSeated("S1"));
+        m.Apply(new SaleEvent.SpoutInserted("S1"));
         m.Apply(new SaleEvent.FlowStarted("S1"));
         Assert.Equal(SaleState.Fueling, m.State);
         return m;
@@ -126,7 +126,7 @@ public class StateMachineTests
         m.Apply(new SaleEvent.PumpArmed("S1", Money.FromDollars(30), Volume.FromGallons(50)));
         m.Apply(new SaleEvent.NozzleLifted("S1"));
         Assert.Equal(SaleState.ReadyToPump, m.State);   // a lift is not a pour
-        m.Apply(new SaleEvent.NozzleSeated("S1"));
+        m.Apply(new SaleEvent.SpoutInserted("S1"));
         var c3 = m.Apply(new SaleEvent.FlowStarted("S1"));
         Assert.Equal(SaleState.Fueling, m.State);
         Assert.Contains(c3, c => c is SaleCommand.ArmTimer { State: SaleState.Fueling });
@@ -158,17 +158,17 @@ public class StateMachineTests
         Assert.Equal(Grade.Premium, m.Grade);
         Assert.Contains("Lift the nozzle", m.Notice().Detail);
         m.Apply(new SaleEvent.NozzleLifted("S1"));
-        Assert.Contains("in your tank", m.Notice().Detail);
-        m.Apply(new SaleEvent.NozzleSeated("S1"));
-        Assert.Contains("Squeeze the trigger", m.Notice().Detail);
+        Assert.Contains("into your fill pipe", m.Notice().Detail);
+        m.Apply(new SaleEvent.SpoutInserted("S1"));
+        Assert.Contains("Squeeze the lever", m.Notice().Detail);
     }
 
     [Fact]
-    public void Trigger_release_pauses_and_squeeze_resumes_without_ending_the_sale()
+    public void Lever_release_pauses_and_squeeze_resumes_without_ending_the_sale()
     {
         var m = Fueling();
         m.Apply(new SaleEvent.Progress("S1", Volume.FromGallons(2), new Money(700), FlowRate.GallonsPerMinute(10), "full"));
-        m.Apply(new SaleEvent.FlowPaused("S1", "trigger released"));
+        m.Apply(new SaleEvent.FlowPaused("S1", "lever released"));
         Assert.Equal(SaleState.Fueling, m.State);
         Assert.Equal("paused", m.Phase);
         Assert.Equal(FlowRate.Zero, m.Flow);
@@ -402,7 +402,7 @@ public class StateMachineTests
 
         m.Apply(new SaleEvent.GradeSelected("S1", Grade.Regular));
         m.Apply(new SaleEvent.NozzleLifted("S1"));
-        m.Apply(new SaleEvent.NozzleSeated("S1"));
+        m.Apply(new SaleEvent.SpoutInserted("S1"));
         m.Apply(new SaleEvent.FlowStarted("S1"));
         m.Apply(new SaleEvent.Progress("S1", Volume.FromGallons(2), new Money(700), FlowRate.GallonsPerMinute(10), "full"));
         m.Apply(new SaleEvent.NozzleHung("S1"));

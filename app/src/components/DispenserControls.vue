@@ -31,7 +31,7 @@ const whyNoSqueeze = computed(() => {
   if (!armed.value) return 'no authorization yet'
   if (!pump.value?.selectedGrade) return 'select a grade first'
   if (!nozzleOut.value) return 'lift the nozzle first'
-  if (!seated.value) return 'put the nozzle in the tank first'
+  if (!spoutIn.value) return 'insert the spout first'
   return ''
 })
 const pump = computed(() => state.value?.pump)
@@ -41,9 +41,9 @@ const offline = computed(() => !d.value?.connected)
 const armed = computed(() => s.value === 'ReadyToPump' || s.value === 'Fueling')
 const canGrade = computed(() => s.value === 'ReadyToPump' && !offline.value)
 const nozzleOut = computed(() => !!pump.value?.nozzleLifted)
-const seated = computed(() => !!pump.value?.nozzleSeated)
+const spoutIn = computed(() => !!pump.value?.spoutInserted)
 const flowing = computed(() => pump.value?.phase === 'Dispensing')
-const canSqueeze = computed(() => armed.value && !flowing.value && nozzleOut.value && seated.value && !!pump.value?.selectedGrade && !offline.value)
+const canSqueeze = computed(() => armed.value && !flowing.value && nozzleOut.value && spoutIn.value && !!pump.value?.selectedGrade && !offline.value)
 const grades = ['Regular', 'Plus', 'Premium']
 function selectedGrade(g: string | null) { if (g) api.selectGrade(g) }
 const estop = computed(() => !!state.value?.station.estopActive)
@@ -86,20 +86,20 @@ const estop = computed(() => !!state.value?.station.estopActive)
       </div>
 
       <div class="step">2. Nozzle
-        <v-chip :color="nozzleOut ? 'info' : undefined">{{ nozzleOut ? 'off harness' : 'on harness' }}</v-chip>
-        <v-chip :color="seated ? 'success' : undefined">{{ seated ? 'in tank' : 'not in tank' }}</v-chip>
+        <v-chip :color="nozzleOut ? 'info' : undefined">{{ nozzleOut ? 'out of boot' : 'in boot' }}</v-chip>
+        <v-chip :color="spoutIn ? 'success' : undefined">{{ spoutIn ? 'spout in fill pipe' : 'spout out' }}</v-chip>
       </div>
       <div class="row-wrap">
         <v-btn v-if="!nozzleOut" :disabled="!armed || offline" prepend-icon="mdi-gas-station" @click="api.lift()">Lift nozzle</v-btn>
         <v-btn v-else :disabled="offline" prepend-icon="mdi-gas-station-off" @click="api.hang()">Hang nozzle{{ pump?.poured ? ' (ends sale)' : '' }}</v-btn>
-        <v-btn v-if="!seated" :disabled="!armed || !nozzleOut || offline" prepend-icon="mdi-car" @click="api.seat()">Put in tank</v-btn>
-        <v-btn v-else :disabled="offline" prepend-icon="mdi-car-off" @click="api.unseat()">Pull out of tank</v-btn>
+        <v-btn v-if="!spoutIn" :disabled="!armed || !nozzleOut || offline" prepend-icon="mdi-car" @click="api.insertSpout()">Insert spout</v-btn>
+        <v-btn v-else :disabled="offline" prepend-icon="mdi-car-off" @click="api.withdrawSpout()">Withdraw spout</v-btn>
       </div>
 
-      <div class="step">3. Trigger <v-chip :color="flowing ? 'success' : undefined">{{ flowing ? 'flowing' : 'closed' }}</v-chip></div>
+      <div class="step">3. Lever <v-chip :color="flowing ? 'success' : undefined">{{ flowing ? 'flowing' : 'closed' }}</v-chip></div>
       <div class="row-wrap">
-        <v-btn v-if="flowing" color="warning" variant="flat" prepend-icon="mdi-pause" @click="api.release()">Release trigger (pause)</v-btn>
-        <v-btn v-else color="primary" variant="flat" :disabled="!canSqueeze" prepend-icon="mdi-play" @click="api.squeeze()">Squeeze trigger{{ pump?.poured ? ' (resume)' : '' }}</v-btn>
+        <v-btn v-if="flowing" color="warning" variant="flat" prepend-icon="mdi-pause" @click="api.release()">Release lever (pause)</v-btn>
+        <v-btn v-else color="primary" variant="flat" :disabled="!canSqueeze" prepend-icon="mdi-play" @click="api.squeeze()">Squeeze lever{{ pump?.poured ? ' (resume)' : '' }}</v-btn>
         <span v-if="whyNoSqueeze" class="muted">{{ whyNoSqueeze }}</span>
       </div>
 
@@ -118,7 +118,7 @@ const estop = computed(() => !!state.value?.station.estopActive)
         <span class="muted">Kills GasPump.Dispenser.exe mid-whatever. The station faults the sale with <code>LINK.DISPENSER.LOST</code> and settles for the fuel it recorded.</span>
       </div>
       <p class="muted mb-0">
-        Fuel flows only with a grade chosen, the nozzle in the tank, and the trigger held. Each fault names its part with a code
+        Fuel flows only with a grade chosen, the spout in the fill pipe, and the lever held. Each fault names its part with a code
         (<code>PUMP.STP.NOFLOW</code>, <code>PUMP.MTR.NOPULSE</code>, <code>PUMP.HOSE.BREAKAWAY</code>) in this column's log, ledger, and chain.
       </p>
     </v-card-text>

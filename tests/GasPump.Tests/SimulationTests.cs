@@ -129,33 +129,33 @@ public class SimulationTests
 
     [Theory]
     [MemberData(nameof(SimHarness.Strategies), MemberType = typeof(SimHarness))]
-    public void Driver_can_stop_and_start_the_trigger_and_hanging_ends_the_sale(string strategy)
+    public void Driver_can_stop_and_start_the_lever_and_hanging_ends_the_sale(string strategy)
     {
         using var h = new SimHarness(strategy, ThirtyDollarHold);
         h.Present("Good");
         h.AdvanceUntilState(SaleState.ReadyToPump, TimeSpan.FromSeconds(5));
 
-        // Nothing flows until grade, lift, seat, and trigger are all in.
-        h.Sim.LiftNozzle(); h.Sim.SeatNozzle(); h.Sim.SqueezeTrigger();
+        // Nothing flows until grade, lift, spout, and lever are all in.
+        h.Sim.LiftNozzle(); h.Sim.InsertSpout(); h.Sim.SqueezeLever();
         h.Advance(TimeSpan.FromSeconds(2));
         Assert.Equal(SaleState.ReadyToPump, h.State.State);
         Assert.Equal(Volume.Zero, h.Sim.Totalizer.Total);
         Assert.Contains("Select a grade", h.State.Notice.Detail);
 
         h.Sim.SelectGrade(Grade.Plus);
-        h.Sim.SqueezeTrigger();
+        h.Sim.SqueezeLever();
         h.AdvanceUntilState(SaleState.Fueling, TimeSpan.FromSeconds(1));
         h.Advance(TimeSpan.FromSeconds(3));
         var firstPour = h.State.Volume;
         Assert.True(firstPour > Volume.Zero);
 
-        h.Sim.ReleaseTrigger();
+        h.Sim.ReleaseLever();
         h.Advance(TimeSpan.FromSeconds(5));
         Assert.Equal(SaleState.Fueling, h.State.State);
         Assert.Equal("paused", h.State.Phase);
         Assert.Equal(firstPour, h.State.Volume);
 
-        h.Sim.SqueezeTrigger();
+        h.Sim.SqueezeLever();
         h.Advance(TimeSpan.FromSeconds(3));
         Assert.True(h.State.Volume > firstPour);
         Assert.Equal(Grade.Plus, h.State.Grade);
@@ -258,9 +258,9 @@ public class SimulationTests
         Assert.Equal(SaleState.Fueling, h.State.State);
         Assert.True(h.State.Volume > atOutage, "fuel kept flowing through the outage");
 
-        h.Sim.ReleaseTrigger();
+        h.Sim.ReleaseLever();
         h.Advance(TimeSpan.FromSeconds(2));
-        h.Sim.SqueezeTrigger();                          // pause and resume still work with the bank gone
+        h.Sim.SqueezeLever();                          // pause and resume still work with the bank gone
         h.Advance(TimeSpan.FromSeconds(3));
         h.Sim.HangNozzle();
         h.AdvanceUntilState(SaleState.StoreAndForward, TimeSpan.FromSeconds(5));
@@ -432,7 +432,7 @@ public class SimulationTests
 
     [Theory]
     [MemberData(nameof(SimHarness.Strategies), MemberType = typeof(SimHarness))]
-    public void Drive_off_with_the_trigger_released_faults_the_sale_at_once_and_settles_for_the_fuel(string strategy)
+    public void Drive_off_with_the_lever_released_faults_the_sale_at_once_and_settles_for_the_fuel(string strategy)
     {
         using var h = new SimHarness(strategy, ThirtyDollarHold);
         var card = TestCards.Get("Good");
@@ -442,7 +442,7 @@ public class SimulationTests
         h.Sim.StartFueling();
         h.AdvanceUntilState(SaleState.Fueling, TimeSpan.FromSeconds(1));
         h.Advance(TimeSpan.FromSeconds(2));
-        h.Sim.ReleaseTrigger();                               // the realistic drive-off: nozzle in the car, trigger let go
+        h.Sim.ReleaseLever();                               // the realistic drive-off: nozzle in the car, lever let go
         h.Advance(TimeSpan.FromMilliseconds(300));
         Assert.Equal("paused", h.State.Phase);
         var delivered = h.State.Money;
@@ -600,8 +600,8 @@ public class SimulationTests
 
         // Fueling is in use too, for anyone, by any route.
         h.Sim.SelectGrade(Grade.Regular);
-        h.Sim.SeatNozzle();
-        h.Sim.SqueezeTrigger();
+        h.Sim.InsertSpout();
+        h.Sim.SqueezeLever();
         h.AdvanceUntilState(SaleState.Fueling, TimeSpan.FromSeconds(1));
         Assert.False(h.TryPresent("Good", source: CardSource.Station).Ok);
         Assert.Equal(first, h.Sim.PayCash(Money.FromDollars(10)));
@@ -803,7 +803,7 @@ public class SimulationTests
 
     // ----- Service conditions: a fault that needs a repair holds the pump out of service until the repair, then clears.
 
-    /// <summary>Card, approval, grade, lift, seat, squeeze, and a few seconds of fuel.</summary>
+    /// <summary>Card, approval, grade, lift, insert, squeeze, and a few seconds of fuel.</summary>
     private static void FuelForAWhile(SimHarness h, double seconds = 2)
     {
         h.Present("Good");

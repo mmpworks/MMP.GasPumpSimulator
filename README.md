@@ -9,7 +9,7 @@ A pay-at-the-pump fuel dispenser, simulated. Present a card, get a two-phase aut
 1. **Payment.** Luhn and expiry at the terminal. A simulated issuer with named test cards: `Good`, `LowBalance` (partial approval), `InsufficientFunds`, `Expired`, `Stolen`, `Frozen`, `Velocity`, `DebitGoodPin`, `DebitBadPin`. A network you can set to Up, Down, Timeout, Flapping, or Late (the bank acts, the answer comes back after the pump gave up). Pre-authorization hold, completion for the real amount, reversal when no fuel moved, store-and-forward when the host is down at completion.
 2. **Security.** The pump controller is the authority over fuel. It arms only from an HMAC-signed token it verifies itself, single-use by nonce, bound to its own pump id and a time window. Every ceiling is clamped to hard limits the pump owns: 50 gallons, $500, 10 minutes, 12 gal/min. There is no "set limit" message to attack. A hash-chained ledger records every arm, open, close, refusal, and fault. A sealed totalizer only goes up. Pulses the valve could not have passed stop the pump dead.
 3. **The pump.** Hydraulics, meter, taper. With a $30 ceiling the flow is full to $24, falls in a straight line to an 8 percent creep, and the last slice is clamped so the money lands on 3000 cents and never 3001.
-4. **The nozzle.** Fuel flows only with a grade selected, the nozzle off the harness and seated in a tank or can, and the trigger held. Let go to pause, squeeze to resume, as often as you like. Once anything has poured, hanging the nozzle ends the sale. Hang before any pour and nothing changes; walk away and the pump cancels itself at 120 s.
+4. **The nozzle.** Fuel flows only with a grade selected, the nozzle out of the boot and inserted in a tank or can, and the lever held. Let go to pause, squeeze to resume, as often as you like. Once anything has poured, hanging the nozzle ends the sale. Hang before any pour and nothing changes; walk away and the pump cancels itself at 120 s.
 5. **Failover.** The sale is a saga. When the bank link runs late or dies, every hold is reversed or every completion queued, never lost. A late approval that arrives after the pump gave up is reversed, never armed. The pump's screen says what happened, where your money is, and what to do: try again, use another pump, use another card, see the attendant, or go. The screen clears for the next driver after 30 s, but not while the bank still owes an answer.
 6. **Tender.** Credit, debit, or cash. Credit asks the bank for the site's credit ceiling. Debit asks for the site's debit ceiling and the pump gets the lesser of that and the bank's answer, so a $50 debit ceiling against a $900 balance holds $50 and against $18.50 holds $18.50. Cash goes to the cashier, and the cash amount is the ceiling to the cent: no bank, no hold, change or a refund at the till.
 7. **Administrator.** A back-office panel sets the credit and debit ceilings behind an admin PIN. Three wrong PINs lock it for five minutes. Every attempt is in the ledger. Raise the debit ceiling to $5000 and the bank will approve what the card has, and the pump will still clamp it to its own $500 hard limit, because the site's ceilings are business limits and the pump's are safety limits.
@@ -22,7 +22,7 @@ A pay-at-the-pump fuel dispenser, simulated. Present a card, get a two-phase aut
 14. **Two processes.** The dispenser runs in `GasPump.Dispenser.exe` and the station in `GasPump.Host.exe`, joined by TCP on localhost. The pump's hard limits, authority, nonces, totalizer, ledger, and chain live in the dispenser process; the sale, the money, the journal, and the copy of the dispenser's chain live in the station. Pull either plug and watch the other side stay safe. The app shows them as two columns, amber and blue, with the wire between them.
 15. **Logging on Herald.OSS.** Every worker writes structured events through [Herald.OSS](https://github.com/mmpworks/Herald.OSS) 0.14.0. A bridge sink feeds the UI stream and the tests; the host adds a console sink and an NDJSON file per session so a run can be reviewed later with every property intact.
 16. **The keypad.** A debit card asks for its PIN and a credit card for its billing ZIP before anything goes to the bank. The bank checks the digits (test ZIP 12345, test PIN 1234) and declines a mismatch. The digits never reach a log.
-17. **The idle minute.** Let go of the trigger to take a phone call and the pump waits a minute for you. Squeeze again and it picks up where it left off. Stay silent and it closes the valve and settles for the fuel delivered, so a forgotten nozzle never holds a pump open.
+17. **The idle minute.** Let go of the lever to take a phone call and the pump waits a minute for you. Squeeze again and it picks up where it left off. Stay silent and it closes the valve and settles for the fuel delivered, so a forgotten nozzle never holds a pump open.
 18. **Concurrency.** Three workers (sale, pump, and payment) pass messages through bounded mailboxes and share no state. How they run is a Strategy: `ThreadedDispatch` is a thread per worker with blocking queues. `ChannelDispatch` is a Task per worker over bounded channels. `AsyncProxyDispatch` is the 2008 machine without the 2008 threads: each worker is an iterator-driven state machine from [MMP.AsyncProxy](https://github.com/mmpworks/MMP.AsyncProxy), its loop yields a future for the next message, and the loop resumes on a pool thread when one is posted. Every piece of it would compile for .NET 3.5. One end-to-end test runs the same sale under all three.
 
 ## Run it
@@ -96,12 +96,12 @@ notice detail: No fuel was dispensed. Nothing was charged to your card. Try agai
 
 The pump's `hold` lags the bank's book by one late round trip. That lag is why the screen says "any hold is being released" rather than "nothing was charged" until the bank confirms it.
 
-The nozzle interlocks, same session. Lift, seat, and squeeze with no grade chosen moved nothing. Grade, squeeze, release, squeeze, hang:
+The nozzle interlocks, same session. Lift, insert, and squeeze with no grade chosen moved nothing. Grade, squeeze, release, squeeze, hang:
 
 ```
-t+  3s  ReadyToPump  pump=Armed       $0.00  0.000 gal   [pump] trigger ignored: select a grade first
+t+  3s  ReadyToPump  pump=Armed       $0.00  0.000 gal   [pump] lever ignored: select a grade first
 t+  6s  Fueling      pump=Dispensing  $2.00  0.527 gal   first pour, valve open
-t+  9s  Fueling      pump=Paused      $2.13  0.561 gal   flow paused: trigger released
+t+  9s  Fueling      pump=Paused      $2.13  0.561 gal   flow paused: lever released
 t+ 12s  Fueling      pump=Dispensing  $4.20  1.105 gal   flow resumed
 t+ 13s  Idle         pump=Stopped     $4.26  1.122 gal   nozzle hung, completion $4.26 sent, hold=Settled
 ```
@@ -150,9 +150,9 @@ Two attacks live on the Administrator panel. **Brute-force the PIN** tries 0000,
 
 In 2018 a Detroit station lost about 600 gallons in 90 minutes while the clerk could not stop the pump. The research behind this repo put the fix in one sentence: the reader protects the card, the controller protects the fuel. This simulator builds the second of those two trust boundaries.
 
-Press "Signed token: 600 gal, $2000" in the app, pick a grade, lift, put the nozzle in the tank, and squeeze. That token is signed with the real key, which models an upstream that is fully compromised. The pump authority verifies the signature, then clamps the ceiling to its own limits: 50 gallons, $500. The ledger shows `arm.ok ... clamped from $2000.00/600.000 gal to $500.00/50.000 gal`. Lift the nozzle and it stops at 50.000 gallons and $174.95. The test `Signed_600_gallon_token_is_clamped_to_50_gallons_and_500_dollars` runs that under every dispatch strategy.
+Press "Signed token: 600 gal, $2000" in the app, pick a grade, lift, put the spout in the fill pipe, and squeeze. That token is signed with the real key, which models an upstream that is fully compromised. The pump authority verifies the signature, then clamps the ceiling to its own limits: 50 gallons, $500. The ledger shows `arm.ok ... clamped from $2000.00/600.000 gal to $500.00/50.000 gal`. Lift the nozzle and it stops at 50.000 gallons and $174.95. The test `Signed_600_gallon_token_is_clamped_to_50_gallons_and_500_dollars` runs that under every dispatch strategy.
 
-`docs/threat-model.md` lists every attack and the test that proves its control. `docs/research.md` is the sources register: every outside fact the design rests on, with its evidence tier and where it is used.
+`docs/glossary.md` is the source for the trade terms every name in the code follows: nozzle boot, lever, spout, bellows interlock, pulser, totalizer, STP, and the rest. `docs/threat-model.md` lists every attack and the test that proves its control. `docs/research.md` is the sources register: every outside fact the design rests on, with its evidence tier and where it is used.
 
 ## Layout
 

@@ -5,7 +5,7 @@ namespace GasPump.Pump;
 
 /// <summary>
 /// Disarmed: no authorization. Armed: authorized, valve shut, waiting for the
-/// driver. Dispensing: trigger held, valve open. Paused: a pour has happened
+/// driver. Dispensing: lever held, valve open. Paused: a pour has happened
 /// or the nozzle is out, valve shut, the driver may squeeze again. Stopped:
 /// the delivery ended. Faulted: something looked like tampering or a part failed.
 /// </summary>
@@ -28,7 +28,7 @@ public sealed record PumpTick(
 /// <summary>
 /// The dispenser's controller. Single-threaded by contract: the pump worker is the
 /// only caller. It opens the valve only after the authority armed it, only
-/// while the driver holds the trigger, only with the nozzle seated in a fill
+/// while the driver holds the lever, only with the spout inserted in a fill
 /// point, and only after a grade is chosen. It closes the valve on the cent,
 /// and it stops on anything that looks like tampering or a failed part:
 /// pulses the valve could not have passed, fuel moving while the valve is
@@ -43,7 +43,7 @@ public sealed record PumpTick(
 /// fuel meter idle, the switch in the ledger), so an additive injector or a
 /// vapor monitor bolts on without this class changing.
 ///
-/// Nozzle lifecycle. Lift takes the nozzle off the harness. Seat puts it in
+/// Nozzle lifecycle. Lift takes the nozzle out of the boot. InsertSpout puts the spout in
 /// the tank or can. Squeeze opens the valve, Release shuts it, as many times
 /// as the driver likes. Hang after any pour ends the delivery. Hang before
 /// any pour changes nothing; the sale's own timer will cancel it.
@@ -73,8 +73,8 @@ public sealed class PumpController(
     private DateTimeOffset _armedAt;
     private Grade? _grade;
     private bool _nozzleLifted;
-    private bool _nozzleSeated;
-    private bool _triggerHeld;
+    private bool _spoutInserted;
+    private bool _leverHeld;
     private bool _poured;
     private string _tickPhase = "armed";
     private TimeSpan _noFlowFor;
@@ -91,8 +91,8 @@ public sealed class PumpController(
     public string? LastFaultCode { get; private set; }
     public ArmedAuthorization? Armed => _armed;
     public bool NozzleLifted => _nozzleLifted;
-    public bool NozzleSeated => _nozzleSeated;
-    public bool TriggerHeld => _triggerHeld;
+    public bool SpoutInserted => _spoutInserted;
+    public bool LeverHeld => _leverHeld;
     public Grade? SelectedGrade => _grade;
     /// <summary>True once any fuel has moved in this sale. After this, hanging the nozzle ends the delivery.</summary>
     public bool Poured => _poured;
@@ -117,7 +117,7 @@ public sealed class PumpController(
         _armedAt = clock.GetUtcNow();
         _grade = preselectedGrade;
         _poured = false;
-        _triggerHeld = false;
+        _leverHeld = false;
         _noFlowFor = TimeSpan.Zero;
         _noPulseFor = TimeSpan.Zero;
         _pouredFor = TimeSpan.Zero;
@@ -143,7 +143,7 @@ public sealed class PumpController(
         return (true, "");
     }
 
-    /// <summary>The harness switch. Lifting with no authorization is recorded and does nothing else.</summary>
+    /// <summary>The boot switch. Lifting with no authorization is recorded and does nothing else.</summary>
     public bool LiftNozzle()
     {
         _nozzleLifted = true;
@@ -156,39 +156,39 @@ public sealed class PumpController(
         return true;
     }
 
-    /// <summary>The fill-point sensor: the spout is in a tank or can.</summary>
-    public bool SeatNozzle()
+    /// <summary>The bellows interlock: the spout is in a tank or can.</summary>
+    public bool InsertSpout()
     {
-        _nozzleSeated = true;
+        _spoutInserted = true;
         if (_armed is null) return false;
-        ledger.Append("nozzle.seated", $"{_armed.SaleId}");
+        ledger.Append("spout.inserted", $"{_armed.SaleId}");
         return true;
     }
 
-    /// <summary>The spout left the fill point. Flow stops at once; the driver may seat and squeeze again.</summary>
-    public bool UnseatNozzle()
+    /// <summary>The spout left the fill pipe. Flow stops at once; the driver may insert the spout and squeeze again.</summary>
+    public bool WithdrawSpout()
     {
-        _nozzleSeated = false;
+        _spoutInserted = false;
         if (Phase != PumpPhase.Dispensing) return false;
-        Pause("nozzle removed from fill point");
+        Pause("spout withdrawn from the fill pipe");
         return true;
     }
 
     /// <summary>
-    /// The trigger. Three interlocks, all owned here: armed, grade chosen,
-    /// nozzle lifted and seated. Returns whether this squeeze started the first pour.
+    /// The lever. Three interlocks, all owned here: armed, grade chosen,
+    /// nozzle lifted and spout inserted. Returns whether this squeeze started the first pour.
     /// </summary>
-    public (bool Ok, string Reason, bool FirstPour) SqueezeTrigger()
+    public (bool Ok, string Reason, bool FirstPour) SqueezeLever()
     {
-        _triggerHeld = true;
+        _leverHeld = true;
         if (_armed is null || Phase is not (PumpPhase.Armed or PumpPhase.Paused))
         {
-            ledger.Append("trigger.ignored", $"phase {Phase}");
+            ledger.Append("lever.ignored", $"phase {Phase}");
             return (false, $"not armed ({Phase})", false);
         }
-        if (_grade is null) { ledger.Append("trigger.ignored", $"{_armed.SaleId} no grade selected"); return (false, "select a grade first", false); }
-        if (!_nozzleLifted) { ledger.Append("trigger.ignored", $"{_armed.SaleId} nozzle on harness"); return (false, "lift the nozzle first", false); }
-        if (!_nozzleSeated) { ledger.Append("trigger.ignored", $"{_armed.SaleId} nozzle not in fill point"); return (false, "put the nozzle in the tank first", false); }
+        if (_grade is null) { ledger.Append("lever.ignored", $"{_armed.SaleId} no grade selected"); return (false, "select a grade first", false); }
+        if (!_nozzleLifted) { ledger.Append("lever.ignored", $"{_armed.SaleId} nozzle in boot"); return (false, "lift the nozzle first", false); }
+        if (!_spoutInserted) { ledger.Append("lever.ignored", $"{_armed.SaleId} spout not in the fill pipe"); return (false, "insert the spout first", false); }
 
         var first = !_poured;
         _poured = true;
@@ -199,21 +199,21 @@ public sealed class PumpController(
         return (true, "", first);
     }
 
-    /// <summary>Letting go of the trigger shuts the valve. The sale stays open for another squeeze.</summary>
-    public bool ReleaseTrigger()
+    /// <summary>Letting go of the lever shuts the valve. The sale stays open for another squeeze.</summary>
+    public bool ReleaseLever()
     {
-        _triggerHeld = false;
+        _leverHeld = false;
         if (Phase != PumpPhase.Dispensing) return false;
-        Pause("trigger released");
+        Pause("lever released");
         return true;
     }
 
-    /// <summary>Back on the harness. Ends the delivery if anything was poured. Returns true when it did.</summary>
+    /// <summary>Back in the boot. Ends the delivery if anything was poured. Returns true when it did.</summary>
     public bool HangNozzle()
     {
         _nozzleLifted = false;
-        _nozzleSeated = false;
-        _triggerHeld = false;
+        _spoutInserted = false;
+        _leverHeld = false;
         if (_armed is null || !_poured) return false;
         if (Phase is PumpPhase.Dispensing or PumpPhase.Paused) { Stop("nozzle hung"); return true; }
         return false;
@@ -224,7 +224,7 @@ public sealed class PumpController(
     {
         hydraulics.BreakawaySeparated = false;
         _nozzleLifted = false;
-        _nozzleSeated = false;
+        _spoutInserted = false;
         ledger.Append("hose.breakaway.reset", DiagnosticCodes.PumpHoseBreakaway.Format("coupling reconnected by the attendant"));
     }
 
@@ -443,7 +443,7 @@ public sealed class PumpController(
         _armed = null;
         _grade = null;
         _poured = false;
-        _triggerHeld = false;
+        _leverHeld = false;
     }
 
     public void Disarm()

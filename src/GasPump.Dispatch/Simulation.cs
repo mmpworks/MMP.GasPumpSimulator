@@ -519,7 +519,7 @@ public sealed class Simulation : IDisposable
             if (!_service.InService)
                 return (false, oldId, $"pump {_service}");
             if (_sale.State is SaleState.Fueling or SaleState.Completing || (_sale.State == SaleState.ReadyToPump && _sale.NozzleOut))
-                return (false, oldId, $"pump in use by {oldId} ({_sale.State}, nozzle {(_sale.NozzleOut ? "out" : "on harness")})");
+                return (false, oldId, $"pump in use by {oldId} ({_sale.State}, nozzle {(_sale.NozzleOut ? "out" : "in boot")})");
             if (!_sale.IsOpenAndUntouched)
             {
                 if (_sale.State is not SaleState.Idle) ReplaceSale();
@@ -565,19 +565,19 @@ public sealed class Simulation : IDisposable
 
     public void SelectGrade(Grade grade) => ToPump(new PumpMessage.SelectGrade(grade));
     public void LiftNozzle() => ToPump(new PumpMessage.Lift());
-    public void SeatNozzle() => ToPump(new PumpMessage.Seat());
-    public void UnseatNozzle() => ToPump(new PumpMessage.Unseat());
-    public void SqueezeTrigger() => ToPump(new PumpMessage.Squeeze());
-    public void ReleaseTrigger() => ToPump(new PumpMessage.Release());
+    public void InsertSpout() => ToPump(new PumpMessage.InsertSpout());
+    public void WithdrawSpout() => ToPump(new PumpMessage.WithdrawSpout());
+    public void SqueezeLever() => ToPump(new PumpMessage.Squeeze());
+    public void ReleaseLever() => ToPump(new PumpMessage.Release());
     public void HangNozzle() => ToPump(new PumpMessage.Hang());
 
-    /// <summary>The whole hand sequence a driver does at the pump: pick a grade, lift, seat, squeeze. For tests and scripted scenarios.</summary>
+    /// <summary>The whole hand sequence a driver does at the pump: pick a grade, lift, insert, squeeze. For tests and scripted scenarios.</summary>
     public void StartFueling(Grade grade = Grade.Regular)
     {
         SelectGrade(grade);
         LiftNozzle();
-        SeatNozzle();
-        SqueezeTrigger();
+        InsertSpout();
+        SqueezeLever();
     }
     public void Cancel(string reason = "driver cancelled") => _saleBox.Post(new SaleEvent.Cancel(CurrentSaleId, reason));
     public void DrainPendingCompletions() => _paymentBox.Post(new PaymentMessage.DrainPending(CurrentSaleId));

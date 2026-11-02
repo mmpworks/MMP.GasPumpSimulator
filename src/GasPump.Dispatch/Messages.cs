@@ -10,8 +10,8 @@ namespace GasPump.Dispatch;
 [JsonDerivedType(typeof(Close), nameof(Close))]
 [JsonDerivedType(typeof(SelectGrade), nameof(SelectGrade))]
 [JsonDerivedType(typeof(Lift), nameof(Lift))]
-[JsonDerivedType(typeof(Seat), nameof(Seat))]
-[JsonDerivedType(typeof(Unseat), nameof(Unseat))]
+[JsonDerivedType(typeof(InsertSpout), nameof(InsertSpout))]
+[JsonDerivedType(typeof(WithdrawSpout), nameof(WithdrawSpout))]
 [JsonDerivedType(typeof(Squeeze), nameof(Squeeze))]
 [JsonDerivedType(typeof(Release), nameof(Release))]
 [JsonDerivedType(typeof(Hang), nameof(Hang))]
@@ -27,17 +27,17 @@ public abstract record PumpMessage
     public sealed record Arm(string SaleId, string Token, Grade? Grade) : PumpMessage;
     public sealed record Close(string SaleId, string Reason) : PumpMessage;
     public sealed record SelectGrade(Grade Grade) : PumpMessage;
-    /// <summary>Nozzle off the harness.</summary>
+    /// <summary>Nozzle out of the boot.</summary>
     public sealed record Lift : PumpMessage;
-    /// <summary>Spout in a tank or can; the fill-point sensor closed.</summary>
-    public sealed record Seat : PumpMessage;
-    /// <summary>Spout pulled out of the fill point.</summary>
-    public sealed record Unseat : PumpMessage;
-    /// <summary>Trigger held: open the valve if every interlock allows it.</summary>
+    /// <summary>Spout in a tank or can; the bellows interlock closed.</summary>
+    public sealed record InsertSpout : PumpMessage;
+    /// <summary>Spout pulled out of the fill pipe.</summary>
+    public sealed record WithdrawSpout : PumpMessage;
+    /// <summary>Lever held: open the valve if every interlock allows it.</summary>
     public sealed record Squeeze : PumpMessage;
-    /// <summary>Trigger let go: shut the valve, keep the sale open.</summary>
+    /// <summary>Lever let go: shut the valve, keep the sale open.</summary>
     public sealed record Release : PumpMessage;
-    /// <summary>Nozzle back on the harness. Ends the delivery after any pour.</summary>
+    /// <summary>Nozzle back in the boot. Ends the delivery after any pour.</summary>
     public sealed record Hang : PumpMessage;
     public sealed record Tick(TimeSpan Dt) : PumpMessage;
     public sealed record Stop(string Reason) : PumpMessage;
