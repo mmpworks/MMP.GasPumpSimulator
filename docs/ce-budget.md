@@ -10,7 +10,7 @@ The dispenser side of the simulator (`GasPump.Dispenser`, the island) is the par
 | Default thread stack | 64 KB typical, with 8 KB reserved for overflow control; set per module by the linker and per thread by `CreateThread` | [Windows Embedded CE 6.0 stack docs](https://learn.microsoft.com/en-us/previous-versions/windows/embedded/ee483001(v=winembedded.60)) |
 | Process address space | 1 GB for user code, data, heap, and stacks on CE 6 (CE 5 gave 32 MB) | [Virtual Memory Layout: CE 5.0 vs CE 6.0](https://msdn2.microsoft.com/en-us/library/aa914933(v=msdn.10)) |
 | RAM | 64 MB on the board in the story. A board is what it is. | the course, `docs/course/00-dinner.md` in MMP.AsyncProxy |
-| `ExecutionContext`, `SynchronizationContext` | Availability on CF 3.5 is unverified here. A third-party package adds `SynchronizationContext` to CF 3.5, which suggests it is missing. The library's builder and awaiter use both. | [TaskParallelLibraryCE](https://github.com/skarllot/TaskParallelLibraryCE) |
+| `ExecutionContext`, `SynchronizationContext` | Both missing from CF 3.5. Checked 2026-11-02 against the CF 3.5 reference assemblies from `NETCFSetupv35.msi` (SHA1 `48eba5c9ae1856cda0c2b0833dfdc28c36dbbc04`). Also missing: `Exception.Data`, `Interlocked.Add`, `Thread.VolatileRead`, `Monitor.Wait`. Present: the pool with `SetMaxThreads`, `Timer`, the events, `Interlocked.CompareExchange`, Begin/End, `TcpListener`, `SerialPort`. | `docs/netcf-port.md` and `tools/netcf-audit.ps1` in MMP.AsyncProxy |
 
 The pool's worst case is 25 threads times 128 KB, about 3.2 MB of stack. Every dedicated thread the island keeps costs its own stack on top of that, 64 KB by default.
 
@@ -69,7 +69,7 @@ The island's own spend is under 4 MB in the worst case and under 1 MB in the lik
 
 ## What a port still has to verify
 
-1. `ExecutionContext` and `SynchronizationContext` on CF 3.5. If either is missing, `AsyncMethodBuilder<T>.AwaitOnCompleted` and `FutureAwaiter<T>.OnCompleted` need a `#if` path that skips the capture. The course's chapter 5 already tells Kevin to carry the sale in the object for that reason.
+1. Settled 2026-11-02: CF 3.5 has neither `ExecutionContext` nor `SynchronizationContext`. `AsyncMethodBuilder<T>.AwaitOnCompleted` and `FutureAwaiter<T>.OnCompleted` get a `#if NETCF` path that skips the capture, and a one-method post-back interface stands in for the display thread's context. The five changes are listed in `docs/netcf-port.md` in MMP.AsyncProxy.
 2. `System.Threading.Timer` resolution on the device. One report puts the CF 3.5 timer too coarse for a 50 ms interval on CE 7; the island ticks at 100 ms and the taper math is tolerant of jitter, but the number has to come from the board.
 3. `TcpListener` and the blocking read on the accept thread. CF has both. The alternative, `BeginReceive` through `Futures.FromAsync`, would make the accept thread a pool callback and take the dedicated count to 1.
 4. The CF runtime's footprint and the GC's behaviour under 10 KB a second of short-lived garbage. The CF collector is a simple mark-and-sweep with no generations, so the measurement is pause time at the tick rate.
