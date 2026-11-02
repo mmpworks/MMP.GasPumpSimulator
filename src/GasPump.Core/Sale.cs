@@ -66,7 +66,11 @@ public enum EndReason
     BankDown,
     DriverCancelled,
     NoNozzleLift,
+    /// <summary>The card was read and no PIN or ZIP code followed before the entry timer ran out.</summary>
+    NoCodeEntered,
     MaxFuelingTime,
+    /// <summary>The driver let go of the trigger and never squeezed again. The pump finished the sale for the fuel delivered.</summary>
+    NoFlow,
     PumpFault,
     SecurityRefusal,
 }
@@ -76,6 +80,10 @@ public enum DriverAction
 {
     None,
     Wait,
+    /// <summary>A debit card was read. The keypad wants the PIN.</summary>
+    EnterPin,
+    /// <summary>A credit card was read. The keypad wants the billing ZIP code.</summary>
+    EnterZip,
     LiftNozzle,
     HangToStop,
     Leave,
@@ -91,6 +99,7 @@ public sealed record DriverNotice(string Headline, string Detail, DriverAction A
 /// <summary>Everything that can happen to a sale. Device threads, timers, and the host all post one of these. The JSON attributes let the same record cross a socket between the dispenser and the station.</summary>
 [JsonPolymorphic(TypeDiscriminatorPropertyName = "$e")]
 [JsonDerivedType(typeof(CardPresented), nameof(CardPresented))]
+[JsonDerivedType(typeof(CodeEntered), nameof(CodeEntered))]
 [JsonDerivedType(typeof(CashPaid), nameof(CashPaid))]
 [JsonDerivedType(typeof(GradeSelected), nameof(GradeSelected))]
 [JsonDerivedType(typeof(NozzleSeated), nameof(NozzleSeated))]
@@ -121,6 +130,8 @@ public abstract record SaleEvent(string SaleId)
 {
     /// <summary>Grade is null when the driver will pick it at the pump after approval, which is the normal path.</summary>
     public sealed record CardPresented(string SaleId, string CardName, Grade? Grade = null, Tender Tender = Tender.Credit, CardSource Source = CardSource.PumpInsert) : SaleEvent(SaleId);
+    /// <summary>The driver finished the keypad entry: a four-digit PIN for debit, a five-digit billing ZIP for credit. The sale machine only checks the shape; the bank checks the value.</summary>
+    public sealed record CodeEntered(string SaleId, string Code) : SaleEvent(SaleId);
     /// <summary>The cashier took cash. Amount is the ceiling, to the cent.</summary>
     public sealed record CashPaid(string SaleId, Money Amount, Grade? Grade = null) : SaleEvent(SaleId);
     public sealed record GradeSelected(string SaleId, Grade Grade) : SaleEvent(SaleId);
@@ -149,7 +160,8 @@ public abstract record SaleEvent(string SaleId)
     public sealed record Reversed(string SaleId) : SaleEvent(SaleId);
     /// <summary>The release could not reach the bank and sits in the store-and-forward queue.</summary>
     public sealed record ReversalQueued(string SaleId) : SaleEvent(SaleId);
-    public sealed record Timeout(string SaleId, SaleState InState) : SaleEvent(SaleId);
+    /// <summary>A timer the sale armed has fired. Tag says which one: the state's own timer, or a named side timer such as the idle timer that runs while flow is paused.</summary>
+    public sealed record Timeout(string SaleId, SaleState InState, string Tag = SaleCommand.StateTimer) : SaleEvent(SaleId);
     public sealed record Cancel(string SaleId, string Reason) : SaleEvent(SaleId);
     /// <summary>Code is the diagnostic code of the part that failed, so the notice and the records can name it.</summary>
     public sealed record Fault(string SaleId, string Reason, string? Code = null) : SaleEvent(SaleId);
@@ -160,8 +172,13 @@ public abstract record SaleEvent(string SaleId)
 /// <summary>What the state machine asks the outside world to do. It never does any of it itself.</summary>
 public abstract record SaleCommand(string SaleId)
 {
-    /// <summary>Ask the bank for a hold. The site sets the amount by tender. The sale machine doesn't.</summary>
-    public sealed record RequestAuthorization(string SaleId, string CardName, Grade Grade, Tender Tender) : SaleCommand(SaleId);
+    /// <summary>The tag of the timer every state arms for itself. A side timer carries its own tag.</summary>
+    public const string StateTimer = "state";
+    /// <summary>The side timer that runs while flow is paused. When it fires, the pump finishes the sale for the fuel delivered.</summary>
+    public const string IdleTimer = "idle";
+
+    /// <summary>Ask the bank for a hold. The site sets the amount by tender. The sale machine doesn't. Code is the PIN or ZIP the driver typed; the bank verifies it.</summary>
+    public sealed record RequestAuthorization(string SaleId, string CardName, Grade Grade, Tender Tender, string Code) : SaleCommand(SaleId);
     /// <summary>Ask the payment side for a token worth the cash taken.</summary>
     public sealed record RequestCashAuthorization(string SaleId, Money Amount) : SaleCommand(SaleId);
     public sealed record ArmPump(string SaleId, string Token, Grade? Grade) : SaleCommand(SaleId);
@@ -169,8 +186,10 @@ public abstract record SaleCommand(string SaleId)
     /// <summary>Settle the hold to Final. Lines itemize Final for the bank's record and the driver's receipt; their sum is Final.</summary>
     public sealed record SendCompletion(string SaleId, Money Final, IReadOnlyList<ChargeLine> Lines) : SaleCommand(SaleId);
     public sealed record Reverse(string SaleId) : SaleCommand(SaleId);
-    public sealed record ArmTimer(string SaleId, SaleState State, TimeSpan After) : SaleCommand(SaleId);
-    public sealed record CancelTimer(string SaleId) : SaleCommand(SaleId);
+    /// <summary>Start a timer. Arming the same tag again replaces it. The Timeout it raises carries State and Tag back.</summary>
+    public sealed record ArmTimer(string SaleId, SaleState State, TimeSpan After, string Tag = StateTimer) : SaleCommand(SaleId);
+    /// <summary>Stop one timer by tag, or every timer of the sale when Tag is null.</summary>
+    public sealed record CancelTimer(string SaleId, string? Tag = null) : SaleCommand(SaleId);
     public sealed record Log(string SaleId, string Message) : SaleCommand(SaleId);
 }
 

@@ -22,7 +22,7 @@ public class SimulationTests
         var card = TestCards.Get("Good");
         var before = h.Sim.Issuer.AvailableBalance(card.Pan);
 
-        h.Sim.PresentCard("Good");
+        h.Present("Good");
         h.AdvanceUntilState(SaleState.ReadyToPump, TimeSpan.FromSeconds(5));
         Assert.Equal(Money.FromDollars(30), h.State.Ceiling);
         Assert.Equal(before - Money.FromDollars(30), h.Sim.Issuer.AvailableBalance(card.Pan));
@@ -55,7 +55,7 @@ public class SimulationTests
     public void The_bank_receives_the_charges_itemized_and_the_receipt_reads_the_same_lines(string strategy)
     {
         using var h = new SimHarness(strategy, ThirtyDollarHold);
-        h.Sim.PresentCard("Good");
+        h.Present("Good");
         h.AdvanceUntilState(SaleState.ReadyToPump, TimeSpan.FromSeconds(5));
         Assert.Empty(h.State.Charges);   // nothing to itemize before fuel moves
 
@@ -104,7 +104,7 @@ public class SimulationTests
         h.Sim.Capabilities.Register(recorder);
         h.Sim.Capabilities.Register(bomb);
 
-        h.Sim.PresentCard("Good");
+        h.Present("Good");
         h.AdvanceUntilState(SaleState.ReadyToPump, TimeSpan.FromSeconds(5));
         h.Sim.StartFueling();
         h.AdvanceUntilState(SaleState.Fueling, TimeSpan.FromSeconds(1));
@@ -132,7 +132,7 @@ public class SimulationTests
     public void Driver_can_stop_and_start_the_trigger_and_hanging_ends_the_sale(string strategy)
     {
         using var h = new SimHarness(strategy, ThirtyDollarHold);
-        h.Sim.PresentCard("Good");
+        h.Present("Good");
         h.AdvanceUntilState(SaleState.ReadyToPump, TimeSpan.FromSeconds(5));
 
         // Nothing flows until grade, lift, seat, and trigger are all in.
@@ -172,7 +172,7 @@ public class SimulationTests
     public void Partial_approval_sets_a_lower_ceiling(string strategy)
     {
         using var h = new SimHarness(strategy);
-        h.Sim.PresentCard("LowBalance");
+        h.Present("LowBalance");
         h.AdvanceUntilState(SaleState.ReadyToPump, TimeSpan.FromSeconds(5));
         Assert.Equal(1850, h.State.Ceiling.Cents);
         Assert.Contains(h.Sim.Log.Snapshot(), l => l.Message.Contains("PartialApproval"));
@@ -195,7 +195,7 @@ public class SimulationTests
     public void Declined_cards_end_declined_with_the_reason(string strategy, string card, string reason)
     {
         using var h = new SimHarness(strategy);
-        h.Sim.PresentCard(card);
+        h.Present(card);
         h.AdvanceUntilState(SaleState.Declined, TimeSpan.FromSeconds(5));
         Assert.Contains(reason, h.State.LastMessage);
         Assert.Equal(DriverAction.UseAnotherCard, h.State.Notice.Action);
@@ -210,7 +210,7 @@ public class SimulationTests
     {
         using var h = new SimHarness(strategy);
         h.Sim.Network.Mode = NetworkMode.Timeout;
-        h.Sim.PresentCard("Good");
+        h.Present("Good");
         h.Advance(TimeSpan.FromSeconds(29));
         Assert.Equal(SaleState.Authorizing, h.State.State);
         Assert.Equal(DriverAction.Wait, h.State.Notice.Action);
@@ -228,7 +228,7 @@ public class SimulationTests
         var card = TestCards.Get("Good");
         var before = h.Sim.Issuer.AvailableBalance(card.Pan);
         h.Sim.Network.Mode = NetworkMode.Down;
-        h.Sim.PresentCard("Good");
+        h.Present("Good");
         h.AdvanceUntilState(SaleState.Declined, TimeSpan.FromSeconds(2));
         Assert.Equal(EndReason.BankDown, h.State.End);
         Assert.Equal(HoldStatus.None, h.State.Hold);
@@ -245,7 +245,7 @@ public class SimulationTests
         using var h = new SimHarness(strategy, ThirtyDollarHold);
         var card = TestCards.Get("Good");
         var before = h.Sim.Issuer.AvailableBalance(card.Pan);
-        h.Sim.PresentCard("Good");
+        h.Present("Good");
         h.AdvanceUntilState(SaleState.ReadyToPump, TimeSpan.FromSeconds(5));
         h.Sim.StartFueling();
         h.AdvanceUntilState(SaleState.Fueling, TimeSpan.FromSeconds(1));
@@ -285,7 +285,7 @@ public class SimulationTests
         var card = TestCards.Get("Good");
         var before = h.Sim.Issuer.AvailableBalance(card.Pan);
 
-        h.Sim.PresentCard("Good");
+        h.Present("Good");
         h.AdvanceUntilState(SaleState.ReadyToPump, TimeSpan.FromSeconds(5));
         h.Sim.StartFueling();
         h.AdvanceUntilState(SaleState.Fueling, TimeSpan.FromSeconds(1));
@@ -313,7 +313,7 @@ public class SimulationTests
         using var h = new SimHarness(strategy);
         var card = TestCards.Get("Good");
         var before = h.Sim.Issuer.AvailableBalance(card.Pan);
-        h.Sim.PresentCard("Good");
+        h.Present("Good");
         h.AdvanceUntilState(SaleState.ReadyToPump, TimeSpan.FromSeconds(5));
         // The driver gets as far as lifting the nozzle, then walks off.
         h.Sim.SelectGrade(Grade.Regular);
@@ -332,7 +332,7 @@ public class SimulationTests
     public void Finished_screen_clears_to_idle_after_thirty_seconds(string strategy)
     {
         using var h = new SimHarness(strategy);
-        h.Sim.PresentCard("Stolen");
+        h.Present("Stolen");
         h.AdvanceUntilState(SaleState.Declined, TimeSpan.FromSeconds(5));
         Assert.NotNull(h.State.DeadlineAt);
         h.Advance(TimeSpan.FromSeconds(29));
@@ -353,7 +353,7 @@ public class SimulationTests
         var before = h.Sim.Issuer.AvailableBalance(card.Pan);
 
         h.Sim.Network.Mode = NetworkMode.Timeout;
-        h.Sim.PresentCard("Good");
+        h.Present("Good");
         h.AdvanceUntilState(SaleState.Declined, TimeSpan.FromSeconds(35));
         // The reversal goes out and also times out. It must be queued, never dropped.
         h.AdvanceUntil(() => h.State.Hold == HoldStatus.ReleasePending, TimeSpan.FromSeconds(70));
@@ -379,7 +379,7 @@ public class SimulationTests
 
         // The bank hears us at 250 ms and holds $75. Its answer takes 45 s. We give up at 30 s.
         h.Sim.Network.Mode = NetworkMode.Late;
-        h.Sim.PresentCard("Good");
+        h.Present("Good");
         h.Advance(TimeSpan.FromSeconds(1));
         Assert.Equal(before - Money.FromDollars(75), h.Sim.Issuer.AvailableBalance(card.Pan));
         Assert.Single(h.Sim.Issuer.OpenHolds);
@@ -410,12 +410,12 @@ public class SimulationTests
         var before = h.Sim.Issuer.AvailableBalance(card.Pan);
 
         h.Sim.Network.Mode = NetworkMode.Late;
-        var first = h.Sim.PresentCard("Good");
+        var first = h.Present("Good");
         h.AdvanceUntilState(SaleState.Declined, TimeSpan.FromSeconds(35));
 
         // The driver tries again at once. The old sale's late approval must not leak a hold.
         h.Sim.Network.Mode = NetworkMode.Up;
-        var second = h.Sim.PresentCard("Good");
+        var second = h.Present("Good");
         Assert.NotEqual(first, second);
         // Under the threaded strategy the payment worker is still blocked on the first sale's late call, so the
         // second authorization waits behind it (head-of-line blocking). The channel strategy answers at once.
@@ -437,7 +437,7 @@ public class SimulationTests
         using var h = new SimHarness(strategy, ThirtyDollarHold);
         var card = TestCards.Get("Good");
         var before = h.Sim.Issuer.AvailableBalance(card.Pan);
-        h.Sim.PresentCard("Good");
+        h.Present("Good");
         h.AdvanceUntilState(SaleState.ReadyToPump, TimeSpan.FromSeconds(5));
         h.Sim.StartFueling();
         h.AdvanceUntilState(SaleState.Fueling, TimeSpan.FromSeconds(1));
@@ -468,7 +468,7 @@ public class SimulationTests
         var card = TestCards.Get("Good");
         var before = h.Sim.Issuer.AvailableBalance(card.Pan);
         h.Sim.Network.Latency = TimeSpan.FromSeconds(2);
-        h.Sim.PresentCard("Good");
+        h.Present("Good");
         h.Advance(TimeSpan.FromMilliseconds(300));
         Assert.Equal(SaleState.Authorizing, h.State.State);
         Assert.Equal(HoldStatus.Requested, h.State.Hold);
@@ -493,7 +493,7 @@ public class SimulationTests
     public void A_per_sale_fault_never_claims_the_pump_was_out_of_service(string strategy)
     {
         using var h = new SimHarness(strategy, ThirtyDollarHold);
-        h.Sim.PresentCard("Good");
+        h.Present("Good");
         h.AdvanceUntilState(SaleState.ReadyToPump, TimeSpan.FromSeconds(5));
         h.Sim.StartFueling();
         h.AdvanceUntilState(SaleState.Fueling, TimeSpan.FromSeconds(1));
@@ -519,12 +519,12 @@ public class SimulationTests
         var goodBefore = h.Sim.Issuer.AvailableBalance(good.Pan);
         var debitBefore = h.Sim.Issuer.AvailableBalance(debit.Pan);
 
-        var first = h.Sim.PresentCard("Good", source: CardSource.PumpTap);
+        var first = h.Present("Good", source: CardSource.PumpTap);
         h.AdvanceUntilState(SaleState.ReadyToPump, TimeSpan.FromSeconds(5));
         Assert.Equal([first], h.Sim.Issuer.OpenHolds);
 
         // Driver one drives off. Driver two taps a debit card at the same reader.
-        var (ok, second, _) = h.Sim.TryPresentCard("DebitGoodPin", tender: Tender.Debit, source: CardSource.PumpTap);
+        var (ok, second, _) = h.TryPresent("DebitGoodPin", tender: Tender.Debit, source: CardSource.PumpTap);
         Assert.True(ok);
         Assert.NotEqual(first, second);
         h.AdvanceUntilState(SaleState.ReadyToPump, TimeSpan.FromSeconds(5));
@@ -551,7 +551,7 @@ public class SimulationTests
         var before = h.Sim.Issuer.AvailableBalance(card.Pan);
 
         // Approved, nozzle in hand, operator presses New sale: the hold goes back.
-        var first = h.Sim.PresentCard("Good");
+        var first = h.Present("Good");
         h.AdvanceUntilState(SaleState.ReadyToPump, TimeSpan.FromSeconds(5));
         h.Sim.LiftNozzle();
         h.Advance(TimeSpan.FromMilliseconds(300));
@@ -564,7 +564,7 @@ public class SimulationTests
         Assert.Contains(h.Sim.Ledger.Snapshot(), e => e.Kind == "sale.superseded" && e.Detail.StartsWith(first) && e.Detail.Contains("reset"));
 
         // Fueling, operator presses New sale: the valve closes and the driver pays for what moved, no more.
-        var second = h.Sim.PresentCard("Good");
+        var second = h.Present("Good");
         h.AdvanceUntilState(SaleState.ReadyToPump, TimeSpan.FromSeconds(5));
         h.Sim.StartFueling();
         h.AdvanceUntilState(SaleState.Fueling, TimeSpan.FromSeconds(1));
@@ -584,12 +584,12 @@ public class SimulationTests
     public void Second_card_while_the_nozzle_is_in_hand_is_refused_and_the_first_sale_keeps_going(string strategy)
     {
         using var h = new SimHarness(strategy);
-        var first = h.Sim.PresentCard("Good");
+        var first = h.Present("Good");
         h.AdvanceUntilState(SaleState.ReadyToPump, TimeSpan.FromSeconds(5));
         h.Sim.LiftNozzle();
         h.Advance(TimeSpan.FromMilliseconds(300));
 
-        var (ok, id, reason) = h.Sim.TryPresentCard("DebitGoodPin", tender: Tender.Debit);
+        var (ok, id, reason) = h.TryPresent("DebitGoodPin", tender: Tender.Debit);
         Assert.False(ok);
         Assert.Equal(first, id);
         Assert.Contains("pump in use", reason);
@@ -603,7 +603,7 @@ public class SimulationTests
         h.Sim.SeatNozzle();
         h.Sim.SqueezeTrigger();
         h.AdvanceUntilState(SaleState.Fueling, TimeSpan.FromSeconds(1));
-        Assert.False(h.Sim.TryPresentCard("Good", source: CardSource.Station).Ok);
+        Assert.False(h.TryPresent("Good", source: CardSource.Station).Ok);
         Assert.Equal(first, h.Sim.PayCash(Money.FromDollars(10)));
         Assert.Equal(SaleState.Fueling, h.State.State);
     }
@@ -613,7 +613,7 @@ public class SimulationTests
     public void A_sale_set_at_the_station_waits_longer_for_the_lift_than_one_set_at_the_pump(string strategy)
     {
         using var h = new SimHarness(strategy);
-        h.Sim.PresentCard("Good", source: CardSource.PumpInsert);
+        h.Present("Good", source: CardSource.PumpInsert);
         h.AdvanceUntilState(SaleState.ReadyToPump, TimeSpan.FromSeconds(5));
         Assert.Equal(CardSource.PumpInsert, h.State.Source);
         Assert.Equal(h.Clock.GetUtcNow() + TimeSpan.FromSeconds(120), h.State.DeadlineAt);
@@ -622,7 +622,7 @@ public class SimulationTests
         Assert.Equal(EndReason.NoNozzleLift, h.State.End);
 
         h.Sim.ResetSale();
-        h.Sim.PresentCard("Good", source: CardSource.Station);
+        h.Present("Good", source: CardSource.Station);
         h.AdvanceUntilState(SaleState.ReadyToPump, TimeSpan.FromSeconds(5));
         Assert.Equal(CardSource.Station, h.State.Source);
         Assert.Equal(h.Clock.GetUtcNow() + TimeSpan.FromSeconds(300), h.State.DeadlineAt);
@@ -649,7 +649,7 @@ public class SimulationTests
         using var h = new SimHarness(strategy);
         var card = TestCards.Get("DebitGoodPin");
         var before = h.Sim.Issuer.AvailableBalance(card.Pan);
-        h.Sim.PresentCard("DebitGoodPin", tender: Tender.Debit);
+        h.Present("DebitGoodPin", tender: Tender.Debit);
         h.AdvanceUntilState(SaleState.ReadyToPump, TimeSpan.FromSeconds(5));
         Assert.Equal(Money.FromDollars(50), h.State.Ceiling);          // site debit ceiling, balance was $900
         Assert.Equal(before - Money.FromDollars(50), h.Sim.Issuer.AvailableBalance(card.Pan));
@@ -697,7 +697,7 @@ public class SimulationTests
         Assert.Contains(h.Sim.Ledger.Snapshot(), e => e.Kind == "admin.limits" && e.Detail.Contains("$5000.00"));
 
         // DebitGoodPin has $900, so the bank approves $900 of the $5000 ask. The pump clamps that to $500.
-        h.Sim.PresentCard("DebitGoodPin", tender: Tender.Debit);
+        h.Present("DebitGoodPin", tender: Tender.Debit);
         h.AdvanceUntilState(SaleState.ReadyToPump, TimeSpan.FromSeconds(5));
         h.Advance(TimeSpan.FromMilliseconds(300));
         Assert.Equal(Money.FromDollars(500), h.State.Ceiling);
@@ -727,7 +727,7 @@ public class SimulationTests
         using var h = new SimHarness(strategy, ThirtyDollarHold);
         var card = TestCards.Get("Good");
         var before = h.Sim.Issuer.AvailableBalance(card.Pan);
-        h.Sim.PresentCard("Good");
+        h.Present("Good");
         h.AdvanceUntilState(SaleState.ReadyToPump, TimeSpan.FromSeconds(5));
         h.Sim.StartFueling();
         h.AdvanceUntilState(SaleState.Fueling, TimeSpan.FromSeconds(1));
@@ -756,7 +756,7 @@ public class SimulationTests
     public void Drive_off_closes_the_sale_calls_the_attendant_and_blocks_the_next_sale_until_reset(string strategy)
     {
         using var h = new SimHarness(strategy, ThirtyDollarHold);
-        h.Sim.PresentCard("Good");
+        h.Present("Good");
         h.AdvanceUntilState(SaleState.ReadyToPump, TimeSpan.FromSeconds(5));
         h.Sim.StartFueling();
         h.AdvanceUntilState(SaleState.Fueling, TimeSpan.FromSeconds(1));
@@ -770,13 +770,13 @@ public class SimulationTests
         Assert.Equal(HoldStatus.Settled, h.State.Hold);
 
         // The next driver's card is refused before any money moves.
-        var (ok, _, reason) = h.Sim.TryPresentCard("Good");
+        var (ok, _, reason) = h.TryPresent("Good");
         Assert.False(ok);
         Assert.Contains("PUMP.HOSE.BREAKAWAY", reason);
 
         h.Sim.ResetBreakaway();
         h.Advance(TimeSpan.FromMilliseconds(300));
-        h.Sim.PresentCard("Good");
+        h.Present("Good");
         h.AdvanceUntilState(SaleState.ReadyToPump, TimeSpan.FromSeconds(5));
         Assert.Contains(h.Sim.Ledger.Snapshot(), e => e.Kind == "hose.breakaway.reset");
     }
@@ -786,7 +786,7 @@ public class SimulationTests
     public void Dead_pulser_mid_fuel_faults_fast_and_bills_only_what_was_counted(string strategy)
     {
         using var h = new SimHarness(strategy, ThirtyDollarHold);
-        h.Sim.PresentCard("Good");
+        h.Present("Good");
         h.AdvanceUntilState(SaleState.ReadyToPump, TimeSpan.FromSeconds(5));
         h.Sim.StartFueling();
         h.AdvanceUntilState(SaleState.Fueling, TimeSpan.FromSeconds(1));
@@ -806,7 +806,7 @@ public class SimulationTests
     /// <summary>Card, approval, grade, lift, seat, squeeze, and a few seconds of fuel.</summary>
     private static void FuelForAWhile(SimHarness h, double seconds = 2)
     {
-        h.Sim.PresentCard("Good");
+        h.Present("Good");
         h.AdvanceUntilState(SaleState.ReadyToPump, TimeSpan.FromSeconds(5));
         h.Sim.StartFueling();
         h.AdvanceUntilState(SaleState.Fueling, TimeSpan.FromSeconds(1));
@@ -872,7 +872,7 @@ public class SimulationTests
         Assert.Equal("Out of service: submersible pump and supply line", h.State.Notice.Headline);
         Assert.Equal(DriverAction.UseAnotherPump, h.State.Notice.Action);
 
-        var (ok, idle, reason) = h.Sim.TryPresentCard("Good");
+        var (ok, idle, reason) = h.TryPresent("Good");
         Assert.False(ok);
         Assert.Contains("PUMP.STP.NOFLOW", reason);
         Assert.Equal(idle, h.Sim.PayCash(Money.FromDollars(10)));   // the cashier is refused as well; no new sale opened
@@ -883,7 +883,7 @@ public class SimulationTests
         h.Sim.TankRefilled();
         h.Advance(TimeSpan.FromMilliseconds(300));
         Assert.DoesNotContain("Out of service", h.State.Notice.Headline);
-        Assert.True(h.Sim.TryPresentCard("Good").Ok);
+        Assert.True(h.TryPresent("Good").Ok);
         h.AdvanceUntilState(SaleState.ReadyToPump, TimeSpan.FromSeconds(5));
     }
 
@@ -895,13 +895,13 @@ public class SimulationTests
         h.Sim.KillPulser();
         h.Advance(TimeSpan.FromMilliseconds(300));
         Assert.Equal("Out of service: meter pulser", h.State.Notice.Headline);
-        var (ok, _, reason) = h.Sim.TryPresentCard("Good");
+        var (ok, _, reason) = h.TryPresent("Good");
         Assert.False(ok);
         Assert.Contains("PUMP.MTR.NOPULSE", reason);
 
         h.Sim.FixPulser();
         h.Advance(TimeSpan.FromMilliseconds(300));
-        Assert.True(h.Sim.TryPresentCard("Good").Ok);
+        Assert.True(h.TryPresent("Good").Ok);
         h.AdvanceUntilState(SaleState.ReadyToPump, TimeSpan.FromSeconds(5));
     }
 
@@ -912,7 +912,7 @@ public class SimulationTests
         using var h = new SimHarness(strategy, ThirtyDollarHold);
         var card = TestCards.Get("Good");
         var before = h.Sim.Issuer.AvailableBalance(card.Pan);
-        h.Sim.PresentCard("Good");
+        h.Present("Good");
         h.AdvanceUntilState(SaleState.ReadyToPump, TimeSpan.FromSeconds(5));
         h.Advance(TimeSpan.FromMilliseconds(300));
 
@@ -948,14 +948,14 @@ public class SimulationTests
         Assert.Equal(SaleState.Idle, h.State.State);     // the breakaway that faulted this sale is fixed
         Assert.Equal("Out of service: submersible pump and supply line", h.State.Notice.Headline);
         Assert.Equal(PumpPhase.Faulted, h.Sim.Pump.Phase);
-        var (ok, _, reason) = h.Sim.TryPresentCard("Good");
+        var (ok, _, reason) = h.TryPresent("Good");
         Assert.False(ok);
         Assert.Contains("PUMP.STP.NOFLOW", reason);
 
         h.Sim.TankRefilled();
         h.Advance(TimeSpan.FromMilliseconds(300));
         Assert.Equal(PumpPhase.Disarmed, h.Sim.Pump.Phase);
-        Assert.True(h.Sim.TryPresentCard("Good").Ok);
+        Assert.True(h.TryPresent("Good").Ok);
         h.AdvanceUntilState(SaleState.ReadyToPump, TimeSpan.FromSeconds(5));
     }
 
@@ -971,7 +971,7 @@ public class SimulationTests
         Assert.True(h.Sim.View.Service.InService);
 
         // Nothing to repair, so nothing holds the pump: the next card replaces the finished sale and arms.
-        Assert.True(h.Sim.TryPresentCard("Good").Ok);
+        Assert.True(h.TryPresent("Good").Ok);
         h.AdvanceUntilState(SaleState.ReadyToPump, TimeSpan.FromSeconds(5));
         h.Advance(TimeSpan.FromMilliseconds(300));
         Assert.Equal(PumpPhase.Armed, h.Sim.Pump.Phase);
@@ -1005,7 +1005,7 @@ public class SimulationTests
     public void Tampered_token_is_refused_and_the_sale_fails_closed(string strategy)
     {
         using var h = new SimHarness(strategy);
-        h.Sim.PresentCard("Good");
+        h.Present("Good");
         h.AdvanceUntilState(SaleState.ReadyToPump, TimeSpan.FromSeconds(5));
         h.Sim.AttackTamperCeiling(Money.FromDollars(2000));
         h.Advance(TimeSpan.FromMilliseconds(300));
@@ -1020,7 +1020,7 @@ public class SimulationTests
     public void Replayed_token_is_refused(string strategy)
     {
         using var h = new SimHarness(strategy);
-        h.Sim.PresentCard("Good");
+        h.Present("Good");
         h.AdvanceUntilState(SaleState.ReadyToPump, TimeSpan.FromSeconds(5));
         h.Advance(TimeSpan.FromMilliseconds(300));
         h.Sim.AttackReplayLastToken();
@@ -1048,7 +1048,7 @@ public class SimulationTests
         using var h = new SimHarness(strategy, ThirtyDollarHold);
         var card = TestCards.Get("Good");
         var before = h.Sim.Issuer.AvailableBalance(card.Pan);
-        h.Sim.PresentCard("Good");
+        h.Present("Good");
         h.AdvanceUntilState(SaleState.ReadyToPump, TimeSpan.FromSeconds(5));
         h.Sim.StartFueling();
         h.AdvanceUntilState(SaleState.Fueling, TimeSpan.FromSeconds(1));

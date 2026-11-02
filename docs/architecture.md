@@ -48,7 +48,10 @@ The two trust boundaries from the research note sit here:
 ```mermaid
 stateDiagram-v2
     [*] --> Idle
-    Idle --> Authorizing : CardPresented<br/>→ RequestAuthorization, 30 s timer
+    Idle --> CardRead : CardPresented<br/>→ 30 s keypad timer, nothing to the bank yet
+    CardRead --> Authorizing : CodeEntered (PIN or ZIP)<br/>→ RequestAuthorization, 30 s timer
+    CardRead --> Cancelled : Timeout<br/>(nothing to reverse)
+    Idle --> Authorizing : CashPaid<br/>→ RequestCashAuthorization
     Authorizing --> ReadyToPump : Approved<br/>→ ArmPump, 120 s timer
     Authorizing --> Declined : Declined
     Authorizing --> Declined : Timeout<br/>→ Reverse (bank may have heard us)
@@ -56,8 +59,8 @@ stateDiagram-v2
     ReadyToPump --> Fueling : FlowStarted<br/>(first trigger squeeze), 10 min timer
     ReadyToPump --> Cancelled : Timeout<br/>→ Reverse
     ReadyToPump --> Faulted : PumpRefused<br/>→ Reverse
-    Fueling --> Fueling : FlowPaused / FlowResumed<br/>(trigger released, squeezed again)
-    Fueling --> Completing : CeilingReached / NozzleHung<br/>→ CloseValve, SendCompletion, 30 s timer
+    Fueling --> Fueling : FlowPaused / FlowResumed<br/>(trigger released arms a 60 s idle timer, squeezing again cancels it)
+    Fueling --> Completing : CeilingReached / NozzleHung / idle timer<br/>→ CloseValve, SendCompletion, 30 s timer
     Fueling --> Cancelled : NozzleHung with zero volume<br/>→ Reverse
     Fueling --> Faulted : Fault<br/>→ CloseValve, SendCompletion for fuel poured
     Completing --> Idle : CompletionSent
@@ -70,6 +73,14 @@ stateDiagram-v2
 
 `SaleStateMachine.Apply` takes one event and returns a list of commands. It never does I/O. The simulation executes the commands by posting messages. That split is what makes the machine testable with a list and swappable under any dispatch strategy.
 
+### The keypad
+
+A card alone asks the bank for nothing. A debit card wants its four-digit PIN and a credit card wants the five-digit billing ZIP code, and the sale sits in `CardRead` until the digits arrive or 30 s pass. The machine checks only the shape (four or five digits) and refuses anything else without leaving the state. The digits ride on `RequestAuthorization` and then on the card data to the bank, which does the real check: the issuer compares the PIN with the one on file and the ZIP with the billing ZIP on file, and declines with `InvalidPin` or `ZipMismatch`. No log line, ledger entry, or journal record ever carries the digits. The test bank has ZIP 12345 on every credit account and PIN 1234 on the `DebitGoodPin` account. A walk-away at the keypad cancels with nothing to reverse, because nothing reached the bank.
+
+### The idle minute
+
+Letting go of the trigger, or pulling the nozzle out of the tank, pauses the flow and arms a second timer beside the ten-minute max-fueling timer: 60 s, tagged `idle`. Timers are tagged so the two can run side by side (`ArmTimer.Tag`, `Timeout.Tag`), and a `CancelTimer` with no tag drops every timer of the sale, which is what every state change does. A squeeze inside the minute cancels the idle timer and nothing else changes. Silence past the minute closes the valve and finishes the sale for the fuel delivered, with `EndReason.NoFlow` in the ledger, so a nozzle forgotten in a tank never holds the pump open. The screen counts down to whichever timer is closer. The tests in `PausedFlowTests` walk a phone call (pause 20 s, resume, hang) and a forgotten nozzle under all three dispatch strategies.
+
 ### The nozzle, as the driver uses it
 
 Fuel flows only when four things are true at once, and the pump controller owns all four: the pump is armed from a verified token, a grade is selected, the nozzle is off the harness and seated in a fill point (tank or can), and the trigger is held.
@@ -77,7 +88,7 @@ Fuel flows only when four things are true at once, and the pump controller owns 
 1. **Lift** takes the nozzle off the harness. Nothing opens.
 2. **Seat** is the fill-point sensor. Nothing opens.
 3. **Squeeze** opens the valve if every interlock passes. The first squeeze is the first pour, and `Fueling` begins here, never at the lift.
-4. **Release** shuts the valve. The sale stays open. Squeeze again as often as you like. The grade is locked after the first drop.
+4. **Release** shuts the valve. The sale stays open for a minute. Squeeze again as often as you like inside it; a minute of silence finishes the sale for the fuel delivered. The grade is locked after the first drop.
 5. **Hang** after any pour ends the delivery. Hang before any pour changes nothing; the 120 s timer will cancel the sale if the driver has walked off.
 
 ### The sale as a saga
@@ -296,7 +307,7 @@ One JSON object per line. `PumpMessage` and `SaleEvent` carry a type discriminat
 | Belief | Where it shows |
 |---|---|
 | The pump pumps under its authorized limits | The hard limits, the authority, and the nonce store live in the dispenser process. A station that signs for 600 gallons gets clamped by a process it cannot reach into. |
-| Custody is stored on the dispenser and sent to the station | The dispenser writes `dispenser-custody-<run>.ndjson` and streams each line as it lands. The station appends the same bytes to `station-copy-<run>.ndjson` and verifies the copy with the same key. |
+| Custody is stored on the dispenser and sent to the station | The dispenser writes `dispenser-custody-<run>.ndjson` and streams each line as it lands. The station appends the same bytes to `station-copy-<run>.ndjson` through `CustodyCopy`, which keeps the last sequence number it wrote and drops any line at or below it. A station restart, a re-bind, and a socket reconnect each replay the whole chain, and the copy grows by the lines it was missing. It then verifies the copy with the same key. |
 | The station owns session open and close | `sale.open` and `sale.close` are station ledger entries. The journal is the station's. Recovery is the station's. The dispenser never knows what a sale is; it knows a token, a valve, and a counter. |
 
 Each side is safe alone. Dispenser gone: the station faults the sale with `LINK.DISPENSER.LOST`, settles for the fuel it recorded, and refuses to pretend the pump is there. Station gone with the valve open: the dispenser keeps pouring under its own ceiling and time limit, and the first frame the new station sends is `Stop`. E-stop: the station writes its record and snapshot, sends `power off`, and the dispenser process closes its chain and exits; the cashier's reset starts it again before the new station connects.

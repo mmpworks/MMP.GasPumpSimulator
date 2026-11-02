@@ -73,8 +73,10 @@ public sealed class Simulation : IDisposable
     private readonly List<LedgerEntry> _dispenserLedger = [];
     private string? _dispenserLedgerRun;
     private SaleStateMachine _sale;
-    private IDisposable? _saleTimer;
-    private DateTimeOffset? _saleDeadline;
+    /// <summary>The sale's armed timers by tag: the state's own timer, and side timers such as the idle timer while flow is paused.</summary>
+    private readonly Dictionary<string, (IDisposable Timer, DateTimeOffset Deadline)> _saleTimers = new();
+    /// <summary>Set by a hacked-EPS attack: the next authorization request is answered with this forged token instead of a bank call.</summary>
+    private (Money Money, Volume Volume)? _forgeNextApproval;
     private int _saleCounter;
     private int _inflightPayments;
 
@@ -374,7 +376,7 @@ public sealed class Simulation : IDisposable
     {
         SaleSnapshot s;
         int counter;
-        lock (_gate) { s = _sale.Snapshot(_saleDeadline); counter = _saleCounter; }
+        lock (_gate) { s = _sale.Snapshot(NextDeadline()); counter = _saleCounter; }
         var view = View;
         return new JournalSnapshot(
             JournalSnapshot.CurrentVersion, _clock.GetUtcNow(), RunId, _options.PumpId, counter,
@@ -430,7 +432,7 @@ public sealed class Simulation : IDisposable
 
     public event Action<SaleSnapshot>? SaleChanged;
 
-    public SaleSnapshot Snapshot() { lock (_gate) return _sale.Snapshot(_saleDeadline); }
+    public SaleSnapshot Snapshot() { lock (_gate) return _sale.Snapshot(NextDeadline()); }
     public string CurrentSaleId { get { lock (_gate) return _sale.SaleId; } }
     public string? LastToken { get { lock (_gate) return _sale.Token; } }
 
@@ -478,6 +480,13 @@ public sealed class Simulation : IDisposable
         _saleBox.Post(new SaleEvent.CardPresented(id, cardName, grade, tender, source));
         return (true, id, "");
     }
+
+    /// <summary>
+    /// The keypad. A debit card wants its PIN, a credit card wants the billing
+    /// ZIP code. The digits go to the sale worker and from there to the bank
+    /// on the authorization request. They are never logged.
+    /// </summary>
+    public void EnterCode(string code) => _saleBox.Post(new SaleEvent.CodeEntered(CurrentSaleId, code));
 
     /// <summary>The driver paid the cashier. The amount is the ceiling, to the cent. No bank is called.</summary>
     public string PayCash(Money amount, Grade? grade = null)
@@ -536,7 +545,7 @@ public sealed class Simulation : IDisposable
         string oldId;
         lock (_gate)
         {
-            if (_sale.State is not (SaleState.Authorizing or SaleState.ReadyToPump)) return false;
+            if (_sale.State is not (SaleState.CardRead or SaleState.Authorizing or SaleState.ReadyToPump)) return false;
             oldId = _sale.SaleId;
             wasIn = _sale.State;
             commands = _sale.Apply(new SaleEvent.Cancel(oldId, why));
@@ -593,12 +602,24 @@ public sealed class Simulation : IDisposable
         Publish();
     }
 
-    /// <summary>Under _gate. Starts a fresh sale and drops the old sale's timer so it can't fire into the new one.</summary>
+    /// <summary>Under _gate. The soonest armed deadline, which is what the screen counts down to. Null when no timer is armed.</summary>
+    private DateTimeOffset? NextDeadline() => _saleTimers.Count == 0 ? null : _saleTimers.Values.Min(t => t.Deadline);
+
+    /// <summary>Under _gate. Stops one timer by tag, or all of them.</summary>
+    private void DropTimers(string? tag)
+    {
+        if (tag is null)
+        {
+            foreach (var t in _saleTimers.Values) t.Timer.Dispose();
+            _saleTimers.Clear();
+        }
+        else if (_saleTimers.Remove(tag, out var one)) one.Timer.Dispose();
+    }
+
+    /// <summary>Under _gate. Starts a fresh sale and drops the old sale's timers so none can fire into the new one.</summary>
     private void ReplaceSale()
     {
-        _saleTimer?.Dispose();
-        _saleTimer = null;
-        _saleDeadline = null;
+        DropTimers(null);
         _sale = NewSale();
     }
 
@@ -629,11 +650,10 @@ public sealed class Simulation : IDisposable
     public string AttackSignedOverLimit(Volume volume, Money money)
     {
         string id;
-        lock (_gate) { ReplaceSale(); id = _sale.SaleId; }
-        var token = Signer.Issue(id, _options.PumpId, money, volume, _clock.GetUtcNow(), TimeSpan.FromMinutes(5)).Serialize();
-        // Skip the issuer entirely: push Approved straight into the sale, as a hacked EPS would.
+        lock (_gate) { ReplaceSale(); id = _sale.SaleId; _forgeNextApproval = (money, volume); }
+        // The driver's side looks normal: card in, ZIP typed. The hacked EPS then answers the request itself and skips the bank.
         _saleBox.Post(new SaleEvent.CardPresented(id, "Good", Grade.Regular));
-        _saleBox.Post(new SaleEvent.Approved(id, money, token));
+        _saleBox.Post(new SaleEvent.CodeEntered(id, TestCards.Zip));
         return id;
     }
 
@@ -753,7 +773,7 @@ public sealed class Simulation : IDisposable
     /// </summary>
     private void RecordSaleBoundary(SaleEvent e, SaleState before, SaleState after, SaleSnapshot s)
     {
-        if (before == SaleState.Idle && after == SaleState.Authorizing)
+        if (before == SaleState.Idle && after is SaleState.CardRead or SaleState.Authorizing)
             Ledger.Append("sale.open", $"{s.SaleId} {s.Tender} {(s.Tender == Tender.Cash ? s.CashPrepaid.ToString() : s.CardName)} grade {(s.GradeSelected ? s.Grade.ToString() : "unselected")}");
         else if (before != after && (after == SaleState.Idle || SaleStateMachine.IsTerminal(after)) && before != SaleState.Idle)
             Ledger.Append("sale.close", $"{s.SaleId} {after} {s.End} {s.Volume} {s.Money} hold {s.Hold}{(s.Tender == Tender.Cash ? $" change {s.ChangeDue}" : "")}");
@@ -793,8 +813,18 @@ public sealed class Simulation : IDisposable
         switch (c)
         {
             case SaleCommand.RequestAuthorization ra:
+                (Money, Volume)? forge;
+                lock (_gate) { forge = _forgeNextApproval; _forgeNextApproval = null; }
+                if (forge is { } f)
+                {
+                    // A compromised EPS answers the pump itself. The bank is never called; the token is signed with the real key.
+                    var token = Signer.Issue(ra.SaleId, _options.PumpId, f.Item1, f.Item2, _clock.GetUtcNow(), TimeSpan.FromMinutes(5)).Serialize();
+                    Log.Warn("attack", "forged approval for {Money} and {Volume} pushed to the sale, bank skipped", ("Money", f.Item1), ("Volume", f.Item2));
+                    _saleBox.Post(new SaleEvent.Approved(ra.SaleId, f.Item1, token));
+                    break;
+                }
                 var card = TestCards.ByName.TryGetValue(ra.CardName, out var known) ? known : new CardData("0000000000000000", 1, 2000, CardKind.Credit);
-                _paymentBox.Post(new PaymentMessage.PreAuthorize(ra.SaleId, card, ra.Tender));
+                _paymentBox.Post(new PaymentMessage.PreAuthorize(ra.SaleId, card, ra.Tender, ra.Code));
                 break;
             case SaleCommand.RequestCashAuthorization rc:
                 _paymentBox.Post(new PaymentMessage.CashAuthorize(rc.SaleId, rc.Amount));
@@ -818,13 +848,13 @@ public sealed class Simulation : IDisposable
             case SaleCommand.ArmTimer at:
                 lock (_gate)
                 {
-                    _saleTimer?.Dispose();
-                    _saleTimer = _dispatch.StartTimer("sale-timeout", at.After, _saleBox, () => new SaleEvent.Timeout(at.SaleId, at.State));
-                    _saleDeadline = _clock.GetUtcNow() + at.After;
+                    DropTimers(at.Tag);
+                    var timer = _dispatch.StartTimer($"sale-timeout-{at.Tag}", at.After, _saleBox, () => new SaleEvent.Timeout(at.SaleId, at.State, at.Tag));
+                    _saleTimers[at.Tag] = (timer, _clock.GetUtcNow() + at.After);
                 }
                 break;
-            case SaleCommand.CancelTimer:
-                lock (_gate) { _saleTimer?.Dispose(); _saleTimer = null; _saleDeadline = null; }
+            case SaleCommand.CancelTimer ct:
+                lock (_gate) DropTimers(ct.Tag);
                 break;
             case SaleCommand.Log lg:
                 Log.Write("sale", lg.Message);
@@ -858,7 +888,7 @@ public sealed class Simulation : IDisposable
             {
                 case PaymentMessage.PreAuthorize pa:
                     Log.Write("payment", "pre-auth {Tender} {Hold} on {Last4}", ("Tender", pa.Tender), ("Hold", Site.HoldFor(pa.Tender)), ("Last4", pa.Card.Last4));
-                    var result = await Gateway.PreAuthorizeAsync(pa.SaleId, pa.Card, pa.Tender, _cts.Token);
+                    var result = await Gateway.PreAuthorizeAsync(pa.SaleId, pa.Card, pa.Tender, pa.Code, _cts.Token);
                     if (result.Approved) { Log.Write("payment", "{ReasonCode} ceiling {Ceiling}", ("ReasonCode", result.ReasonCode), ("Ceiling", result.Ceiling)); _saleBox.Post(new SaleEvent.Approved(pa.SaleId, result.Ceiling, result.Token!)); }
                     else if (result.NetworkFailure)
                     {
@@ -922,7 +952,7 @@ public sealed class Simulation : IDisposable
     private void Publish()
     {
         SaleSnapshot snap;
-        lock (_gate) snap = _sale.Snapshot(_saleDeadline);
+        lock (_gate) snap = _sale.Snapshot(NextDeadline());
         SaleChanged?.Invoke(snap);
         SaveJournal();
     }
@@ -946,7 +976,7 @@ public sealed class Simulation : IDisposable
         _journalTimer?.Dispose();
         _journalTimer = null;
         _cts.Cancel();
-        lock (_gate) _saleTimer?.Dispose();
+        lock (_gate) DropTimers(null);
         // The strategy owns the workers, mailboxes, and tickers. One Dispose, in reverse creation order.
         _dispatch.Dispose();
         _link.Dispose();

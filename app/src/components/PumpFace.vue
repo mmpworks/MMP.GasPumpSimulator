@@ -19,13 +19,15 @@ const noticeType = computed<'success' | 'warning' | 'error' | 'info'>(() => {
   return 'info'
 })
 const actionText: Record<string, string> = {
-  None: '', Wait: 'Please wait', LiftNozzle: 'Lift the nozzle', HangToStop: 'Hang up to finish', Leave: 'You may go',
+  None: '', Wait: 'Please wait', EnterPin: 'Enter your PIN', EnterZip: 'Enter your ZIP code', LiftNozzle: 'Lift the nozzle', HangToStop: 'Hang up to finish', Leave: 'You may go',
   TryAgain: 'Try again or use another pump', UseAnotherCard: 'Use another card', UseAnotherPump: 'Use another pump', SeeAttendant: 'See the attendant',
 }
 const countdownLabel = computed(() => {
   const s = sale.value?.state
+  if (s === 'CardRead') return 'cancels in'
   if (s === 'Authorizing') return 'gives up in'
   if (s === 'ReadyToPump') return 'cancels in'
+  if (s === 'Fueling' && sale.value?.phase === 'paused') return 'finishes in'
   if (s === 'Fueling') return 'time limit in'
   if (s === 'Completing') return 'queues in'
   return 'screen clears in'

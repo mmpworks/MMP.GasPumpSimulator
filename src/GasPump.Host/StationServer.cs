@@ -11,10 +11,12 @@ namespace GasPump.Host;
 /// dispenser's chain and its own copy disagree. In-process the lines come off
 /// a tail of the shared file; over the socket they come off the wire, which
 /// is what a real station server receives. /ws/custody hands them on.
+/// The copy itself drops any line it already holds, so a replay after a
+/// restart or a reconnect never doubles the file.
 /// </summary>
 public sealed class StationServer : IDisposable
 {
-    private readonly string _directory;
+    private readonly CustodyCopy _copy;
     private readonly byte[] _ikm;
     private readonly Lock _gate = new();
     private readonly List<Action<string>> _subscribers = [];
@@ -22,14 +24,16 @@ public sealed class StationServer : IDisposable
 
     public StationServer(string directory, byte[] ikm)
     {
-        _directory = directory;
+        _copy = new CustodyCopy(directory);
         _ikm = ikm;
     }
 
-    public string? CopyPath { get; private set; }
-    public long LinesReceived { get; private set; }
+    public string? CopyPath => _copy.Path;
+    public long LinesReceived => _copy.Lines;
+    /// <summary>Replayed lines the copy already held and dropped.</summary>
+    public long Duplicates => _copy.Duplicates;
     /// <summary>The dispenser run the current copy belongs to.</summary>
-    public string? RunId { get; private set; }
+    public string? RunId => _copy.RunId;
 
     /// <summary>Follow this station's dispenser. Called on every station swap; a dispenser restart shows up as a new run id on the lines.</summary>
     public void Bind(Simulation sim)
@@ -43,25 +47,11 @@ public sealed class StationServer : IDisposable
 
     private void OnLine(string runId, string line)
     {
-        lock (_gate)
-        {
-            if (runId != RunId)
-            {
-                RunId = runId;
-                CopyPath = Path.Combine(_directory, $"station-copy-{runId}.ndjson");
-                LinesReceived = File.Exists(CopyPath) ? File.ReadLines(CopyPath).Count() : 0;
-                // A replay of lines the copy already holds is skipped by count; the chain is append-only, so the prefix matches.
-            }
-            if (LinesReceived > 0 && _replaySkip > 0) { _replaySkip--; return; }
-            File.AppendAllText(CopyPath!, line + "\n");
-            LinesReceived++;
-        }
+        if (!_copy.Append(runId, line)) return;
         Action<string>[] subs;
         lock (_gate) subs = _subscribers.ToArray();
         foreach (var s in subs) s(line);
     }
-
-    private long _replaySkip;
 
     /// <summary>Outside listeners: the WebSocket topic hands each line on.</summary>
     public IDisposable Subscribe(Action<string> onLine)
@@ -73,12 +63,10 @@ public sealed class StationServer : IDisposable
     /// <summary>Run TesseraSeal's verifier over the station's copy. The copy is closed between appends, so it reads directly.</summary>
     public (bool Ok, long? FailureAtSeq, string? Reason, int Lines) VerifyCopy()
     {
-        lock (_gate)
-        {
-            if (CopyPath is null || !File.Exists(CopyPath)) return (false, null, "no station copy yet", 0);
-            var ok = ImmutableAuditFileSink.VerifyChain(CopyPath, _ikm, out var seq, out var reason);
-            return (ok, seq, reason, File.ReadLines(CopyPath).Count());
-        }
+        var path = _copy.Path;
+        if (path is null || !File.Exists(path)) return (false, null, "no station copy yet", 0);
+        var ok = ImmutableAuditFileSink.VerifyChain(path, _ikm, out var seq, out var reason);
+        return (ok, seq, reason, File.ReadLines(path).Count());
     }
 
     public void Dispose()

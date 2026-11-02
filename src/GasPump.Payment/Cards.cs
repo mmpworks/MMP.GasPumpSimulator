@@ -5,9 +5,11 @@ public enum CardKind { Credit, Debit }
 /// <summary>
 /// What the reader hands over. In a real pump this is ciphertext under a DUKPT
 /// key and the terminal never sees digits. Here it is plain text. The numbers
-/// are made up, and the simulator is about the payment flow.
+/// are made up, and the simulator is about the payment flow. Pin and Zip are
+/// what the driver typed at the keypad for this sale: the PIN for a debit
+/// card, the billing ZIP for a credit card. The bank checks them.
 /// </summary>
-public sealed record CardData(string Pan, int ExpiryMonth, int ExpiryYear, CardKind Kind, string? Pin = null)
+public sealed record CardData(string Pan, int ExpiryMonth, int ExpiryYear, CardKind Kind, string? Pin = null, string? Zip = null)
 {
     public string Last4 => Pan.Length >= 4 ? Pan[^4..] : Pan;
 }
@@ -47,9 +49,17 @@ public static class CardValidator
 /// The named test cards. The name says what the card will do, so a scenario
 /// reads like a sentence: "present the InsufficientFunds card".
 /// All PANs pass Luhn. None of them sits in a real, usable card range.
+/// Every credit account has billing ZIP 12345 on file. DebitGoodPin's account
+/// has PIN 1234 on file. DebitBadPin's account has no PIN on file, so no PIN
+/// the driver types can match it.
 /// </summary>
 public static class TestCards
 {
+    /// <summary>The billing ZIP every credit test card expects at the keypad.</summary>
+    public const string Zip = "12345";
+    /// <summary>The PIN the DebitGoodPin account expects at the keypad.</summary>
+    public const string Pin = "1234";
+
     public static readonly IReadOnlyDictionary<string, CardData> ByName = new Dictionary<string, CardData>(StringComparer.OrdinalIgnoreCase)
     {
         ["Good"]              = new("4111111111111111", 12, 2030, CardKind.Credit),
@@ -59,8 +69,8 @@ public static class TestCards
         ["Stolen"]            = new("5105105105105100", 12, 2030, CardKind.Credit),
         ["Frozen"]            = new("378282246310005",  12, 2030, CardKind.Credit),
         ["Velocity"]          = new("371449635398431",  12, 2030, CardKind.Credit),      // third use in the window declines
-        ["DebitGoodPin"]      = new("6011111111111117", 12, 2030, CardKind.Debit, Pin: "1234"),
-        ["DebitBadPin"]       = new("6011000990139424", 12, 2030, CardKind.Debit, Pin: "0000"),
+        ["DebitGoodPin"]      = new("6011111111111117", 12, 2030, CardKind.Debit),      // PIN 1234 on file at the bank
+        ["DebitBadPin"]       = new("6011000990139424", 12, 2030, CardKind.Debit),      // no PIN on file, so every PIN is wrong
         ["BadLuhn"]           = new("4111111111111112", 12, 2030, CardKind.Credit),
     };
 

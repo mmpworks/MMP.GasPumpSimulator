@@ -56,7 +56,8 @@ public abstract record PumpMessage
 /// <summary>What the sale worker sends the payment worker.</summary>
 public abstract record PaymentMessage(string SaleId)
 {
-    public sealed record PreAuthorize(string SaleId, CardData Card, Tender Tender) : PaymentMessage(SaleId);
+    /// <summary>Code is the PIN or ZIP from the keypad. It stays inside the process and never reaches a log.</summary>
+    public sealed record PreAuthorize(string SaleId, CardData Card, Tender Tender, string? Code) : PaymentMessage(SaleId);
     /// <summary>Cash taken at the cashier. The payment side signs a token for that amount and never calls the bank.</summary>
     public sealed record CashAuthorize(string SaleId, Money Amount) : PaymentMessage(SaleId);
     /// <summary>Lines itemize Final for the bank. Null means the sender had no breakdown.</summary>

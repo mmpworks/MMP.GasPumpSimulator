@@ -8,6 +8,16 @@ const sale = computed(() => state.value?.sale)
 const readerCard = ref('Good')
 const readerTender = ref<'Credit' | 'Debit'>('Credit')
 const readerNote = ref<string | null>(null)
+// The keypad shows while the sale waits for a PIN (debit) or a billing ZIP (credit). The test bank knows ZIP 12345 and PIN 1234.
+const keypad = ref('')
+const wantsCode = computed(() => sale.value?.state === 'CardRead')
+const codeLabel = computed(() => (sale.value?.tender === 'Debit' ? 'PIN (4 digits)' : 'billing ZIP (5 digits)'))
+const codeLength = computed(() => (sale.value?.tender === 'Debit' ? 4 : 5))
+async function sendCode() {
+  const code = keypad.value
+  keypad.value = ''
+  await api.enterCode(code)
+}
 const cardItems = computed(() => cards.value.map(c => ({ title: `${c.name} · ${c.kind} ····${c.last4}`, value: c.name })))
 async function readCard(source: 'PumpInsert' | 'PumpTap') {
   const r = await api.presentCard(readerCard.value, readerTender.value, source)
@@ -59,6 +69,11 @@ const estop = computed(() => !!state.value?.station.estopActive)
         <v-btn color="primary" variant="flat" size="small" prepend-icon="mdi-contactless-payment" :disabled="offline || estop" @click="readCard('PumpTap')">Tap</v-btn>
         <span v-if="readerNote" class="text-error reader-note" style="font-size: 12px">{{ readerNote }}</span>
         <span v-else-if="outOfService" class="text-error" style="font-size: 12px">reader closed: {{ pump?.serviceParts.join(', ') }}</span>
+      </div>
+      <div v-if="wantsCode" class="row-wrap mb-1 keypad">
+        <v-text-field v-model="keypad" :label="codeLabel" :maxlength="codeLength" inputmode="numeric" density="compact" hide-details
+                      :type="sale?.tender === 'Debit' ? 'password' : 'text'" style="max-width: 220px" @keyup.enter="sendCode" />
+        <v-btn color="primary" variant="flat" size="small" prepend-icon="mdi-dialpad" :disabled="keypad.length !== codeLength" @click="sendCode">Enter</v-btn>
       </div>
       <p class="muted mb-1">A card here cancels an approved sale nobody touched (the last driver left) and starts yours. While a nozzle is in someone's hand, the reader says the pump is in use. The lift wait is {{ 120 }} s here, {{ 300 }} s for a sale set at the station.</p>
 

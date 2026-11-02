@@ -133,7 +133,7 @@ app.MapPost("/api/station/reset", () =>
     simHost.Reset();
     return Results.Json(new { estopActive = simHost.EStopActive, recovery = Contracts.Recovery(Sim().LastRecovery), runId = Sim().RunId }, json);
 });
-app.MapGet("/api/station/custody", () => Results.Json(new { station.RunId, copyPath = station.CopyPath, linesReceived = station.LinesReceived, dispenserLines = Sim().DispenserCustodyLines }, json));
+app.MapGet("/api/station/custody", () => Results.Json(new { station.RunId, copyPath = station.CopyPath, linesReceived = station.LinesReceived, replayedDuplicatesDropped = station.Duplicates, dispenserLines = Sim().DispenserCustodyLines }, json));
 app.MapPost("/api/station/custody/verify", () =>
 {
     var (ok, seq, reason, lines) = station.VerifyCopy();
@@ -179,6 +179,8 @@ app.MapPost("/api/card", (CardRequest r) =>
     var (ok, saleId, reason) = Sim().TryPresentCard(r.Name, r.Grade, r.Tender ?? Tender.Credit, r.Source ?? CardSource.PumpInsert);
     return ok ? Results.Json(new { saleId }, json) : Results.Conflict(new { saleId, error = reason });
 });
+// The keypad. The digits go to the sale worker and on to the bank; the host never logs them.
+app.MapPost("/api/code", (CodeRequest r) => { Sim().EnterCode(r.Code ?? ""); return Results.Ok(); });
 app.MapPost("/api/cash", (CashRequest r) => Results.Json(new { saleId = Sim().PayCash(new Money(r.Cents), r.Grade) }, json));
 app.MapPost("/api/cash/collected", () => { Sim().CollectChange(); return Results.Ok(); });
 app.MapPost("/api/admin/limits", (AdminRequest r) =>
@@ -242,6 +244,7 @@ Sim().Log.Write("host", "station pid {Pid} listening on {Url} with {Dispatch} di
 app.Run();
 
 record CardRequest(string Name, Grade? Grade, Tender? Tender, CardSource? Source);
+record CodeRequest(string? Code);
 record EStopRequest(string? PressedBy);
 record CashRequest(long Cents, Grade? Grade);
 record AdminRequest(string? Pin, Tender Tender, long Cents);

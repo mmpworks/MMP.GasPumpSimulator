@@ -87,6 +87,10 @@ public static class RecoveryPlan
             case SaleState.Faulted or SaleState.Cancelled or SaleState.Declined or SaleState.StoreAndForward when hold is HoldStatus.SettlePending or HoldStatus.ReleasePending:
                 return new(RecoveryKind.CleanStart, snapshot.RunId, null, tender, grade, Volume.Zero, Money.Zero, Volume.Zero, age,
                     $"previous run ended in {state} with advice queued for the bank; the queue drains on this run");
+            case SaleState.CardRead:
+                // The card was read and the driver was at the keypad. Nothing had gone to the bank, so there is nothing to undo.
+                return new(RecoveryKind.CleanStart, snapshot.RunId, null, tender, grade, Volume.Zero, Money.Zero, Volume.Zero, age,
+                    $"{how} with a card read and no PIN or ZIP entered; nothing was sent to the bank, nothing to close");
             default:
                 return new(RecoveryKind.CleanStart, snapshot.RunId, null, tender, grade, Volume.Zero, Money.Zero, Volume.Zero, age,
                     $"previous run ended in {state}; nothing to close");
