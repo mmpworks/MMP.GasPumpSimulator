@@ -718,6 +718,58 @@ public class SimulationTests
         Assert.Equal(0, h.Sim.Ledger.Verify());
     }
 
+    [Theory]
+    [MemberData(nameof(SimHarness.Strategies), MemberType = typeof(SimHarness))]
+    public void Admin_changes_a_price_and_the_pump_bills_the_next_sale_by_it_after_the_running_one_ends(string strategy)
+    {
+        using var h = new SimHarness(strategy, ThirtyDollarHold);
+        Assert.False(h.Sim.AdminSetPrice("0000", Grade.Regular, 4000).Ok);
+        Assert.Contains(h.Sim.Ledger.Snapshot(), e => e.Kind == "admin.refused" && e.Detail.Contains("wrong PIN"));
+        Assert.False(h.Sim.AdminSetPrice("1234", Grade.Regular, 0).Ok);
+        Assert.Equal(3499, h.Sim.Prices.PriceOf(Grade.Regular));
+
+        // Mid-delivery, the write is answered Done and waits for the pour to end. The driver pays the posted price.
+        h.Present("Good");
+        h.AdvanceUntilState(SaleState.ReadyToPump, TimeSpan.FromSeconds(5));
+        h.Sim.StartFueling();
+        h.AdvanceUntilState(SaleState.Fueling, TimeSpan.FromSeconds(1));
+        h.Advance(TimeSpan.FromSeconds(2));
+        var (ok, reason) = h.Sim.AdminSetPrice("1234", Grade.Regular, 4000);
+        Assert.True(ok, reason);
+        Assert.Equal("Regular $3.499 -> $4.000", reason);
+        Assert.Equal(4000, h.Sim.Prices.PriceOf(Grade.Regular));
+        h.Settle();
+        Assert.Contains(h.Sim.Ledger.Snapshot(), e => e.Kind == "admin.prices" && e.Detail == "Regular $3.499 -> $4.000");
+        Assert.Contains(h.Sim.Ledger.Snapshot(), e => e.Kind == "cmd.answer" && e.Detail.StartsWith("SetPrices") && e.Detail.Contains("Done applies after the current delivery"));
+        Assert.Contains(h.Sim.Ledger.Snapshot(), e => e.Kind == "price.pending");
+        Assert.Equal(3499, h.Sim.View.Prices![Grade.Regular]);              // the pump still shows what the driver is paying
+        h.AdvanceUntil(() => h.State.State is SaleState.Idle && h.State.Hold == HoldStatus.Settled, TimeSpan.FromMinutes(3));
+        Assert.Equal(Pricing.Default.CentsFor(Grade.Regular, h.State.Volume), h.State.Money);
+        Assert.Equal(Money.FromDollars(30), h.State.Money);
+
+        // The delivery over, the board is in force on the pump and the view says so.
+        h.AdvanceUntil(() => h.Sim.View.Prices?[Grade.Regular] == 4000, TimeSpan.FromSeconds(2));
+        Assert.Contains(h.Sim.Ledger.Snapshot(), e => e.Kind == "price.set" && e.Detail.Contains("Regular $4.000"));
+        h.Present("Good");
+        h.AdvanceUntilState(SaleState.ReadyToPump, TimeSpan.FromSeconds(5));
+        h.Sim.StartFueling();
+        h.AdvanceUntil(() => h.State.State is SaleState.Idle && h.State.Hold == HoldStatus.Settled, TimeSpan.FromMinutes(3));
+        Assert.Equal(h.Sim.Prices.CentsFor(Grade.Regular, h.State.Volume), h.State.Money);
+        Assert.Equal(h.Sim.Prices.MaxVolumeFor(Grade.Regular, Money.FromDollars(30)), h.State.Volume);   // $30 at $4.000, to the thousandth that still rounds to $30
+
+        // The inspector reads the island's totals: the sealed counter live, the grade rows by finished delivery.
+        h.Sim.ReadTotals();
+        h.Settle();
+        var totals = h.Sim.LastTotals!;
+        Assert.Equal(h.Sim.Totalizer.Total, totals.Totalizer);
+        var regular = Assert.Single(totals.ByGrade);
+        Assert.Equal((Grade.Regular, 2L, Money.FromDollars(60)), (regular.Grade, regular.Deliveries, regular.Money));
+        Assert.Equal(totals.Totalizer, regular.Volume);
+        Assert.Equal(2, totals.LastTxSeq);
+        Assert.Contains(h.Sim.Ledger.Snapshot(), e => e.Kind == "totals.read" && e.Detail.Contains("Regular") && e.Detail.Contains("in 2"));
+        Assert.Equal(0, h.Sim.Ledger.Verify());
+    }
+
     // ----- Forecourt faults: a failed part names itself, the sale closes for the fuel that moved, the driver hears the right next step.
 
     [Theory]

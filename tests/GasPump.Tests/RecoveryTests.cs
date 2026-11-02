@@ -29,6 +29,29 @@ public class RecoveryTests : IDisposable
 
     [Theory]
     [MemberData(nameof(SimHarness.Strategies), MemberType = typeof(SimHarness))]
+    public void The_operators_price_board_rides_the_journal_so_a_restarted_station_bills_by_it(string strategy)
+    {
+        using (var h = new SimHarness(strategy, Options("RUN-1")))
+        {
+            Assert.True(h.Sim.AdminSetPrice("1234", Grade.Plus, 3851).Ok);
+            h.Settle();
+            h.Sim.SaveJournal();
+            h.Sim.SimulatePowerLoss();
+        }
+        var snapshot = StateJournal.Load(Path.Combine(_dir, "state.json"))!;
+        Assert.Equal(3851, snapshot.Prices![Grade.Plus]);
+
+        using (var h2 = new SimHarness(strategy, Options("RUN-2")))
+        {
+            Assert.Equal(3851, h2.Sim.Prices.PriceOf(Grade.Plus));
+            Assert.Equal(3851, ((Pricing)h2.Sim.Pump.Prices).PriceOf(Grade.Plus));     // the in-process pump was handed the same board
+            Assert.Equal(3851, h2.Sim.View.Prices![Grade.Plus]);
+            Assert.DoesNotContain(h2.Sim.Ledger.Snapshot(), e => e.Kind == "price.set");   // a restore is not a change
+        }
+    }
+
+    [Theory]
+    [MemberData(nameof(SimHarness.Strategies), MemberType = typeof(SimHarness))]
     public void Power_loss_mid_fuel_closes_the_sale_for_the_recorded_money_and_flags_under_delivery(string strategy)
     {
         var card = TestCards.Get("Good");

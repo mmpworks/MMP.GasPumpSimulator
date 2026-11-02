@@ -68,9 +68,14 @@ public sealed class PumpController(
     TransactionBuffer? transactions = null)
 {
     private readonly IReadOnlyList<IDeliveryStage> _stages = stages ?? [];
+    private IPriceSchedule _pricing = pricing;
+    private (Pricing Board, string By)? _pendingPrices;
 
     /// <summary>The finished deliveries the island still holds for the station. The pump refuses to arm while one is open.</summary>
     public TransactionBuffer Transactions { get; } = transactions ?? new TransactionBuffer(ledger);
+
+    /// <summary>Lifetime volume and money per grade, counted as each delivery ends.</summary>
+    public GradeTotals GradeTotals { get; } = new();
 
     /// <summary>The transaction this sale's delivery wrote, so the event that ends the sale can name it. Null when no pour ended for that sale.</summary>
     public long? TransactionFor(string saleId) => Transactions.Last is { } t && t.SaleId == saleId ? t.TxSeq : null;
@@ -78,12 +83,66 @@ public sealed class PumpController(
     /// <summary>The code an arm refusal carries while a delivered transaction waits to be cleared.</summary>
     public const string TransactionPayable = "PUMP.TX.PAYABLE";
 
-    /// <summary>Fuel moved and the delivery is over: write the transaction the station will settle from.</summary>
+    /// <summary>The code a price write is refused with when a grade is missing or a price is zero or below.</summary>
+    public const string PriceInvalid = "PUMP.PRICE.INVALID";
+
+    /// <summary>Fuel moved and the delivery is over: write the transaction the station will settle from, and add it to the grade's lifetime total.</summary>
     private void RecordTransaction(string endReason)
     {
         if (_armed is null || !_poured || Volume == Volume.Zero) return;
-        Transactions.Record(_armed.SaleId, _grade ?? Grade.Regular, Volume, Money, Lines, clock.GetUtcNow(), endReason);
+        var grade = _grade ?? Grade.Regular;
+        Transactions.Record(_armed.SaleId, grade, Volume, Money, Lines, clock.GetUtcNow(), endReason);
+        GradeTotals.Add(grade, Volume, Money);
     }
+
+    /// <summary>The schedule the pump bills by: the board the station wrote, or the one it was built with.</summary>
+    public IPriceSchedule Prices => _pricing;
+
+    /// <summary>A board written during a sale, waiting for the delivery to end. Null otherwise.</summary>
+    public Pricing? PendingPrices => _pendingPrices?.Board;
+
+    /// <summary>
+    /// The station writes the price board. A board with a grade missing or a
+    /// price at zero is refused and nothing changes. During a sale the new
+    /// board waits: the driver saw a price when the pump armed, and that price
+    /// stands until the delivery ends, as the forecourt standard requires.
+    /// </summary>
+    public (bool Ok, string Reason, bool Deferred) SetPrices(Pricing board, string by)
+    {
+        var (valid, why) = board.Validate();
+        if (!valid)
+        {
+            ledger.Append("price.refused", $"{PriceInvalid} from {by}: {why}");
+            return (false, $"{PriceInvalid} {why}", false);
+        }
+        if (_pricing is Pricing current && current.SameAs(board))
+        {
+            _pendingPrices = null;
+            return (true, "unchanged", false);
+        }
+        if (_armed is not null)
+        {
+            _pendingPrices = (board, by);
+            ledger.Append("price.pending", $"{by} {board.Describe()} after {_armed.SaleId}");
+            return (true, "applies after the current delivery", true);
+        }
+        ApplyPrices(board, by);
+        return (true, "", false);
+    }
+
+    private void ApplyPrices(Pricing board, string by)
+    {
+        var before = _pricing is Pricing p ? p.Describe() : _pricing.GetType().Name;
+        _pricing = board;
+        _pendingPrices = null;
+        ledger.Append("price.set", $"{by}: {before} -> {board.Describe()}");
+    }
+
+    /// <summary>From the state file at start, before any sale. No ledger line: the board was recorded when it was written.</summary>
+    public void RestorePrices(Pricing board) => _pricing = board;
+
+    /// <summary>What an inspector's close-out reads: the sealed counter, the per-grade totals, and the last transaction number.</summary>
+    public PumpTotals ReadTotals(DateTimeOffset now) => new(totalizer.Total, GradeTotals.Snapshot(), Transactions.Last?.TxSeq ?? 0, now);
 
     /// <summary>The parts on the delivery path downstream of the meter, in the order they see each slice.</summary>
     public IReadOnlyList<IDeliveryStage> Stages => _stages;
@@ -426,7 +485,7 @@ public sealed class PumpController(
 
         // Where the stop is, in volume: whichever comes first, the money ceiling or the volume ceiling.
         var volumeCap = armed.MaxVolume - Volume;
-        var moneyCapVolume = pricing.MaxVolumeFor(grade, armed.Ceiling) - Volume;
+        var moneyCapVolume = _pricing.MaxVolumeFor(grade, armed.Ceiling) - Volume;
         var cap = Volume.Min(volumeCap, moneyCapVolume);
 
         // Taper: how far open for the money that is left. The displayed money can
@@ -487,8 +546,8 @@ public sealed class PumpController(
 
         totalizer.Add(delivered);
         foreach (var stage in _stages) stage.OnDelivered(grade, delivered);
-        Money = pricing.CentsFor(grade, Volume);
-        Lines = pricing.Lines(grade, Volume);
+        Money = _pricing.CentsFor(grade, Volume);
+        Lines = _pricing.Lines(grade, Volume);
 
         if (Money > armed.Ceiling)
         {
@@ -525,13 +584,14 @@ public sealed class PumpController(
         if (_closedForSales) { Phase = PumpPhase.Closed; ledger.Append("pump.closed", DiagnosticCodes.PumpClosed.Format("pending close applied after the delivery")); }
     }
 
-    /// <summary>The delivery is over. Drop what the driver chose so the next driver starts from nothing. Volume and Money stay for the receipt.</summary>
+    /// <summary>The delivery is over. Drop what the driver chose so the next driver starts from nothing. Volume and Money stay for the receipt. A price board that waited for this moment takes effect.</summary>
     private void ClearSale()
     {
         _armed = null;
         _grade = null;
         _poured = false;
         _leverHeld = false;
+        if (_pendingPrices is { } next) ApplyPrices(next.Board, next.By);
     }
 
     public void Disarm()

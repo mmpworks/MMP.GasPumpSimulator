@@ -80,7 +80,7 @@ const holdText: Record<string, string> = {
       <div v-if="sale && state" class="face mb-3">
         <div class="row"><span class="label">THIS SALE</span><span class="big">{{ dollars(sale.cents) }}</span></div>
         <div class="row"><span class="label">GALLONS</span><span class="big">{{ sale.gallons.toFixed(3) }}</span></div>
-        <div class="row"><span class="label">PRICE / GAL ({{ sale.grade }})</span><span class="mid">{{ state.prices[sale.grade] }}</span></div>
+        <div class="row"><span class="label">PRICE / GAL ({{ sale.grade }})</span><span class="mid" data-testid="face-price">{{ state.prices[sale.grade] }}</span></div>
         <div class="row"><span class="label">FLOW</span><span class="mid">{{ sale.gpm.toFixed(2) }} gpm</span></div>
         <div class="row"><span class="label">CEILING</span><span class="mid">{{ sale.ceilingCents ? dollars(sale.ceilingCents) : '--' }}</span></div>
       </div>

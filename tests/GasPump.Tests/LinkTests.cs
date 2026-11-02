@@ -460,4 +460,72 @@ public sealed class LinkTests : IDisposable
         Assert.True(TryPresent(station, "Good").Ok);
         WaitFor(() => station.Snapshot().State == SaleState.ReadyToPump, TimeSpan.FromSeconds(5), () => "never armed after the reboot\n" + Tail(station));
     }
+
+    // ----- Slice 4: the price board is a write the island answers and keeps; the totals are a read.
+
+    [Fact]
+    public void The_station_writes_its_price_board_on_connect_and_a_change_survives_an_island_reboot_and_a_station_restart()
+    {
+        var dispenser = NewDispenser();
+        var port = dispenser.Port;
+        var station = NewStation(port, "STN-1");
+        WaitFor(() => station.Link.Connected && station.View.Prices is not null, TimeSpan.FromSeconds(5), () => "no price board in the view\n" + Tail(station));
+        Assert.True(Pricing.Default.SameAs(new Pricing(station.View.Prices!)));
+        WaitFor(() => station.Ledger.Snapshot().Any(e => e.Kind == "cmd.answer" && e.Detail.StartsWith("SetPrices") && e.Detail.Contains("Done unchanged")), TimeSpan.FromSeconds(3), () => "the connect-time write was never answered\n" + Tail(station));
+
+        // The back office reprices Regular. The island answers, bills by it, and the station's view shows the island's board.
+        var (ok, reason) = station.AdminSetPrice("1234", Grade.Regular, 3999);
+        Assert.True(ok, reason);
+        WaitFor(() => station.View.Prices?[Grade.Regular] == 3999, TimeSpan.FromSeconds(5), () => "the new price never came back in the view\n" + Tail(station));
+        Assert.Equal(3999, ((Pricing)dispenser.Dispenser.Pump.Prices).PriceOf(Grade.Regular));
+        WaitFor(() => station.Ledger.Snapshot().Count(e => e.Kind == "cmd.answer" && e.Detail.StartsWith("SetPrices") && e.Detail.EndsWith(" Done")) == 1, TimeSpan.FromSeconds(3), () => "the write was never answered Done\n" + Tail(station));
+        Assert.Contains(dispenser.Ledger.Snapshot(), e => e.Kind == "price.set" && e.Detail.StartsWith("admin:") && e.Detail.Contains("Regular $3.999"));
+        Assert.Contains(station.Ledger.Snapshot(), e => e.Kind == "admin.prices" && e.Detail == "Regular $3.499 -> $3.999");
+
+        // The island reboots. Its state file hands the board back before any station speaks to it.
+        dispenser.Dispose();
+        WaitFor(() => !station.Link.Connected, TimeSpan.FromSeconds(3), () => "link never dropped");
+        var back = NewDispenserOnSamePort(port);
+        Assert.Equal(3999, ((Pricing)back.Dispenser.Pump.Prices).PriceOf(Grade.Regular));
+        Assert.Contains(back.Log.Snapshot(), l => l.Message.Contains("prices from the state file"));
+        WaitFor(() => station.Link.Connected && station.Link.RemoteRunId == back.RunId && station.View.Prices?[Grade.Regular] == 3999, TimeSpan.FromSeconds(8), () => "station never reconnected with the board\n" + Tail(station));
+
+        // The station restarts. Its journal carries the operator's board, so the connect-time write is the new price, never the built-in one.
+        station.Dispose();
+        station = NewStation(port, "STN-2");
+        using var _ = station;
+        Assert.Equal(3999, station.Prices.PriceOf(Grade.Regular));
+        WaitFor(() => station.Link.Connected && station.View.Prices?[Grade.Regular] == 3999, TimeSpan.FromSeconds(8), () => "second station lost the board\n" + Tail(station));
+        Thread.Sleep(300);
+        Assert.Equal(3999, ((Pricing)back.Dispenser.Pump.Prices).PriceOf(Grade.Regular));
+        Assert.DoesNotContain(back.Ledger.Snapshot(), e => e.Kind == "price.set");    // the restore and both connect-time writes changed nothing
+        back.Dispose();
+    }
+
+    [Fact]
+    public void A_read_of_totals_over_the_socket_returns_the_islands_counters_after_a_sale()
+    {
+        using var dispenser = NewDispenser();
+        using var station = NewStation(dispenser.Port, "STN-1");
+        WaitFor(() => station.Link.Connected && station.LastTotals is not null, TimeSpan.FromSeconds(5), () => "the connect-time read of totals never answered\n" + Tail(station));
+        Assert.Equal(Volume.Zero, station.LastTotals!.Totalizer);
+        Assert.Empty(station.LastTotals.ByGrade);
+
+        Present(station, "Good");
+        WaitFor(() => station.Snapshot().State == SaleState.ReadyToPump, TimeSpan.FromSeconds(5), () => "never armed\n" + Tail(station));
+        station.StartFueling(Grade.Premium);
+        WaitFor(() => station.Snapshot().State is SaleState.Idle && station.Snapshot().Hold == HoldStatus.Settled, TimeSpan.FromSeconds(20), () => "never settled\n" + Tail(station));
+        var sale = station.Snapshot();
+
+        station.ReadTotals();
+        WaitFor(() => station.LastTotals!.LastTxSeq == 1, TimeSpan.FromSeconds(3), () => "the read never answered\n" + Tail(station));
+        var totals = station.LastTotals!;
+        Assert.Equal(dispenser.Dispenser.Totalizer.Total, totals.Totalizer);
+        Assert.Equal(sale.Volume, totals.Totalizer);
+        var premium = Assert.Single(totals.ByGrade);
+        Assert.Equal((Grade.Premium, sale.Volume, sale.Money, 1L), (premium.Grade, premium.Volume, premium.Money, premium.Deliveries));
+        Assert.Contains(station.Ledger.Snapshot(), e => e.Kind == "totals.read" && e.Detail.Contains($"Premium {sale.Volume} {sale.Money} in 1") && e.Detail.EndsWith("last tx #1"));
+        // A read changes nothing on the island: no ledger line there for it.
+        Assert.DoesNotContain(dispenser.Ledger.Snapshot(), e => e.Kind.StartsWith("totals"));
+    }
 }

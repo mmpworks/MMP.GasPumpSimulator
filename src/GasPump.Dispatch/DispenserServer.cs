@@ -147,11 +147,11 @@ public sealed class DispenserServer : IDisposable
         if (env.SaleId is not null) _lastSaleId = env.SaleId;
         var events = Dispenser.Handle(env.M, env.SaleId ?? _lastSaleId);
         // A part broke or was fixed without a ledger entry (supply, pulser): the state file must still know.
-        if (env.M is PumpMessage.Supply or PumpMessage.PulserDead or PumpMessage.DriveOff or PumpMessage.ResetBreakaway or PumpMessage.CloseForSales or PumpMessage.OpenForSales or PumpMessage.Lock or PumpMessage.Clear) SaveState();
+        if (env.M is PumpMessage.Supply or PumpMessage.PulserDead or PumpMessage.DriveOff or PumpMessage.ResetBreakaway or PumpMessage.CloseForSales or PumpMessage.OpenForSales or PumpMessage.Lock or PumpMessage.Clear or PumpMessage.SetPrices) SaveState();
         foreach (var e in events) Send(new LinkFrame(LinkFrame.TagEvent, E: e), WireKind.Event);
         if (env.CorrelationId is { } corr)
         {
-            var answer = LocalDispenserLink.AnswerFor(corr, events);
+            var answer = LocalDispenserLink.AnswerFor(corr, events, Dispenser.LastRefusal, Dispenser.LastNote);
             Answers++;
             Send(new LinkFrame(LinkFrame.TagAnswer, A: answer), WireKind.Answer, corr);
         }
@@ -242,6 +242,7 @@ public sealed class DispenserServer : IDisposable
             case WireKind.Read when f.Body.Read is { } r:
                 if (r.What == WireRead.Frames && r.FromSeq is { } rf) foreach (var old in _seq.Replay(rf, r.ToSeq)) _ = Write(old);
                 else if (r.What == WireRead.Transactions) Send(new LinkFrame(LinkFrame.TagTransactions, Tx: Dispenser.Pump.Transactions.Open), WireKind.Event);
+                else if (r.What == WireRead.Totals) Send(new LinkFrame(LinkFrame.TagTotals, Totals: Dispenser.Pump.ReadTotals(_clock.GetUtcNow())), WireKind.Event);
                 return true;
         }
 
@@ -329,8 +330,9 @@ public sealed class DispenserServer : IDisposable
 
     // ----- The small state the dispenser owns across its own restarts: the sealed counter, the burned nonces, the broken parts, the unpaid deliveries.
 
-    /// <summary>Conditions lists the broken parts. Transactions are the deliveries not yet cleared by a station. Restarting the software repairs nothing and forgets no money.</summary>
-    private sealed record DispenserState(long TotalizerMilliGallons, List<string> Nonces, List<string>? Conditions = null, long TxSeq = 0, List<PumpTransaction>? Transactions = null);
+    /// <summary>Conditions lists the broken parts. Transactions are the deliveries not yet cleared by a station. Prices is the board the station last wrote. Restarting the software repairs nothing, forgets no money, and keeps its prices.</summary>
+    private sealed record DispenserState(long TotalizerMilliGallons, List<string> Nonces, List<string>? Conditions = null, long TxSeq = 0, List<PumpTransaction>? Transactions = null,
+        Dictionary<Grade, long>? Prices = null, List<GradeTotal>? GradeTotals = null);
 
     private void RestoreState()
     {
@@ -341,6 +343,13 @@ public sealed class DispenserServer : IDisposable
             if (s is null) return;
             Dispenser.Totalizer.Restore(new Volume(s.TotalizerMilliGallons));
             Dispenser.Nonces.Import(s.Nonces);
+            if (s.GradeTotals is { Count: > 0 } gt) Dispenser.Pump.GradeTotals.Restore(gt);
+            if (s.Prices is { Count: > 0 } pr)
+            {
+                var board = new Pricing(pr);
+                if (board.Validate().Ok) { Dispenser.Pump.RestorePrices(board); Log.Write("dispenser", "prices from the state file: {Board}", ("Board", board.Describe())); }
+                else Log.Warn("dispenser", "state file prices unusable, keeping the built-in board: {Reason}", ("Reason", board.Validate().Reason));
+            }
             if (s.Transactions is { Count: > 0 } || s.TxSeq > 0)
             {
                 Dispenser.Pump.Transactions.Restore(s.TxSeq, s.Transactions ?? []);
@@ -360,7 +369,9 @@ public sealed class DispenserServer : IDisposable
     {
         if (_statePath is null) return;
         var (txSeq, txItems) = Dispenser.Pump.Transactions.Export();
-        var s = new DispenserState(Dispenser.Totalizer.Total.MilliGallons, Dispenser.Nonces.Export().ToList(), Dispenser.ConditionCodes.ToList(), txSeq, txItems.ToList());
+        var prices = (Dispenser.Pump.Prices as Pricing)?.TenthCentsPerGallon.ToDictionary(kv => kv.Key, kv => kv.Value);
+        var s = new DispenserState(Dispenser.Totalizer.Total.MilliGallons, Dispenser.Nonces.Export().ToList(), Dispenser.ConditionCodes.ToList(), txSeq, txItems.ToList(),
+            prices, Dispenser.Pump.GradeTotals.Snapshot().ToList());
         var tmp = _statePath + ".tmp";
         try
         {

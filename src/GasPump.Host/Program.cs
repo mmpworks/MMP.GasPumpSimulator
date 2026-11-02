@@ -191,6 +191,14 @@ app.MapPost("/api/admin/limits", (AdminRequest r) =>
     var (ok, reason) = Sim().AdminSetHold(r.Pin ?? "", r.Tender, new Money(r.Cents));
     return Results.Json(new { ok, reason, creditHoldCents = Sim().Site.CreditHold.Cents, debitHoldCents = Sim().Site.DebitHold.Cents }, json);
 });
+// A posted price, in mills per gallon ($3.499 is 3499). The station writes the whole board to the island, which answers.
+app.MapPost("/api/admin/prices", (PriceRequest r) =>
+{
+    var (ok, reason) = Sim().AdminSetPrice(r.Pin ?? "", r.Grade, r.Mills);
+    return Results.Json(new { ok, reason, priceBoard = Sim().Prices.TenthCentsPerGallon.ToDictionary(kv => kv.Key.ToString(), kv => kv.Value) }, json);
+});
+// The inspector's close-out: ask the island for its counters. The answer lands in the state as `totals` and in the ledger as totals.read.
+app.MapPost("/api/station/totals", () => { Sim().ReadTotals(); return Results.Ok(); });
 app.MapPost("/api/grade", (GradeRequest r) => { Sim().SelectGrade(r.Grade); return Results.Ok(); });
 app.MapPost("/api/nozzle/lift", () => { Sim().LiftNozzle(); return Results.Ok(); });
 app.MapPost("/api/spout/insert", () => { Sim().InsertSpout(); return Results.Ok(); });
@@ -252,6 +260,7 @@ record EStopRequest(string? PressedBy);
 record PumpSwitchRequest(string? By);
 record CashRequest(long Cents, Grade? Grade);
 record AdminRequest(string? Pin, Tender Tender, long Cents);
+record PriceRequest(string? Pin, Grade Grade, long Mills);
 record GradeRequest(Grade Grade);
 record NetworkRequest(NetworkMode? Mode, int? LatencyMs, int? LateResponseMs, double? FlapFailureRate);
 record AttackRequest(long? Cents, decimal? Gallons, long? Pulses);

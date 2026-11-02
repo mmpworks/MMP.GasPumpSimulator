@@ -1,6 +1,6 @@
 # The wire, done the forecourt way: a sketch
 
-Status: design only. Nothing in this page is built. It answers two questions Steve asked on 2026-11-02: what does a real forecourt message carry that ours does not, and could a sink on the station side write frames that an adapter on the dispenser side turns back into our messages, so the two sides stay in sync the way a real controller and dispenser do.
+Status: built. Slices 1 to 3 landed in PR #11 and slice 4 (prices as a write, totals as a read) in the PR after it, both on 2026-11-02; `docs/architecture.md` describes what runs. This page stays as the design record. It answers two questions Steve asked on 2026-11-02: what does a real forecourt message carry that ours does not, and could a sink on the station side write frames that an adapter on the dispenser side turns back into our messages, so the two sides stay in sync the way a real controller and dispenser do.
 
 Sources are in `docs/research.md` under "Forecourt protocols". Where a fact is from the IFSF documents read this session it is marked (A) or (B). Where it is from recollection of the member-only Part 3-01 text it is marked (D) and must be verified before any outward claim.
 

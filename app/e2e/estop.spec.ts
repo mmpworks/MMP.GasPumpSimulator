@@ -31,7 +31,8 @@ test.describe('the emergency stop', () => {
     const after = await state(request)
     expect(after.recovery.kind).toBe('ClosedOut')
     expect(after.recovery.unrecordedUpToGallons).toBe(0)
-    expect(after.openHolds).toHaveLength(0)
+    // The completion is settled from the island's numbers over the simulated bank link, a moment after the pump is back.
+    await expect.poll(async () => (await state(request)).openHolds).toHaveLength(0)
     await expect(face(page)).not.toContainText('OUT OF SERVICE')
     await tapCardAtPump(page, 'Good')
   })

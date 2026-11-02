@@ -100,6 +100,28 @@ public sealed record Pricing(IReadOnlyDictionary<Grade, long> TenthCentsPerGallo
 
     public long PriceOf(Grade grade) => TenthCentsPerGallon[grade];
 
+    /// <summary>Every grade priced, every price above zero. The reason names the first grade that fails.</summary>
+    public (bool Ok, string Reason) Validate()
+    {
+        foreach (var g in Enum.GetValues<Grade>())
+        {
+            if (!TenthCentsPerGallon.TryGetValue(g, out var mills)) return (false, $"no price for {g}");
+            if (mills <= 0) return (false, $"{g} priced at {mills} mills");
+        }
+        return (true, "");
+    }
+
+    /// <summary>Same price for every grade. The record's own equality compares the dictionary by reference, which is never what a caller means.</summary>
+    public bool SameAs(Pricing other) =>
+        Enum.GetValues<Grade>().All(g => TenthCentsPerGallon.TryGetValue(g, out var a) && other.TenthCentsPerGallon.TryGetValue(g, out var b) && a == b);
+
+    /// <summary>A copy with one grade repriced.</summary>
+    public Pricing With(Grade grade, long tenthCentsPerGallon) =>
+        new(new Dictionary<Grade, long>(TenthCentsPerGallon) { [grade] = tenthCentsPerGallon });
+
+    /// <summary>The board as one line for a ledger entry: "Regular $3.499 Plus $3.799 Premium $4.099".</summary>
+    public string Describe() => string.Join(" ", Enum.GetValues<Grade>().Where(TenthCentsPerGallon.ContainsKey).Select(g => $"{g} {Display(g)}"));
+
     public Money CentsFor(Grade grade, Volume volume)
     {
         // cents = mGal * tenthCents / gal / 10 / 1000, rounded half up.

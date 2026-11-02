@@ -17,6 +17,7 @@ const recovery = computed(() => state.value?.recovery && state.value.recovery.ki
 const d = computed(() => state.value?.dispenser)
 const pumpClosed = computed(() => state.value?.pump.phase === 'Closed' || !!state.value?.pump.serviceParts.includes('pump switch'))
 const pumpCalling = computed(() => state.value?.pump.phase === 'Calling')
+const totals = computed(() => state.value?.totals ?? null)
 </script>
 
 <template>
@@ -36,6 +37,18 @@ const pumpCalling = computed(() => state.value?.pump.phase === 'Calling')
           <v-btn v-if="!pumpClosed" color="warning" variant="flat" prepend-icon="mdi-lock" :disabled="estop" @click="api.closePump('operator')">Close pump for sales</v-btn>
           <v-btn v-else color="success" variant="flat" prepend-icon="mdi-lock-open-variant" :disabled="estop" @click="api.openPump('operator')">Open pump for sales</v-btn>
           <span class="muted">Closed is a state, never a fault. The pump keeps working, refuses every card at the reader and the counter, and finishes a delivery in progress first. It stays closed across a restart until opened here.</span>
+        </div>
+
+        <div class="step">Pump totals</div>
+        <div class="row-wrap mb-2">
+          <v-btn color="primary" variant="tonal" prepend-icon="mdi-counter" :disabled="estop" @click="api.readTotals()">Read pump totals</v-btn>
+          <span class="muted">The inspector's close-out: the station asks the island for its sealed counter and its per-grade totals. The answer is a ledger line, <code>totals.read</code>, and the chips below.</span>
+        </div>
+        <div v-if="totals" class="row-wrap mb-3" data-testid="totals">
+          <v-chip size="small" color="info" variant="flat">totalizer {{ totals.totalizerGallons.toFixed(3) }} gal</v-chip>
+          <v-chip v-for="g in totals.byGrade" :key="g.grade" size="small">{{ g.grade }} {{ g.gallons.toFixed(3) }} gal · {{ dollars(g.cents) }} · {{ g.deliveries }} deliveries</v-chip>
+          <v-chip v-if="totals.byGrade.length === 0" size="small" variant="text">no deliveries yet</v-chip>
+          <v-chip size="small" variant="text">last tx #{{ totals.lastTxSeq }}</v-chip>
         </div>
 
         <div class="step">Emergency stop</div>

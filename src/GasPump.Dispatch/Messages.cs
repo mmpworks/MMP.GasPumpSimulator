@@ -26,6 +26,7 @@ namespace GasPump.Dispatch;
 [JsonDerivedType(typeof(OpenForSales), nameof(OpenForSales))]
 [JsonDerivedType(typeof(Lock), nameof(Lock))]
 [JsonDerivedType(typeof(Clear), nameof(Clear))]
+[JsonDerivedType(typeof(SetPrices), nameof(SetPrices))]
 public abstract record PumpMessage
 {
     public sealed record Arm(string SaleId, string Token, Grade? Grade) : PumpMessage;
@@ -63,6 +64,8 @@ public abstract record PumpMessage
     public sealed record Lock(long TxSeq, string By) : PumpMessage;
     /// <summary>The station has settled or queued the money. The pump drops the transaction and may arm again.</summary>
     public sealed record Clear(long TxSeq, string By) : PumpMessage;
+    /// <summary>The station writes the price board, in mills per gallon per grade. The pump answers Done and keeps it across its restarts; during a sale the board waits for the delivery to end. On the wire this is a Write frame.</summary>
+    public sealed record SetPrices(IReadOnlyDictionary<Grade, long> TenthCentsPerGallon, string By) : PumpMessage;
 }
 
 /// <summary>What the pump worker's mailbox carries: the message, the sale it was for, and the correlation id if the sender wants an answer.</summary>

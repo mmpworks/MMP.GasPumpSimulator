@@ -665,4 +665,118 @@ public class PumpTests
         Assert.False(change.Ok);
         Assert.Equal(Grade.Regular, rig.Pump.SelectedGrade);
     }
+
+    // ----- The price board as a write, and the totals as a read: the forecourt standard's unit-price and totals databases.
+
+    [Fact]
+    public void A_price_write_while_idle_takes_effect_at_once_and_the_next_sale_bills_by_it()
+    {
+        var rig = new Rig();
+        var board = Pricing.Default.With(Grade.Regular, 4000);
+        var (ok, reason, deferred) = rig.Pump.SetPrices(board, "admin");
+        Assert.True(ok, reason);
+        Assert.False(deferred);
+        Assert.Same(board, rig.Pump.Prices);
+        Assert.Contains(rig.Ledger.Snapshot(), e => e.Kind == "price.set" && e.Detail.Contains("Regular $3.499") && e.Detail.Contains("Regular $4.000"));
+
+        rig.ArmAndPour(Money.FromDollars(2));
+        var trace = rig.RunToStop();
+        var last = trace[^1];
+        Assert.Equal(board.CentsFor(Grade.Regular, last.Volume), last.Money);
+        Assert.Equal(Money.FromDollars(2), last.Money);
+        Assert.Equal(board.MaxVolumeFor(Grade.Regular, Money.FromDollars(2)), last.Volume);   // 0.501 gal: half a gallon plus the thousandth that still rounds to $2.00
+
+        // The same board again is no change, and no ledger line.
+        var again = rig.Pump.SetPrices(Pricing.Default.With(Grade.Regular, 4000), "admin");
+        Assert.Equal((true, "unchanged", false), again);
+        Assert.Equal(1, rig.Ledger.Snapshot().Count(e => e.Kind == "price.set"));
+    }
+
+    [Fact]
+    public void A_price_write_during_a_delivery_waits_so_the_driver_pays_the_posted_price_and_the_next_driver_pays_the_new_one()
+    {
+        var rig = new Rig();
+        rig.ArmAndPour(Money.FromDollars(2));
+        rig.Run(5);
+        var mid = rig.Pump.Money;
+        Assert.True(mid > Money.Zero);
+
+        var board = Pricing.Default.With(Grade.Regular, 9999);
+        var (ok, reason, deferred) = rig.Pump.SetPrices(board, "admin");
+        Assert.True(ok);
+        Assert.True(deferred);
+        Assert.Equal("applies after the current delivery", reason);
+        Assert.Same(board, rig.Pump.PendingPrices);
+        Assert.True(Pricing.Default.SameAs((Pricing)rig.Pump.Prices));
+        Assert.Contains(rig.Ledger.Snapshot(), e => e.Kind == "price.pending" && e.Detail.Contains("after S1"));
+
+        var trace = rig.RunToStop();
+        var last = trace[^1];
+        Assert.Equal(Pricing.Default.CentsFor(Grade.Regular, last.Volume), last.Money);   // billed at the price the driver saw
+        Assert.Equal(Money.FromDollars(2), last.Money);
+        // The delivery over, the board the station wrote is in force and the pending slot is empty.
+        Assert.Same(board, rig.Pump.Prices);
+        Assert.Null(rig.Pump.PendingPrices);
+        var kinds = rig.Ledger.Snapshot().Select(e => e.Kind).ToList();
+        Assert.True(kinds.IndexOf("price.pending") < kinds.IndexOf("valve.close") && kinds.IndexOf("valve.close") < kinds.IndexOf("price.set"));
+
+        rig.ClearTransactions();
+        rig.ArmAndPour(Money.FromDollars(2));
+        var next = rig.RunToStop()[^1];
+        Assert.Equal(board.CentsFor(Grade.Regular, next.Volume), next.Money);
+        Assert.True(next.Volume < Volume.FromGallons(0.25m));             // $2 buys little at $9.999
+    }
+
+    [Fact]
+    public void A_board_with_a_grade_missing_or_a_zero_price_is_refused_and_the_pump_keeps_billing_by_the_old_one()
+    {
+        var rig = new Rig();
+        var (ok, reason, _) = rig.Pump.SetPrices(Pricing.Default.With(Grade.Premium, 0), "admin");
+        Assert.False(ok);
+        Assert.StartsWith(PumpController.PriceInvalid, reason);
+        Assert.Contains("Premium priced at 0 mills", reason);
+        var missing = new Pricing(new Dictionary<Grade, long> { [Grade.Regular] = 3499 });
+        Assert.Contains("no price for Plus", rig.Pump.SetPrices(missing, "admin").Reason);
+        Assert.True(Pricing.Default.SameAs((Pricing)rig.Pump.Prices));
+        Assert.Null(rig.Pump.PendingPrices);
+        Assert.Equal(2, rig.Ledger.Snapshot().Count(e => e.Kind == "price.refused"));
+        Assert.DoesNotContain(rig.Ledger.Snapshot(), e => e.Kind == "price.set");
+    }
+
+    [Fact]
+    public void Grade_totals_count_each_finished_delivery_and_restore_once_from_the_state_file()
+    {
+        var rig = new Rig();
+        Assert.Empty(rig.Pump.GradeTotals.Snapshot());
+        rig.ArmAndPour(Money.FromDollars(2));
+        var first = rig.RunToStop()[^1];
+        rig.ClearTransactions();
+        rig.ArmAndPour(Money.FromDollars(3), Grade.Premium);
+        var second = rig.RunToStop()[^1];
+        rig.ClearTransactions();
+        rig.ArmAndPour(Money.FromDollars(2));
+        var third = rig.RunToStop()[^1];
+
+        var totals = rig.Pump.ReadTotals(rig.Clock.GetUtcNow());
+        Assert.Equal(rig.Totalizer.Total, totals.Totalizer);
+        Assert.Equal(first.Volume + second.Volume + third.Volume, totals.Totalizer);
+        Assert.Equal(3, totals.LastTxSeq);
+        Assert.Equal(rig.Clock.GetUtcNow(), totals.ReadAt);
+        var regular = totals.ByGrade.Single(g => g.Grade == Grade.Regular);
+        var premium = totals.ByGrade.Single(g => g.Grade == Grade.Premium);
+        Assert.Equal((first.Volume + third.Volume, Money.FromDollars(4), 2L), (regular.Volume, regular.Money, regular.Deliveries));
+        Assert.Equal((second.Volume, Money.FromDollars(3), 1L), (premium.Volume, premium.Money, premium.Deliveries));
+
+        // A delivery with no fuel moved counts nothing: arm, then disarm.
+        rig.ClearTransactions();
+        Assert.True(rig.Pump.Arm("S2", rig.Token("S2", Money.FromDollars(2))).Ok);
+        rig.Pump.Disarm();
+        Assert.Equal(2, rig.Pump.GradeTotals.Snapshot().Single(g => g.Grade == Grade.Regular).Deliveries);
+
+        // The island reboots on its state file: the rows come back whole, and only once.
+        var fresh = new GradeTotals();
+        fresh.Restore(totals.ByGrade);
+        Assert.Equal(totals.ByGrade, fresh.Snapshot());
+        Assert.Throws<InvalidOperationException>(() => fresh.Restore(totals.ByGrade));
+    }
 }
