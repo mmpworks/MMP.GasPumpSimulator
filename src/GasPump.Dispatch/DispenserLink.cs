@@ -128,12 +128,18 @@ public sealed record LinkFrame(
     LedgerEntry? L = null,
     string? Line = null,
     bool? On = null,
-    LinkHello? Hello = null)
+    LinkHello? Hello = null,
+    WireHeartbeat? Hb = null,
+    WireAnswer? A = null,
+    WireRead? Read = null,
+    IReadOnlyList<PumpTransaction>? Tx = null)
 {
     public const string TagHello = "hello", TagMsg = "msg", TagPower = "power", TagEvent = "event", TagView = "view", TagLog = "log", TagLedger = "ledger", TagCustody = "custody";
+    public const string TagHeartbeat = "heartbeat", TagAnswer = "answer", TagRead = "read", TagTransactions = "transactions";
 }
 
-public sealed record LinkHello(string Role, string Id, string RunId, int Pid, string? CustodyPath);
+/// <summary>The first frame each way. LastSeqReceived tells the other side where to replay from; 0 on a fresh station.</summary>
+public sealed record LinkHello(string Role, string Id, string RunId, int Pid, string? CustodyPath, long LastSeqReceived = 0);
 
 /// <summary>A log line flattened for the wire: properties as strings.</summary>
 public sealed record WireLog(DateTimeOffset At, string Source, string Message, LogSeverity Severity, Dictionary<string, string?> Props)

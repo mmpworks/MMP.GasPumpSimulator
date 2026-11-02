@@ -970,6 +970,13 @@ public class SimulationTests
         Assert.Equal("PUMP.MTR.OVERPULSE", h.State.FaultCode);
         Assert.True(h.Sim.View.Service.InService);
 
+        // While the metered fuel is being settled the island still holds the transaction, so a card is told the pump is busy.
+        var (tooSoon, _, why) = h.Sim.TryPresentCard("Good");
+        if (!tooSoon) Assert.Contains("settling", why);
+        h.AdvanceUntil(() => h.State.Hold == HoldStatus.Settled, TimeSpan.FromSeconds(2));
+        h.Settle();
+        Assert.Empty(h.Sim.View.OpenTransactions ?? []);          // settled, so the station cleared it
+
         // Nothing to repair, so nothing holds the pump: the next card replaces the finished sale and arms.
         Assert.True(h.TryPresent("Good").Ok);
         h.AdvanceUntilState(SaleState.ReadyToPump, TimeSpan.FromSeconds(5));

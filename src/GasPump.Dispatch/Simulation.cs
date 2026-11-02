@@ -520,6 +520,10 @@ public sealed class Simulation : IDisposable
                 return (false, oldId, $"pump {_service}");
             if (_sale.State is SaleState.Fueling or SaleState.Completing || (_sale.State == SaleState.ReadyToPump && _sale.NozzleOut))
                 return (false, oldId, $"pump in use by {oldId} ({_sale.State}, nozzle {(_sale.NozzleOut ? "out" : "in boot")})");
+            // A sale that ended with fuel delivered and its completion still in flight: the island holds that transaction until
+            // the money lands, so a new card would only be refused by the pump. Say so here instead, before the bank is asked.
+            if (SaleStateMachine.IsTerminal(_sale.State) && _sale.Volume > Volume.Zero && _sale.Hold is HoldStatus.Requested or HoldStatus.Held)
+                return (false, oldId, $"pump in use by {oldId} ({_sale.State}, settling {_sale.Money})");
             if (!_sale.IsOpenAndUntouched)
             {
                 if (_sale.State is not SaleState.Idle) ReplaceSale();
@@ -807,10 +811,29 @@ public sealed class Simulation : IDisposable
             case SaleEvent.ReversalQueued or SaleEvent.CompletionQueued or SaleEvent.Declined or SaleEvent.AuthorizationTimedOut:
                 Log.Write("sale", "{Event} for earlier sale {SaleId} noted", ("Event", e.GetType().Name), ("SaleId", e.SaleId));
                 break;
+            // The dispenser's end-of-delivery report for a sale this station already finished. The money was dealt with
+            // when the sale ended (or there was none to deal with), so the island's transaction can be cleared now.
+            case SaleEvent.NozzleHung { TxSeq: { } tx1 }:
+                ClearOrphanTransaction(e.SaleId, tx1, "hang reported after the sale ended");
+                break;
+            case SaleEvent.CeilingReached { TxSeq: { } tx2 }:
+                ClearOrphanTransaction(e.SaleId, tx2, "ceiling reported after the sale ended");
+                break;
+            case SaleEvent.Fault { TxSeq: { } tx3 }:
+                ClearOrphanTransaction(e.SaleId, tx3, "fault reported after the sale ended");
+                break;
             default:
                 Log.Write("sale", "dropped {Event} for other sale {SaleId}", ("Event", e.GetType().Name), ("SaleId", e.SaleId));
                 break;
         }
+    }
+
+    private void ClearOrphanTransaction(string saleId, long txSeq, string why)
+    {
+        Ledger.Append("tx.clear", $"{saleId} #{txSeq} {why}");
+        Log.Write("sale", "clearing transaction #{TxSeq} for earlier sale {SaleId}: {Why}", ("TxSeq", txSeq), ("SaleId", saleId), ("Why", why));
+        _link.Post(new PumpMessage.Lock(txSeq, "station"), saleId);
+        _link.Post(new PumpMessage.Clear(txSeq, "station"), saleId);
     }
 
     private void Execute(SaleCommand c)
@@ -849,6 +872,12 @@ public sealed class Simulation : IDisposable
             case SaleCommand.Reverse rv:
                 Gateway.Intend(new PendingAdvice(rv.SaleId, PendingKind.Reversal, Money.Zero));
                 _paymentBox.Post(new PaymentMessage.Reverse(rv.SaleId));
+                break;
+            // The money is settled or safely queued. Claim the island's transaction and clear it, so the pump can arm again.
+            case SaleCommand.ClearTransaction ct:
+                Ledger.Append("tx.clear", $"{ct.SaleId} #{ct.TxSeq}");
+                _link.Post(new PumpMessage.Lock(ct.TxSeq, "station"), ct.SaleId);
+                _link.Post(new PumpMessage.Clear(ct.TxSeq, "station"), ct.SaleId);
                 break;
             case SaleCommand.ArmTimer at:
                 lock (_gate)

@@ -229,7 +229,7 @@ public sealed class DispenserServer : IDisposable
     // ----- The small state the dispenser owns across its own restarts: the sealed counter and the burned nonces.
 
     /// <summary>Conditions lists the broken parts. Restarting the software repairs nothing on the island.</summary>
-    private sealed record DispenserState(long TotalizerMilliGallons, List<string> Nonces, List<string>? Conditions = null);
+    private sealed record DispenserState(long TotalizerMilliGallons, List<string> Nonces, List<string>? Conditions = null, long TxSeq = 0, List<PumpTransaction>? Transactions = null);
 
     private void RestoreState()
     {
@@ -240,6 +240,12 @@ public sealed class DispenserServer : IDisposable
             if (s is null) return;
             Dispenser.Totalizer.Restore(new Volume(s.TotalizerMilliGallons));
             Dispenser.Nonces.Import(s.Nonces);
+            if (s.Transactions is { Count: > 0 } tx || s.TxSeq > 0)
+            {
+                Dispenser.Pump.Transactions.Restore(s.TxSeq, s.Transactions ?? []);
+                var open = Dispenser.Pump.Transactions.Open;
+                if (open.Count > 0) Log.Warn("dispenser", "restarted holding {Count} unpaid delivery(s): {Tx}", ("Count", open.Count), ("Tx", string.Join(", ", open.Select(t => $"#{t.TxSeq} {t.SaleId} {t.Money}"))));
+            }
             if (s.Conditions is { Count: > 0 } c)
             {
                 Dispenser.RestoreConditions(c);
@@ -252,7 +258,8 @@ public sealed class DispenserServer : IDisposable
     private void SaveState()
     {
         if (_statePath is null) return;
-        var s = new DispenserState(Dispenser.Totalizer.Total.MilliGallons, Dispenser.Nonces.Export().ToList(), Dispenser.ConditionCodes.ToList());
+        var (txSeq, txItems) = Dispenser.Pump.Transactions.Export();
+        var s = new DispenserState(Dispenser.Totalizer.Total.MilliGallons, Dispenser.Nonces.Export().ToList(), Dispenser.ConditionCodes.ToList(), txSeq, txItems.ToList());
         var tmp = _statePath + ".tmp";
         try
         {

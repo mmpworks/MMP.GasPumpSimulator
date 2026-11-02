@@ -100,6 +100,10 @@ public static class DiagnosticCodes
     public static readonly DiagnosticCode TankFuelOut = new("TANK.FUELOUT", "underground tank",
         "product below the fuel-out level: supply to the pumps stops",
         ServiceAction.SupplyRestored);
+    /// <summary>The socket is open and the dispenser has stopped sending heartbeats. The device, not the transport.</summary>
+    public static readonly DiagnosticCode LinkDispenserSilent = new("LINK.DISPENSER.SILENT", "dispenser link",
+        "the dispenser missed its heartbeats while the socket stayed open: the device is hung or overloaded",
+        ServiceAction.LinkRestored);
     public static readonly DiagnosticCode LinkDispenserLost = new("LINK.DISPENSER.LOST", "dispenser link",
         "the station lost the dispenser mid-sale: the sale closes for the fuel recorded so far; the dispenser's own limits bound the rest",
         ServiceAction.LinkRestored);
@@ -107,7 +111,7 @@ public static class DiagnosticCodes
     public static IReadOnlyList<DiagnosticCode> All { get; } =
     [
         PumpSupplyNoFlow, PumpMeterNoPulse, PumpMeterOverPulse, PumpMeterStray, PumpCeilingOverrun, PumpMaxTime,
-        PumpHoseBreakaway, PumpClosed, StationEStop, TankFuelOut, LinkDispenserLost,
+        PumpHoseBreakaway, PumpClosed, StationEStop, TankFuelOut, LinkDispenserLost, LinkDispenserSilent,
     ];
 
     public static DiagnosticCode? Find(string code) => All.FirstOrDefault(c => c.Code == code);

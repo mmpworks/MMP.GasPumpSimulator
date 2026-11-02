@@ -41,7 +41,9 @@ public sealed record DispenserView(
     bool LedgerIntact,
     string? CustodyPath,
     /// <summary>The conditions holding the pump out of service. The station tells the sale whenever this changes.</summary>
-    ServiceStatus Service)
+    ServiceStatus Service,
+    /// <summary>Delivered transactions the island still holds for the station. Empty is the normal resting state.</summary>
+    IReadOnlyList<PumpTransaction>? OpenTransactions = null)
 {
     /// <summary>The pump is out of service from the station's side: no dispenser has answered, or the link dropped.</summary>
     private static readonly ServiceStatus LinkLost = new([DiagnosticCodes.LinkDispenserLost.Code]);
@@ -145,7 +147,7 @@ public sealed class Dispenser
                 var wasCalling = Pump.Phase == PumpPhase.Calling;
                 var ended = Pump.HangNozzle();
                 // After a pour this ends the delivery. Before a pour, or while the pump was only calling, the sale machine notes it.
-                if (ended || armedBefore || wasCalling) events.Add(new SaleEvent.NozzleHung(saleId));
+                if (ended || armedBefore || wasCalling) events.Add(new SaleEvent.NozzleHung(saleId, ended ? Pump.TransactionFor(saleId) : null));
                 break;
 
             case PumpMessage.CloseForSales close:
@@ -162,7 +164,17 @@ public sealed class Dispenser
                 // A close that interrupts a pour ends the delivery, and the sale must hear it to settle for the fuel.
                 var pouring = Pump.Phase is PumpPhase.Dispensing or PumpPhase.Paused;
                 Pump.CloseValve(close.Reason);
-                if (pouring) events.Add(new SaleEvent.NozzleHung(close.SaleId));
+                if (pouring) events.Add(new SaleEvent.NozzleHung(close.SaleId, Pump.TransactionFor(close.SaleId)));
+                break;
+
+            case PumpMessage.Lock lk:
+                var locked = Pump.Transactions.Lock(lk.TxSeq, lk.By);
+                if (!locked.Ok) Log.Warn("pump", "lock #{TxSeq} refused: {Reason}", ("TxSeq", lk.TxSeq), ("Reason", locked.Reason));
+                break;
+
+            case PumpMessage.Clear clr:
+                var cleared = Pump.Transactions.Clear(clr.TxSeq, clr.By);
+                if (!cleared.Ok) Log.Warn("pump", "clear #{TxSeq} refused: {Reason}", ("TxSeq", clr.TxSeq), ("Reason", cleared.Reason));
                 break;
 
             case PumpMessage.Stop stop:
@@ -193,7 +205,7 @@ public sealed class Dispenser
                     // because a paused pump has no tick that would notice the coupling.
                     Pump.EmergencyStop(DiagnosticCodes.PumpHoseBreakaway, "breakaway coupling separated during delivery");
                     Log.Error("pump", "FAULT {Code} {Fault}", ("Code", Pump.LastFaultCode), ("Part", DiagnosticCodes.PumpHoseBreakaway.Part), ("Fault", Pump.LastFault));
-                    events.Add(new SaleEvent.Fault(saleId, Pump.LastFault!, Pump.LastFaultCode));
+                    events.Add(new SaleEvent.Fault(saleId, Pump.LastFault!, Pump.LastFaultCode, Pump.TransactionFor(saleId)));
                 }
                 else
                 {
@@ -215,16 +227,16 @@ public sealed class Dispenser
                 {
                     var part = t.FaultCode is { } fc ? DiagnosticCodes.Find(fc)?.Part : null;
                     Log.Error("pump", "FAULT {Code} {Fault}", ("Code", t.FaultCode), ("Part", part), ("Fault", t.Fault));
-                    events.Add(new SaleEvent.Fault(saleId, t.Fault, t.FaultCode));
+                    events.Add(new SaleEvent.Fault(saleId, t.Fault, t.FaultCode, Pump.TransactionFor(saleId)));
                 }
                 else if (t.CeilingReached)
                 {
-                    events.Add(new SaleEvent.CeilingReached(saleId, t.Volume, t.Money, t.Lines));
+                    events.Add(new SaleEvent.CeilingReached(saleId, t.Volume, t.Money, t.Lines, Pump.TransactionFor(saleId)));
                 }
                 else if ((before is PumpPhase.Dispensing or PumpPhase.Paused) && t.Stopped)
                 {
                     // Stopped for a non-ceiling reason inside Tick (max duration). Report as hung so the sale completes.
-                    events.Add(new SaleEvent.NozzleHung(saleId));
+                    events.Add(new SaleEvent.NozzleHung(saleId, Pump.TransactionFor(saleId)));
                 }
                 else if (t.Phase == PumpPhase.Dispensing)
                 {
@@ -262,7 +274,7 @@ public sealed class Dispenser
     public DispenserView View(string runId, int pid, string? custodyPath) => new(
         Options.PumpId, runId, pid, Pump.Phase.ToString(), Pump.LastFault, Pump.LastFaultCode, Totalizer.Total.MilliGallons,
         Pump.NozzleLifted, Pump.SpoutInserted, Pump.LeverHeld, Pump.SelectedGrade, Pump.Poured,
-        Pump.SupplyAvailable, Pump.BreakawayOpen, Meter.PulserDead, Pump.Armed, Ledger.Verify() == 0, custodyPath, Pump.Service);
+        Pump.SupplyAvailable, Pump.BreakawayOpen, Meter.PulserDead, Pump.Armed, Ledger.Verify() == 0, custodyPath, Pump.Service, Pump.Transactions.Open);
 }
 
 /// <summary>
