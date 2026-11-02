@@ -3,7 +3,7 @@
 // station on a loopback port. Arm needs a valid signed token. When the station cuts
 // the power it ends.
 //
-//   GasPump.Dispenser --port 5178 --pump PUMP-07 --strategy threaded --log-dir <dir>
+//   GasPump.Dispenser --port 5278 --pump PUMP-07 --strategy threaded --log-dir <dir>
 //
 // The directory holds the site key (custody.ikm) both processes read, the dispenser's
 // chain (dispenser-custody-<run>.ndjson), its Herald log (dispenser-<stamp>.ndjson), and
@@ -16,11 +16,11 @@ using MMP.Herald.Quick;
 
 string Arg(string name, string fallback) => args.SkipWhile(a => a != name).Skip(1).FirstOrDefault() ?? fallback;
 
-var port = int.Parse(Arg("--port", "5178"));
+var port = int.Parse(Arg("--port", "5278"));
 var pumpId = Arg("--pump", "PUMP-07");
 var strategyName = Arg("--strategy", "threaded");
 var logDir = Arg("--log-dir", Environment.GetEnvironmentVariable("GASPUMP_LOG_DIR")
-    ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "MMP.GasPumpSimulator", "logs"));
+    ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "MMP.GasPumpSimulator-samms", "logs"));
 Directory.CreateDirectory(logDir);
 
 var clock = TimeProvider.System;

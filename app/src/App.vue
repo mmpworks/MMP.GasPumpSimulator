@@ -22,7 +22,7 @@ const dispenserTitle = computed(() => {
 <template>
   <v-app>
     <v-app-bar density="compact" flat color="surface">
-      <v-app-bar-title class="text-subtitle-1 font-weight-bold">Gas Pump Simulator</v-app-bar-title>
+      <v-app-bar-title class="text-subtitle-1 font-weight-bold" data-testid="station-name">Samms</v-app-bar-title>
       <v-chip :color="connected ? 'success' : 'error'" class="mr-2">{{ connected ? 'station connected' : 'connecting to station' }}</v-chip>
       <v-chip v-if="state" color="info" class="mr-2">dispatch: {{ state.strategy }}</v-chip>
       <v-chip v-if="d" :color="d.link === 'socket' ? 'warning' : undefined" class="mr-4">{{ d.link === 'socket' ? 'two processes, TCP ' + d.port : 'one process' }}</v-chip>
@@ -57,7 +57,7 @@ const dispenserTitle = computed(() => {
               <div class="side-head">
                 <v-icon size="18">mdi-server</v-icon>
                 <span class="side-title">STATION · GasPump.Host.exe pid {{ st?.pid ?? '-' }}</span>
-                <span class="muted">http {{ st?.port ?? 5177 }} · journal run {{ st?.runId ?? '-' }} · chain {{ basename(st?.custodyPath) || '-' }}</span>
+                <span class="muted">http {{ st?.port ?? 5277 }} · journal run {{ st?.runId ?? '-' }} · chain {{ basename(st?.custodyPath) || '-' }}</span>
               </div>
               <Splitpanes class="pump-theme" horizontal>
                 <Pane :size="36" :min-size="18"><PaymentPanel /></Pane>

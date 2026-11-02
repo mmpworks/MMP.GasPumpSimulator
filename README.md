@@ -17,7 +17,7 @@ A pay-at-the-pump fuel dispenser, simulated. Present a card, get a two-phase aut
 9. **Two files, two jobs.** The Herald.OSS NDJSON file is for debugging and takes everything. The custody file is for audit: an append-only, HMAC-chained record written by TesseraSeal's `ImmutableAuditFileSink`, one chain per run, carrying the ledger, the sale open and close, the money outcomes, the admin attempts, and the attacks. TesseraSeal's verifier checks it from the Ledger tab, and a single changed byte names the entry that broke.
 10. **Forecourt faults with diagnostic codes.** Tank runs dry, pulser dies, drive-off. Each is caught by a disagreement between two facts the controller already has, names its part with a code such as `PUMP.STP.NOFLOW`, settles for the fuel that was metered, and tells the driver the right next step. The same code sits in the log, the ledger, and the custody file. `docs/diagnostics.md` is the table.
 11. **E-stop.** One button, station-wide. The record is written before the power drops, so the cashier's reset closes the open sale with nothing unrecorded.
-12. **Custody stream.** Every custody line goes out byte for byte as it lands. A station server keeps its own copy per run and verifies it with the same verifier. `ws://localhost:5177/ws/custody` is the same stream for anything outside.
+12. **Custody stream.** Every custody line goes out byte for byte as it lands. A station server keeps its own copy per run and verifies it with the same verifier. `ws://localhost:5277/ws/custody` is the same stream for anything outside.
 13. **Card at the pump or at the station.** Insert or tap at the pump's own reader, or hand the card or cash to the cashier. A station sale waits 300 s for the lift, because the cashier can cancel by hand; a pump sale waits 120 s. A new card on an approved sale nobody touched cancels it, reverses its hold, and starts over. A pump with a nozzle in hand refuses the new card.
 14. **Two processes.** The dispenser runs in `GasPump.Dispenser.exe` and the station in `GasPump.Host.exe`, joined by TCP on localhost. The pump's hard limits, authority, nonces, totalizer, ledger, and chain live in the dispenser process; the sale, the money, the journal, and the copy of the dispenser's chain live in the station. Pull either plug and watch the other side stay safe. The app shows them as two columns, amber and blue, with the wire between them.
 15. **Logging on Herald.OSS.** Every worker writes structured events through [Herald.OSS](https://github.com/mmpworks/Herald.OSS) 0.14.0. A bridge sink feeds the UI stream and the tests; the host adds a console sink and an NDJSON file per session so a run can be reviewed later with every property intact.
@@ -26,18 +26,22 @@ A pay-at-the-pump fuel dispenser, simulated. Present a card, get a two-phase aut
 18. **Nine fuelling-point states.** The pump has every state the forecourt standard names. Two were added last: `Calling`, a nozzle lifted with no sale, where the pump asks the station for an authorization and a card then arms it without a second lift; and `Closed`, the operator's switch, where every part works and every sale is refused until the cashier opens it again. Closed is never a fault, finishes a delivery in progress first, and survives a restart of either process.
 19. **Concurrency.** Three workers (sale, pump, and payment) pass messages through bounded mailboxes and share no state. How they run is a Strategy: `ThreadedDispatch` is a thread per worker with blocking queues. `ChannelDispatch` is a Task per worker over bounded channels. `AsyncProxyDispatch` is the 2008 machine without the 2008 threads: each worker is an iterator-driven state machine from [MMP.AsyncProxy](https://github.com/mmpworks/MMP.AsyncProxy), its loop yields a future for the next message, and the loop resumes on a pool thread when one is posted. Every piece of it would compile for .NET 3.5. One end-to-end test runs the same sale under all three.
 
+## Samms
+
+This branch (`station/samms`) is the `v0.1.0` release with a name on the door. It is **Samms**, the station across the street from **Howard's** (the current `main` of MMP.GasPumpSimulator). The two run side by side on one machine: Samms on ports `5277` and `5278` with logs under `%LOCALAPPDATA%\MMP.GasPumpSimulator-samms\logs`, Howard's on `5177` and `5178`. The code below the paint is the first release, untouched, so the two windows show how far the simulator has come.
+
 ## Run it
 
 ```
 dotnet test                       # 348 tests, about 105 s: most on a fake clock under all three dispatch strategies, 6 over a real TCP socket
 cd app && npm run e2e             # 12 Playwright specs against the two live processes: sales, faults and repairs, the E-stop, the layout; about 2 min
-dotnet run --project src/GasPump.Host -- --strategy threaded                 # station; spawns the dispenser on port 5178
+dotnet run --project src/GasPump.Host -- --strategy threaded                 # station; spawns the dispenser on port 5278
 dotnet run --project src/GasPump.Host -- --dispenser inproc                  # the old single process
-dotnet run --project src/GasPump.Dispenser -- --port 5178                    # a dispenser by hand, in its own terminal; the station adopts it
+dotnet run --project src/GasPump.Dispenser -- --port 5278                    # a dispenser by hand, in its own terminal; the station adopts it
 cd app && npm install && npm run build && npx electron .
 ```
 
-The Electron app starts the host for you on `localhost:5177`. Set `GASPUMP_STRATEGY=channel` or `GASPUMP_STRATEGY=asyncproxy` to run the Task-and-Channel or the AsyncProxy dispatch instead of threads. Set `GASPUMP_HOST=external` if you started the host yourself with `dotnet run --project src/GasPump.Host -- --strategy asyncproxy`.
+The Electron app starts the host for you on `localhost:5277`. Set `GASPUMP_STRATEGY=channel` or `GASPUMP_STRATEGY=asyncproxy` to run the Task-and-Channel or the AsyncProxy dispatch instead of threads. Set `GASPUMP_HOST=external` if you started the host yourself with `dotnet run --project src/GasPump.Host -- --strategy asyncproxy`.
 
 MMP.AsyncProxy is a sibling checkout, referenced by project from `..\MMP.AsyncProxy` until the package publishes. Point elsewhere with `-p:AsyncProxyProjectPath=<path to MMP.AsyncProxy.csproj>`. TesseraSeal's chain code is compiled in from the sibling `..\Herald\Modules\Herald.Compliance\src\Audit` checkout by source link; point elsewhere with `-p:HeraldCompliancePath=<that folder>`.
 

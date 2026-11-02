@@ -7,7 +7,7 @@ using GasPump.Host;
 using GasPump.Payment;
 
 var builder = WebApplication.CreateBuilder(args);
-builder.WebHost.UseUrls("http://localhost:5177");
+builder.WebHost.UseUrls("http://localhost:5277");
 builder.Services.AddCors(o => o.AddDefaultPolicy(p => p.AllowAnyOrigin().AllowAnyHeader().AllowAnyMethod()));
 builder.Services.ConfigureHttpJsonOptions(o =>
 {
@@ -17,11 +17,11 @@ builder.Services.ConfigureHttpJsonOptions(o =>
 
 // --strategy threaded|channel|asyncproxy. Threaded is the default so the "old way" is what you see first.
 // --dispenser socket|inproc. Socket is the default: the pump runs in GasPump.Dispenser.exe and this process is the station.
-// --dispenser-port 5178.
+// --dispenser-port 5278.
 string Arg(string name, string fallback) => args.SkipWhile(a => a != name).Skip(1).FirstOrDefault() ?? fallback;
 var strategyName = Arg("--strategy", "threaded");
 var dispenserMode = Arg("--dispenser", "socket");
-var dispenserPort = int.Parse(Arg("--dispenser-port", "5178"));
+var dispenserPort = int.Parse(Arg("--dispenser-port", "5278"));
 var clock = TimeProvider.System;
 
 // One directory holds the files of both processes: the station's Herald log (gaspump-*.ndjson), the state journal
@@ -29,7 +29,7 @@ var clock = TimeProvider.System;
 // log (dispenser-*.ndjson), chain (dispenser-custody-DSP-*.ndjson), state (dispenser-state-PUMP-07.json), and the
 // station's copy of the dispenser's chain (station-copy-*.ndjson). GASPUMP_LOG_DIR overrides the folder.
 var logDir = Environment.GetEnvironmentVariable("GASPUMP_LOG_DIR")
-    ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "MMP.GasPumpSimulator", "logs");
+    ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "MMP.GasPumpSimulator-samms", "logs");
 Directory.CreateDirectory(logDir);
 var heraldLogPath = Path.Combine(logDir, $"gaspump-{DateTime.Now:yyyyMMdd-HHmmss}.ndjson");
 
@@ -243,7 +243,7 @@ app.Map("/ws", async (HttpContext ctx) =>
 
 app.Lifetime.ApplicationStopping.Register(() => { station.Dispose(); simHost.Dispose(); dispenserProcess?.Dispose(); });
 Sim().Log.Write("host", "station pid {Pid} listening on {Url} with {Dispatch} dispatch, dispenser via {Link}{Port}, Herald.OSS log at {LogPath}, custody at {Custody}",
-    ("Pid", Environment.ProcessId), ("Url", "http://localhost:5177"), ("Dispatch", Sim().StrategyName), ("Link", Sim().Link.Kind), ("Port", options.Dispenser is { } d ? $" port {d.Port}" : ""), ("LogPath", heraldLogPath), ("Custody", Sim().CustodyPath));
+    ("Pid", Environment.ProcessId), ("Url", "http://localhost:5277"), ("Dispatch", Sim().StrategyName), ("Link", Sim().Link.Kind), ("Port", options.Dispenser is { } d ? $" port {d.Port}" : ""), ("LogPath", heraldLogPath), ("Custody", Sim().CustodyPath));
 app.Run();
 
 record CardRequest(string Name, Grade? Grade, Tender? Tender, CardSource? Source);

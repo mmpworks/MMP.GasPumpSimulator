@@ -24,7 +24,7 @@ export default defineConfig({
   webServer: [
     {
       command: 'dotnet run --project ../src/GasPump.Host -- --strategy threaded',
-      url: 'http://localhost:5177/api/state',
+      url: 'http://localhost:5277/api/state',
       timeout: 180_000,
       reuseExistingServer: false,
       env: { GASPUMP_LOG_DIR: logDir },

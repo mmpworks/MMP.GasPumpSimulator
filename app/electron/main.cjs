@@ -7,7 +7,7 @@ const { spawn } = require('node:child_process')
 const path = require('node:path')
 const http = require('node:http')
 
-const HOST_URL = 'http://localhost:5177'
+const HOST_URL = 'http://localhost:5277'
 let host = null
 
 function startHost() {
@@ -42,8 +42,8 @@ async function createWindow() {
   const win = new BrowserWindow({
     width: 1360,
     height: 900,
-    title: 'Gas Pump Simulator',
-    backgroundColor: '#0f1115',
+    title: 'Samms · Gas Pump Simulator 0.1.0',
+    backgroundColor: '#15100f',
     webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true },
   })
   const devUrl = process.env.VITE_DEV_SERVER_URL

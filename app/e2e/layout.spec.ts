@@ -24,6 +24,6 @@ test.describe('panels', () => {
     await expect(page.locator('.side.dispenser .side-title')).toContainText(/DISPENSER · GasPump\.Dispenser\.exe pid \d+/)
     await expect(page.locator('.side.station .side-title')).toContainText(/STATION · GasPump\.Host\.exe pid \d+/)
     await expect(page.locator('.link-strip')).toContainText('TCP')
-    await expect(page.locator('.link-strip')).toContainText(':5178')
+    await expect(page.locator('.link-strip')).toContainText(':5278')
   })
 })

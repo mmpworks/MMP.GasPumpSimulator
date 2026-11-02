@@ -20,7 +20,7 @@ public static class Contracts
             station = new
             {
                 pid = Environment.ProcessId,
-                port = 5177,
+                port = 5277,
                 runId = sim.RunId,
                 custodyPath = sim.CustodyPath,
                 estopActive = host?.EStopActive ?? false,

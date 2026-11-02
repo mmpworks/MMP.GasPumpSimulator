@@ -3,7 +3,7 @@
 // the UI never talks to the dispenser process itself. That is the point of the two columns.
 import { reactive, ref } from 'vue'
 
-export const HOST = (window as unknown as { gaspump?: { hostUrl: string } }).gaspump?.hostUrl ?? 'http://localhost:5177'
+export const HOST = (window as unknown as { gaspump?: { hostUrl: string } }).gaspump?.hostUrl ?? 'http://localhost:5277'
 
 export type Origin = 'dispenser' | 'station'
 

@@ -90,7 +90,7 @@ async function verifyCopy() {
           <div class="row-wrap mb-2">
             <v-btn size="small" prepend-icon="mdi-server-network" @click="verifyCopy">Verify copy of dispenser chain</v-btn>
             <v-chip v-if="copyVerdict" size="small" :color="copyVerdict.ok ? 'success' : 'error'">{{ copyVerdict.text }}</v-chip>
-            <span v-else class="muted">{{ state?.station.custodyLinesReceived ?? 0 }} lines received · {{ basename(state?.station.custodyCopyPath) || '-' }} · also on ws://localhost:5177/ws/custody</span>
+            <span v-else class="muted">{{ state?.station.custodyLinesReceived ?? 0 }} lines received · {{ basename(state?.station.custodyCopyPath) || '-' }} · also on ws://localhost:5277/ws/custody</span>
           </div>
         </template>
         <div v-if="custody" class="muted">{{ custody.files.length }} chain file{{ custody.files.length === 1 ? '' : 's' }} on disk from both sides</div>

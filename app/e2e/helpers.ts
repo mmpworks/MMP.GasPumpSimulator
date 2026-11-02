@@ -1,6 +1,6 @@
 import { expect, type Page, type APIRequestContext } from '@playwright/test'
 
-export const HOST = 'http://localhost:5177'
+export const HOST = 'http://localhost:5277'
 
 /** The station's own view of the world, straight from the host, for assertions the screen cannot carry. */
 export async function state(request: APIRequestContext) {

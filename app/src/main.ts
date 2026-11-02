@@ -14,20 +14,20 @@ const vuetify = createVuetify({
   directives,
   icons: { defaultSet: 'mdi', aliases, sets: { mdi } },
   theme: {
-    defaultTheme: 'pump',
+    defaultTheme: 'samms',
     themes: {
-      pump: {
+      samms: {
         dark: true,
         colors: {
-          background: '#0f1115',
-          surface: '#171a21',
-          'surface-variant': '#202633',
-          primary: '#1f6feb',
-          secondary: '#58a6ff',
-          success: '#3fb950',
-          warning: '#d29922',
-          error: '#f85149',
-          info: '#58a6ff',
+          background: '#15100f',
+          surface: '#1f1715',
+          'surface-variant': '#2a1f1c',
+          primary: '#c0392b',
+          secondary: '#e8b04a',
+          success: '#58c26a',
+          warning: '#e8b04a',
+          error: '#ff5c4d',
+          info: '#e8b04a',
         },
       },
     },
