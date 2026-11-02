@@ -62,6 +62,20 @@ Each entry gives the trade term, what it is, and the names the code uses for it.
 | **CAN bus** | A multi-master serial bus made for short noisy runs between controller boards. It appears **inside** some dispenser cabinets, between the pump control board, pulser and valve drivers, and displays. It is not the station-to-dispenser link. | Nothing. The simulator's `PumpController` talks to `Hydraulics` and `Meter` as in-process objects, which stands in for whatever bus a cabinet uses internally |
 | **Connected dispenser (IoT)** | A dispenser with its own network identity that reports totals, faults, and tamper events to a cloud service, takes price and software updates over the air, and plays media on its screen. Both large makers sell this. It widens the attack surface, which is why the custody chain and "the pump pumps only under its own limits" matter more as dispensers connect. | The custody stream and the station's verified copy are the simulator's version of a dispenser reporting out; the hard limits in `PumpAuthority` are its defense |
 
+## The payment path
+
+| Term | What it is | In the code |
+|---|---|---|
+| **POS** | The register the cashier uses. Takes a card or cash at the counter and tells the forecourt controller which pump to authorize for how much. | `CardSource.Station`, `Simulation.PayCash`, the station column of the UI |
+| **Forecourt controller (FCC, FDC)** | The one owner of every pump's state: idle, authorized for this much, delivering, delivered and unpaid. Every authorization, from the counter or from the pump's own reader, passes through it, and it allows one authorization per pump at a time. Often part of the POS system, sometimes its own box. | `Simulation` (the sale worker and `SaleStateMachine`), `BeginSale` (one open sale per pump), `IDispenserLink` |
+| **EPS (electronic payment server)** | The one box in the store that talks to the card processor. The cashier's reader and every pump's reader all feed it. It asks for the hold, signs the token, settles the final amount, and keeps the store-and-forward queue. | `PaymentGateway`, `TokenSigner`, `PendingAdvice` |
+| **Outdoor payment terminal (OPT; Gilbarco CRIND)** | The card reader, PIN pad, and small screen on the dispenser, with a secure processor that encrypts the card at the read head. It is a terminal of the store's EPS, not a payment processor of its own. Card data goes terminal, store network, EPS; it never rides the forecourt protocol and the pump controller never sees it. | Modeled only as `CardSource.PumpInsert` / `PumpTap`: the pump's reader posts `CardPresented` to the station. No terminal exists in the dispenser process, which is the truth of the real layout |
+| **Payment host (processor, acquirer)** | The company on the far end of the store's internet link that routes the request to the card's bank and returns the answer. The link is broadband with a cellular backup; older sites used dial-up or satellite. | `NetworkSimulator` is the link, `IssuerSimulator` is the bank. The processor in between is folded into the two |
+| **Pay at pump** | Card read at the OPT, hold from the EPS, authorization from the FCC to the dispenser, settlement at hang-up. | The default path in every sale test |
+| **Pay at the counter (prepay)** | Card or cash at the POS, same EPS, same FCC message to the same pump. The pump cannot tell this path from pay at pump. | `CardSource.Station`, `PayCash`; the 300 s lift wait because the cashier can cancel by hand |
+| **Postpay (pay inside after fueling)** | The cashier lets a pump run, the FCC holds the delivered sale against that pump as unpaid, the driver pays at the counter, the pump stays locked until the sale is cleared. | Not modeled |
+| **Stand-in (offline) authorization** | When the link to the processor is down, the EPS may approve small sales itself up to a floor limit, store them, and send them when the link returns. The station carries the risk. | Half modeled: `StoreAndForward` sends completions and reversals later. Offline approval is not modeled; a dead link declines |
+
 ## Software words that stay software words
 
 | Term | Meaning here |
