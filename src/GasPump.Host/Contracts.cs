@@ -8,10 +8,11 @@ namespace GasPump.Host;
 /// <summary>The JSON the UI sees. One shape for the REST snapshot and the socket push.</summary>
 public static class Contracts
 {
-    public static object State(Simulation sim, SimulationHost? host = null, StationServer? station = null, DispenserProcess? process = null)
+    public static object State(Simulation sim, SimulationHost? host = null, StationServer? station = null, DispenserProcess? process = null, StationIdentity? identity = null)
     {
         var s = sim.Snapshot();
         var link = sim.Link;
+        var who = identity ?? StationIdentity.Default;
         return new
         {
             type = "state",
@@ -19,8 +20,10 @@ public static class Contracts
             pumpId = sim.Options.PumpId,
             station = new
             {
+                name = who.Name,
+                theme = who.Theme,
                 pid = Environment.ProcessId,
-                port = 5177,
+                port = who.Port,
                 runId = sim.RunId,
                 custodyPath = sim.CustodyPath,
                 estopActive = host?.EStopActive ?? false,

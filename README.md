@@ -40,6 +40,21 @@ cd app && npm install && npm run build && npx electron .
 
 The Electron app starts the host for you on `localhost:5177`. Set `GASPUMP_STRATEGY=channel` or `GASPUMP_STRATEGY=asyncproxy` to run the Task-and-Channel or the AsyncProxy dispatch instead of threads. Set `GASPUMP_HOST=external` if you started the host yourself with `dotnet run --project src/GasPump.Host -- --strategy asyncproxy`.
 
+### Two stations across the street
+
+The station carries a name, a theme, and two ports, all from the environment. The defaults are **Howard's** on `5177` and `5178` with the green-and-amber theme. Start a second station with its own values and both run on one machine, each with its own dispenser process, log folder, and journal:
+
+```
+set GASPUMP_STATION=Samms
+set GASPUMP_THEME=samms
+set GASPUMP_PORT=5277
+set GASPUMP_DISPENSER_PORT=5278
+set GASPUMP_LOG_DIR=%LOCALAPPDATA%\MMP.GasPumpSimulator\samms\logs
+cd app && npx electron .
+```
+
+The host answers `station.name` and `station.theme` in `/api/state`; the renderer sets its title and its colours from them. Two themes ship: `howards` and `samms`. The `v0.1.0` tag, run from a second clone with those values, is Samms: the station as it stood at the first release, across the street from the current one.
+
 MMP.AsyncProxy is a sibling checkout, referenced by project from `..\MMP.AsyncProxy` until the package publishes. Point elsewhere with `-p:AsyncProxyProjectPath=<path to MMP.AsyncProxy.csproj>`. TesseraSeal's chain code is compiled in from the sibling `..\Herald\Modules\Herald.Compliance\src\Audit` checkout by source link; point elsewhere with `-p:HeraldCompliancePath=<that folder>`.
 
 ### The files on disk

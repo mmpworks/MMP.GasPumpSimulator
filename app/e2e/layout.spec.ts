@@ -20,6 +20,12 @@ test.describe('panels', () => {
     expect(shrunk[0] + shrunk[1] + shrunk[2]).toBeGreaterThan(before[0] + before[1] + before[2] - 40)
   })
 
+  test('the station names itself and the page wears its theme', async ({ page }) => {
+    await expect(page.getByTestId('station-name')).toHaveText("Howard's")
+    await expect(page.locator('html')).toHaveAttribute('data-theme', 'howards')
+    await expect(page).toHaveTitle("Howard's · Gas Pump Simulator")
+  })
+
   test('both columns name their own process and the strip names the wire', async ({ page }) => {
     await expect(page.locator('.side.dispenser .side-title')).toContainText(/DISPENSER · GasPump\.Dispenser\.exe pid \d+/)
     await expect(page.locator('.side.station .side-title')).toContainText(/STATION · GasPump\.Host\.exe pid \d+/)
