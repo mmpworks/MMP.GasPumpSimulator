@@ -4,7 +4,7 @@ using GasPump.Payment;
 
 namespace GasPump.Dispatch;
 
-/// <summary>What the sale worker and the driver send the pump worker. Note what is missing: there is no SetCeiling. The JSON attributes let the same record cross the socket to a dispenser process.</summary>
+/// <summary>What the sale worker and the driver send the pump worker. There is no SetCeiling message. The JSON attributes let the same record cross the socket to a dispenser process.</summary>
 [JsonPolymorphic(TypeDiscriminatorPropertyName = "$m")]
 [JsonDerivedType(typeof(Arm), nameof(Arm))]
 [JsonDerivedType(typeof(Close), nameof(Close))]

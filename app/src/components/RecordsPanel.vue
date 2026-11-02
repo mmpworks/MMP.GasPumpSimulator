@@ -2,8 +2,8 @@
 import { ref, computed, onMounted, watch } from 'vue'
 import { api, log, ledger, state, basename, type Origin } from '../sim'
 
-// One side's records: its log, its ledger, its chain. The origin is stamped by the station host on every
-// record: over the socket it is a fact of which process sent it, in-process it is read off the record.
+// One side's records: its log, its ledger, its chain. The station host stamps an origin on every record.
+// Over the socket the origin is the process that sent the record. In-process, it is read off the record.
 const props = defineProps<{ origin: Origin }>()
 const isDispenser = computed(() => props.origin === 'dispenser')
 

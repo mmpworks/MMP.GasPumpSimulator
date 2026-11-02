@@ -3,9 +3,10 @@ using System.Threading.Channels;
 namespace GasPump.Dispatch;
 
 /// <summary>
-/// The modern answer. A Task per worker that awaits a bounded Channel, so a
-/// worker with nothing to do holds no thread at all. Same three rules as the
-/// interface, same handlers, same tests. Only the plumbing changed.
+/// The modern strategy. Each worker is a Task that awaits a bounded Channel, so
+/// a worker with nothing to do holds no thread. The three rules from the
+/// interface apply, with the same handlers and the same tests. Only the
+/// plumbing changed.
 /// </summary>
 public sealed class ChannelDispatch(TimeProvider clock) : IDispatchStrategy
 {

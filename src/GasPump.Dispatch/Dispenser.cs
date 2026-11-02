@@ -136,7 +136,7 @@ public sealed class Dispenser
             case PumpMessage.Hang:
                 var armedBefore = Pump.Armed is not null;
                 var ended = Pump.HangNozzle();
-                // Ends the delivery after a pour; before a pour the sale machine just notes it.
+                // After a pour this ends the delivery. Before a pour the sale machine only notes it.
                 if (ended || armedBefore) events.Add(new SaleEvent.NozzleHung(saleId));
                 break;
 
@@ -179,7 +179,7 @@ public sealed class Dispenser
                 }
                 else
                 {
-                    // Not mid-delivery: the sensor still records it, and the next arm is refused until the attendant resets.
+                    // Outside a delivery the sensor still records it, and the next arm is refused until the attendant resets.
                     Ledger.Append("hose.breakaway", DiagnosticCodes.PumpHoseBreakaway.Format($"separated while {Pump.Phase}"));
                     Pump.HangNozzle();
                 }
@@ -222,8 +222,8 @@ public sealed class Dispenser
     }
 
     /// <summary>
-    /// The broken parts as the sensors read them, for a state file. A restart
-    /// of the software repairs nothing on the island, so the next process must
+    /// The broken parts as the sensors read them, for a state file. Restarting
+    /// the software repairs nothing on the island, so the next process has to
     /// start with the same hose, tank, and pulser it was left with.
     /// </summary>
     public IReadOnlyList<string> ConditionCodes => Pump.Service.Codes;

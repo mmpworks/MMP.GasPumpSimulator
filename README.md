@@ -20,13 +20,13 @@ A pay-at-the-pump fuel dispenser, simulated. Present a card, get a two-phase aut
 12. **Custody stream.** Every custody line goes out byte for byte as it lands. A station server keeps its own copy per run and verifies it with the same verifier. `ws://localhost:5177/ws/custody` is the same stream for anything outside.
 13. **Card at the pump or at the station.** Insert or tap at the pump's own reader, or hand the card or cash to the cashier. A station sale waits 300 s for the lift, because the cashier can cancel by hand; a pump sale waits 120 s. A new card on an approved sale nobody touched cancels it, reverses its hold, and starts over. A pump with a nozzle in hand refuses the new card.
 14. **Two processes.** The dispenser runs in `GasPump.Dispenser.exe` and the station in `GasPump.Host.exe`, joined by TCP on localhost. The pump's hard limits, authority, nonces, totalizer, ledger, and chain live in the dispenser process; the sale, the money, the journal, and the copy of the dispenser's chain live in the station. Pull either plug and watch the other side stay safe. The app shows them as two columns, amber and blue, with the wire between them.
-14. **Logging on Herald.OSS.** Every worker writes structured events through [Herald.OSS](https://github.com/mmpworks/Herald.OSS) 0.14.0. A bridge sink feeds the UI stream and the tests; the host adds a console sink and an NDJSON file per session so a run can be reviewed later with every property intact.
-9. **Concurrency.** Three workers, sale, pump, and payment, pass messages through bounded mailboxes and share no state. How they run is a Strategy: `ThreadedDispatch` is a thread per worker with blocking queues. `ChannelDispatch` is a Task per worker over bounded channels. `AsyncProxyDispatch` is the 2008 machine without the 2008 threads: each worker is an iterator-driven state machine from [MMP.AsyncProxy](https://github.com/mmpworks/MMP.AsyncProxy), its loop yields a future for the next message, and the loop resumes on a pool thread when one is posted. Every piece of it would compile for .NET 3.5. One end-to-end test runs the same sale under all three.
+15. **Logging on Herald.OSS.** Every worker writes structured events through [Herald.OSS](https://github.com/mmpworks/Herald.OSS) 0.14.0. A bridge sink feeds the UI stream and the tests; the host adds a console sink and an NDJSON file per session so a run can be reviewed later with every property intact.
+16. **Concurrency.** Three workers (sale, pump, and payment) pass messages through bounded mailboxes and share no state. How they run is a Strategy: `ThreadedDispatch` is a thread per worker with blocking queues. `ChannelDispatch` is a Task per worker over bounded channels. `AsyncProxyDispatch` is the 2008 machine without the 2008 threads: each worker is an iterator-driven state machine from [MMP.AsyncProxy](https://github.com/mmpworks/MMP.AsyncProxy), its loop yields a future for the next message, and the loop resumes on a pool thread when one is posted. Every piece of it would compile for .NET 3.5. One end-to-end test runs the same sale under all three.
 
 ## Run it
 
 ```
-dotnet test                       # 263 tests, about 80 s: fake clock under three dispatch strategies, plus 6 over a real TCP socket and 4 wire round-trips
+dotnet test                       # 275 tests, about 80 s: most on a fake clock under all three dispatch strategies, 6 over a real TCP socket
 cd app && npm run e2e             # 9 Playwright specs against the two live processes: sales, faults and repairs, the E-stop, the layout; about 2 min
 dotnet run --project src/GasPump.Host -- --strategy threaded                 # station; spawns the dispenser on port 5178
 dotnet run --project src/GasPump.Host -- --dispenser inproc                  # the old single process
@@ -104,7 +104,7 @@ t+ 12s  Fueling      pump=Dispensing  $4.20  1.105 gal   flow resumed
 t+ 13s  Idle         pump=Stopped     $4.26  1.122 gal   nozzle hung, completion $4.26 sent, hold=Settled
 ```
 
-Pull the link **Down** instead and the reversal itself cannot get through. It goes into the same store-and-forward queue as completions, the screen says "A temporary hold may show on your card. It releases automatically when our bank link returns", and **Drain queued** sends it when the link is back. The tests `Late_approval_is_reversed_not_armed_and_the_card_ends_untouched` and `Bank_unreachable_after_timeout_queues_the_reversal_and_releases_when_the_link_returns` run both under each dispatch strategy.
+Pull the link **Down** instead and the reversal itself cannot get through. It goes into the same store-and-forward queue as completions, the screen says "A temporary hold may show on your card. It releases automatically when our bank link returns", and **Drain queued** sends it when the link is back. The tests `Late_approval_is_reversed_not_armed_and_the_card_ends_untouched` and `Bank_unreachable_after_timeout_queues_the_reversal_and_releases_when_the_link_returns` run under every dispatch strategy.
 
 ## Pull the plug
 
@@ -117,7 +117,7 @@ S0001 · Credit · Regular · 1.054 gal for $3.69 · up to 0.167 gal unrecorded 
 
 The ledger carries `recovery.restart` and `recovery.closeout ... DELIVERY LIKELY UNDER-RECORDED by up to 0.167 gal`, the log carries the same at Error level, the hold settles to the recorded money, and the next driver starts clean. Pull the plug while the pump is armed and nothing has poured, and the hold is reversed instead. The tests `Power_loss_mid_fuel_closes_the_sale_for_the_recorded_money_and_flags_under_delivery`, `Power_loss_while_armed_with_no_fuel_reverses_the_hold`, and `Power_loss_during_a_cash_sale_owes_change_for_the_unpumped_part` run under every dispatch strategy.
 
-The under-recording is real and by design. The journal is one second old at worst, so up to one second of flow at the last rate can leave the hose after the last record. The restart says so rather than guessing a number.
+The under-recording is by design. The journal is one second old at worst, so up to one second of flow at the last rate can leave the hose after the last record. The restart reports that bound and doesn't guess a number.
 
 ## Two processes, two plugs
 
@@ -127,7 +127,7 @@ The under-recording is real and by design. The journal is one second old at wors
 
 ## Forecourt faults
 
-A fault is a latched service condition. The part that failed holds the pump out of service until its repair: the attendant resets the breakaway, the tank is refilled, the pulser is repaired, the dispenser reconnects. While a condition holds, the face reads "Out of service" with the part, and the reader and the counter refuse every card and all cash. When the last condition clears, the pump returns to Disarmed and the face reads "Pump back in service" as soon as the bank has settled the faulted sale. Per-sale faults (spoofed or stray pulses) clear on the next arm, as before.
+A fault is a latched service condition. The part that failed holds the pump out of service until its repair: the attendant resets the breakaway, the tank is refilled, the pulser is repaired, the dispenser reconnects. While a condition holds, the face reads "Out of service" with the part, and the reader and the counter refuse every card and all cash. When the last condition clears, the pump returns to Disarmed and the face reads "Pump back in service" as soon as the bank has settled the faulted sale. Per-sale faults (spoofed or stray pulses) clear on the next arm.
 
 In the left column, while fuel is flowing:
 
@@ -142,13 +142,13 @@ Press **Verify custody file** on the Ledger tab: `Status: PASS · 41 lines`. Cha
 
 ## The admin panel, attacked
 
-Two attacks live on the Administrator panel. **Brute-force the PIN** tries 0000, 0001, 0002 and stops: the third wrong PIN locks the panel for five minutes, the ledger shows `admin.refused`, `admin.refused`, `admin.locked`, and nothing changed. **Debit ceiling $5000 with this PIN** needs the real PIN, and then shows why the panel is business logic and the pump is the safety: the bank approves the card's $900, and the pump arms at $500 with `arm.ok ... clamped` in the ledger. The tests `Brute_forcing_the_admin_pin_locks_the_panel_and_changes_nothing` and `Admin_raises_the_debit_ceiling_to_5000_and_the_pump_still_clamps_at_its_hard_limit` run both under each dispatch strategy.
+Two attacks live on the Administrator panel. **Brute-force the PIN** tries 0000, 0001, 0002 and stops: the third wrong PIN locks the panel for five minutes, the ledger shows `admin.refused`, `admin.refused`, `admin.locked`, and nothing changed. **Debit ceiling $5000 with this PIN** needs the real PIN, and then shows why the panel is business logic and the pump is the safety: the bank approves the card's $900, and the pump arms at $500 with `arm.ok ... clamped` in the ledger. The tests `Brute_forcing_the_admin_pin_locks_the_panel_and_changes_nothing` and `Admin_raises_the_debit_ceiling_to_5000_and_the_pump_still_clamps_at_its_hard_limit` run under every dispatch strategy.
 
 ## The 600-gallon case
 
-In 2018 a Detroit station lost about 600 gallons in 90 minutes while the clerk could not stop the pump. The research behind this repo put the fix in one sentence: the reader protects the card, the controller protects the fuel. Two trust boundaries. This simulator builds the second one.
+In 2018 a Detroit station lost about 600 gallons in 90 minutes while the clerk could not stop the pump. The research behind this repo put the fix in one sentence: the reader protects the card, the controller protects the fuel. This simulator builds the second of those two trust boundaries.
 
-Press "Signed token: 600 gal, $2000" in the app, pick a grade, lift, put the nozzle in the tank, and squeeze. That token is signed with the real key, which models an upstream that is fully compromised. The pump authority verifies the signature, then clamps the ceiling to its own limits: 50 gallons, $500. The ledger shows `arm.ok ... clamped from $2000.00/600.000 gal to $500.00/50.000 gal`. Lift the nozzle and it stops at 50.000 gallons and $174.95. The test `Signed_600_gallon_token_is_clamped_to_50_gallons_and_500_dollars` runs that under both dispatch strategies.
+Press "Signed token: 600 gal, $2000" in the app, pick a grade, lift, put the nozzle in the tank, and squeeze. That token is signed with the real key, which models an upstream that is fully compromised. The pump authority verifies the signature, then clamps the ceiling to its own limits: 50 gallons, $500. The ledger shows `arm.ok ... clamped from $2000.00/600.000 gal to $500.00/50.000 gal`. Lift the nozzle and it stops at 50.000 gallons and $174.95. The test `Signed_600_gallon_token_is_clamped_to_50_gallons_and_500_dollars` runs that under every dispatch strategy.
 
 `docs/threat-model.md` lists every attack and the test that proves its control. `docs/research.md` is the sources register: every outside fact the design rests on, with its evidence tier and where it is used.
 
@@ -169,7 +169,7 @@ docs/                  prd, threat model, architecture
 
 ## What this is not
 
-No real card data. No EMV kernel. No PCI claim. No serial pump protocol. One pump, one hose, three grades. One shared HMAC key where a real site would use per-device keys and a MAC counter. Each of these is a stand-in for a shape, and the shape is what the repo teaches.
+No real card data. No EMV kernel. No PCI claim. No serial pump protocol. One pump, one hose, three grades. One shared HMAC key where a real site would use per-device keys and a MAC counter. Each one is a stand-in, and the repo teaches what it stands in for.
 
 ## Licence
 

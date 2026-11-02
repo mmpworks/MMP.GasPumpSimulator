@@ -1,9 +1,9 @@
 namespace GasPump.Dispatch;
 
 /// <summary>
-/// A bounded queue between two workers. Post waits when it is full, because a
-/// pulse stream must never drop a count (GEM:back-pressure-ring, the producer
-/// waits rather than the consumer losing data).
+/// A bounded queue between two workers. Post waits when the queue is full,
+/// because a pulse stream can't drop a count. GEM:back-pressure-ring: the
+/// producer waits so the consumer never loses data.
 /// </summary>
 public interface IMailbox<T>
 {
@@ -20,18 +20,19 @@ public interface IWorkerHandle : IDisposable
 }
 
 /// <summary>
-/// The Strategy. How workers run, how mailboxes block, and how time arrives
-/// are the three things that differ between a thread-per-worker design, a
-/// Task-and-Channel design, and a hand-built state machine design. Everything
-/// above this interface is the same code in all three.
+/// The Strategy. Three things differ between a thread-per-worker design, a
+/// Task-and-Channel design, and a hand-built state machine design: how workers
+/// run, how mailboxes block, and how time arrives. Everything above this
+/// interface is the same code in all three.
 ///
 /// Rules every strategy keeps:
 ///   1. A worker handles one message at a time, on one logical thread. Handlers never run concurrently.
 ///   2. Timers never run code. They post a message. The worker runs the code.
 ///   3. Workers never share state. They pass messages.
 ///
-/// Slot for the third strategy: MMP.AsyncProxy, where each worker is an
-/// iterator-driven state machine and the mailbox is a promise per message.
+/// The third strategy is AsyncProxyDispatch, built on MMP.AsyncProxy. Each
+/// worker is an iterator-driven state machine and the mailbox is a promise per
+/// message.
 /// </summary>
 public interface IDispatchStrategy : IDisposable
 {

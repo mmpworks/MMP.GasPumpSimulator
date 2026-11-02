@@ -25,9 +25,9 @@ public sealed record DispenserServerOptions(
 /// The dispenser as its own process: a <see cref="Dispenser"/> behind a TCP
 /// listener, with its own ledger, its own Herald log, its own TesseraSeal
 /// chain, and its own ticker. One station at a time. On connect the station
-/// receives the whole chain so far, then every line as it lands. The only
-/// station frame the dispenser obeys without a token is Stop; Arm still
-/// goes through the authority like any other.
+/// receives the whole chain so far, then every line as it lands. Arm goes
+/// through the authority and needs a valid token. The other station messages,
+/// Stop included, are handled without one.
 /// </summary>
 public sealed class DispenserServer : IDisposable
 {
@@ -228,7 +228,7 @@ public sealed class DispenserServer : IDisposable
 
     // ----- The small state the dispenser owns across its own restarts: the sealed counter and the burned nonces.
 
-    /// <summary>Conditions is the broken parts: a restart of the software repairs nothing on the island.</summary>
+    /// <summary>Conditions lists the broken parts. Restarting the software repairs nothing on the island.</summary>
     private sealed record DispenserState(long TotalizerMilliGallons, List<string> Nonces, List<string>? Conditions = null);
 
     private void RestoreState()
@@ -263,9 +263,9 @@ public sealed class DispenserServer : IDisposable
     }
 
     /// <summary>
-    /// The power is gone. Record it, close the chain, stop the pump worker.
-    /// The valve is already shut by the loss of power; here that means the
-    /// ticker stops and the hydraulics are never touched again.
+    /// The power is gone. Record it, close the chain, and stop the pump worker.
+    /// Losing power has already shut the valve, so here the ticker stops and
+    /// nothing touches the hydraulics again.
     /// </summary>
     public void PowerOff()
     {
@@ -300,7 +300,7 @@ public static class CustodyKeyFile
 {
     public const string TokenKeyLabel = "gaspump.token-key.v1";
 
-    /// <summary>GASPUMP_CUSTODY_IKM_HEX wins; else custody.ikm in the directory; else a new random key written there.</summary>
+    /// <summary>Uses GASPUMP_CUSTODY_IKM_HEX if it is set. Otherwise reads custody.ikm from the directory. Otherwise writes a new random key there.</summary>
     public static byte[] Load(string directory)
     {
         if (Environment.GetEnvironmentVariable("GASPUMP_CUSTODY_IKM_HEX") is { Length: >= 64 } hex) return Convert.FromHexString(hex);

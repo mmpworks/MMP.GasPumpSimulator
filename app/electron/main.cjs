@@ -1,4 +1,4 @@
-// Electron main. Starts the .NET host, opens one window, stops the host on exit.
+// Electron's main process. It starts the .NET host, opens one window, and stops the host on exit.
 // Set GASPUMP_HOST=external to skip spawning and use a host you started yourself.
 // Set GASPUMP_STRATEGY=channel to run the Task/Channel dispatch instead of threads.
 // Set GASPUMP_DISPENSER=inproc to keep the pump inside the station process instead of GasPump.Dispenser.exe.

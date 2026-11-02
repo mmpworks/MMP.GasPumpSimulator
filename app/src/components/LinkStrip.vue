@@ -2,8 +2,9 @@
 import { computed } from 'vue'
 import { state } from '../sim'
 
-// The wire. Frames down are PumpMessages the station sent; frames up are events, views, log, ledger,
-// and custody lines the dispenser sent. Both counters come from the station's end of the link.
+// The link between the two processes. Frames down are PumpMessages the station sent. Frames up are
+// events, views, log, ledger, and custody lines the dispenser sent. Both counters come from the
+// station's end of the link.
 const d = computed(() => state.value?.dispenser)
 const up = computed(() => !!d.value?.connected)
 const kind = computed(() => d.value?.link ?? 'socket')

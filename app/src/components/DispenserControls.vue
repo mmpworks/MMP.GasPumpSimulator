@@ -2,8 +2,8 @@
 import { computed, ref } from 'vue'
 import { api, cards, state } from '../sim'
 
-// What a hand can do at the pump, and what can go wrong on the island. The card reader is here too:
-// insert or tap at the pump. Everything else becomes a PumpMessage down the link.
+// Controls for what a hand can do at the pump and what can go wrong on the island. The card reader
+// (insert or tap) is here too. Everything else becomes a PumpMessage down the link.
 const sale = computed(() => state.value?.sale)
 const readerCard = ref('Good')
 const readerTender = ref<'Credit' | 'Debit'>('Credit')

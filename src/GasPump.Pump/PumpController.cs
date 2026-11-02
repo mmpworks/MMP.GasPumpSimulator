@@ -26,11 +26,11 @@ public sealed record PumpTick(
     IReadOnlyList<ChargeLine> Lines);
 
 /// <summary>
-/// The dispenser's brain. Single-threaded by contract: the pump worker is the
+/// The dispenser's controller. Single-threaded by contract: the pump worker is the
 /// only caller. It opens the valve only after the authority armed it, only
 /// while the driver holds the trigger, only with the nozzle seated in a fill
 /// point, and only after a grade is chosen. It closes the valve on the cent,
-/// and it stops dead on anything that looks like tampering or a failed part:
+/// and it stops on anything that looks like tampering or a failed part:
 /// pulses the valve could not have passed, fuel moving while the valve is
 /// shut, fuel moving with no pulses, no fuel moving with the valve open, a
 /// separated hose, a sale running past its time. Every stop carries a
@@ -133,7 +133,7 @@ public sealed class PumpController(
         return (true, "", armed);
     }
 
-    /// <summary>The grade buttons. Locked once fuel has moved: one grade per sale, because the price per gallon is fixed at the first drop.</summary>
+    /// <summary>The grade buttons. Locked once fuel has moved: one grade per sale, because the price per gallon is fixed at the first pour.</summary>
     public (bool Ok, string Reason) SelectGrade(Grade grade)
     {
         if (_armed is null || Phase is not (PumpPhase.Armed or PumpPhase.Paused)) return (false, $"not armed ({Phase})");
@@ -244,7 +244,7 @@ public sealed class PumpController(
     /// <summary>
     /// A pump faulted for a part that needs service goes back to Disarmed once
     /// no condition holds it. A per-sale fault (spoofed pulses, stray pulses)
-    /// stays Faulted until the next arm, as before. Returns true when it moved.
+    /// stays Faulted until the next arm. Returns true when it moved.
     /// </summary>
     public bool ReturnToService()
     {
@@ -317,7 +317,7 @@ public sealed class PumpController(
 
         // A stage may take the hose for this slice: its product moves, fuel does not. The fuel valve is shut,
         // the fuel meter counts nothing, and the switch each way is in the ledger. The two watchdogs rest,
-        // because a silent fuel meter is the design while the hose is not carrying fuel.
+        // because a silent fuel meter is expected while the hose isn't carrying fuel.
         var claimant = _stages.FirstOrDefault(s => s.ClaimsHose(_pouredFor));
         if (claimant is not null)
         {
@@ -407,7 +407,7 @@ public sealed class PumpController(
 
         if (Money > armed.Ceiling)
         {
-            // Belt and braces. MaxVolumeFor makes this unreachable; the ledger will say if it ever is not.
+            // Backstop. MaxVolumeFor makes this unreachable. If it ever happens, the ledger records it.
             EmergencyStop(DiagnosticCodes.PumpCeilingOverrun, $"money {Money} exceeded ceiling {armed.Ceiling}");
             return Current(ceilingReached: true, stopped: true);
         }

@@ -34,7 +34,7 @@ Directory.CreateDirectory(logDir);
 var heraldLogPath = Path.Combine(logDir, $"gaspump-{DateTime.Now:yyyyMMdd-HHmmss}.ndjson");
 
 // The site custody key. Steve's spec puts this in a KMS or HSM; the simulator keeps a software key beside the logs
-// so both processes and the verifier read the same bytes. GASPUMP_CUSTODY_IKM_HEX overrides it. Never a production posture.
+// so both processes and the verifier read the same bytes. GASPUMP_CUSTODY_IKM_HEX overrides it. Use this setup in the simulator only.
 var ikm = CustodyKeyFile.Load(logDir);
 var ikmPath = Path.Combine(logDir, "custody.ikm");
 

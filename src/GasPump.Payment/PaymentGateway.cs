@@ -24,7 +24,7 @@ public sealed record PendingAdvice(string SaleId, PendingKind Kind, Money Final,
 public enum PendingKind { Completion, Reversal }
 
 /// <summary>
-/// The EPS, in miniature. Two-phase: PreAuthorize puts a hold on, Complete
+/// The EPS (electronic payment server, the station box that talks to the bank), in miniature. Two-phase: PreAuthorize puts a hold on, Complete
 /// settles it to the real amount, Reverse drops it when no fuel moved.
 ///
 /// The hold it asks for is the site's ceiling for the tender (see
@@ -125,8 +125,8 @@ public sealed class PaymentGateway
     /// Card path. The request to the bank is the site's ceiling for the
     /// tender. The pump's ceiling is the lesser of that and the approved
     /// amount, which is the partial-approval rule and the debit rule in one
-    /// line: a $50 debit ceiling against a $900 balance holds $50; against an
-    /// $18.50 balance holds $18.50.
+    /// line: a $50 debit ceiling against a $900 balance holds $50, and against
+    /// an $18.50 balance it holds $18.50.
     /// </summary>
     public async Task<PreAuthResult> PreAuthorizeAsync(string saleId, CardData card, Tender tender, CancellationToken ct)
     {
@@ -188,9 +188,9 @@ public sealed class PaymentGateway
     }
 
     /// <summary>
-    /// Give the hold back. If the bank cannot be reached the reversal is queued,
-    /// never dropped: a hold left on a card for a sale that dispensed nothing is
-    /// the failure a driver remembers longest. Cash refunds at the till.
+    /// Give the hold back. If the bank cannot be reached the reversal is queued
+    /// and never dropped, because a dropped one leaves a hold on the driver's
+    /// card for a sale that dispensed nothing. Cash refunds at the till.
     /// </summary>
     public async Task<ReversalResult> ReverseAsync(string saleId, CancellationToken ct)
     {

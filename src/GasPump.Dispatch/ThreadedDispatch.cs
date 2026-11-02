@@ -3,10 +3,11 @@ using System.Collections.Concurrent;
 namespace GasPump.Dispatch;
 
 /// <summary>
-/// The 2008 answer. One dedicated thread per worker, a BlockingCollection per
-/// mailbox, and timers from the TimeProvider that post. A worker thread sits
-/// in Take() when it has nothing to do, which costs a thread per worker and
-/// nothing else. For three workers that is a fine trade. For three thousand it is not.
+/// The 2008 strategy. Each worker gets a dedicated thread, each mailbox is a
+/// BlockingCollection, and timers from the TimeProvider post messages. A worker
+/// thread waits in Take() when it has nothing to do, which costs one thread per
+/// worker and nothing else. For three workers that is a fine trade. For three
+/// thousand it is too many threads.
 /// </summary>
 public sealed class ThreadedDispatch(TimeProvider clock) : IDispatchStrategy
 {
@@ -107,7 +108,7 @@ public sealed class ThreadedDispatch(TimeProvider clock) : IDispatchStrategy
                     {
                         Interlocked.Increment(ref owner._busyHandlers);
                         try { handle(item); }
-                        catch (Exception) { /* a handler that throws must not kill the worker; the sale machine logs faults itself */ }
+                        catch (Exception) { /* a handler that throws can't kill the worker; the sale machine logs faults itself */ }
                         finally
                         {
                             box.Handled();

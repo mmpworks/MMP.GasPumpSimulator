@@ -4,8 +4,8 @@ public enum CardKind { Credit, Debit }
 
 /// <summary>
 /// What the reader hands over. In a real pump this is ciphertext under a DUKPT
-/// key and the terminal never sees digits. Here it is plain, because the
-/// numbers are made up and the point is the flow, not the crypto.
+/// key and the terminal never sees digits. Here it is plain text. The numbers
+/// are made up, and the simulator is about the payment flow.
 /// </summary>
 public sealed record CardData(string Pan, int ExpiryMonth, int ExpiryYear, CardKind Kind, string? Pin = null)
 {
@@ -46,7 +46,7 @@ public static class CardValidator
 /// <summary>
 /// The named test cards. The name says what the card will do, so a scenario
 /// reads like a sentence: "present the InsufficientFunds card".
-/// All PANs pass Luhn. None are real ranges you could use anywhere.
+/// All PANs pass Luhn. None of them sits in a real, usable card range.
 /// </summary>
 public static class TestCards
 {

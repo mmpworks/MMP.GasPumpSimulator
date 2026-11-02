@@ -2,11 +2,11 @@ namespace GasPump.Dispatch;
 
 /// <summary>
 /// Tails the custody file and hands out each complete line, byte for byte,
-/// as soon as it lands. The spec normates observation on the wire or on
-/// disk and treats the two as equivalent, so the line a subscriber receives
-/// is the line the verifier will read. A subscriber that appends what it
-/// receives to its own file holds a second copy of the same chain. Only
-/// lines ending in a newline are published; a partial last line waits.
+/// as soon as it lands. The spec allows observation on the wire or on disk and
+/// treats the two as equivalent, so the line a subscriber receives is the line
+/// the verifier will read. A subscriber that appends what it receives to its
+/// own file holds a second copy of the same chain. Only lines that end in a
+/// newline are published. A partial last line waits for the rest.
 /// </summary>
 public sealed class CustodyStream(string path)
 {
@@ -22,9 +22,9 @@ public sealed class CustodyStream(string path)
 
     /// <summary>
     /// Attach a subscriber and first hand it every complete line already in the
-    /// file, from the header on, so a late joiner holds the whole chain and not a
-    /// tail of it. Done under the lock so no line lands between the replay and the
-    /// subscription.
+    /// file, starting with the header, so a late joiner holds the whole chain
+    /// and not just the tail. This runs under the lock so no line lands between
+    /// the replay and the subscription.
     /// </summary>
     public void SubscribeWithReplay(Action<string> onLine)
     {
@@ -38,7 +38,7 @@ public sealed class CustodyStream(string path)
                 var complete = text.LastIndexOf('\n');
                 if (complete >= 0)
                     foreach (var line in text[..complete].Split('\n')) onLine(line.TrimEnd('\r'));
-                // Everything replayed counts as published; the next Pump starts after it.
+                // Everything replayed counts as published. The next Pump starts after it.
                 var replayedBytes = System.Text.Encoding.UTF8.GetByteCount(text[..(complete + 1)]);
                 if (replayedBytes > _offset) { _offset = replayedBytes; _partial.Clear(); }
             }
@@ -49,8 +49,8 @@ public sealed class CustodyStream(string path)
     /// <summary>
     /// Read whatever the sink appended since the last call and publish the
     /// complete lines. Subscribers are called under the lock, so two workers
-    /// pumping at once cannot hand a subscriber line 7 before line 6. Order is
-    /// the chain; a subscriber that appends what it gets must get it in order.
+    /// pumping at once can't hand a subscriber line 7 before line 6. Order is
+    /// the chain, and a subscriber that appends what it gets needs it in order.
     /// </summary>
     public void Pump()
     {

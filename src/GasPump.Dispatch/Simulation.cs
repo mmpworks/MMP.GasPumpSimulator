@@ -25,7 +25,7 @@ public sealed record SimulationOptions(
     JournalOptions? Journal = null,
     /// <summary>Extra Herald sinks for the debug log (a file, the console). The UI bridge and the custody bridge are always wired.</summary>
     Action<MMP.Herald.Quick.QuickLogBuilder>? LogSinks = null,
-    /// <summary>Where the dispenser is. Null builds it in this process behind a mailbox; a host and port reach a <see cref="DispenserServer"/> over TCP.</summary>
+    /// <summary>Where the dispenser is. Null builds it in this process behind a mailbox. A host and port reach a <see cref="DispenserServer"/> over TCP.</summary>
     DispenserLinkOptions? Dispenser = null)
 {
     public static SimulationOptions Default => new(
@@ -52,8 +52,8 @@ public sealed record SimulationOptions(
 ///                   socket it lives in a DispenserServer in another process.
 ///
 /// Every arrow between workers is a mailbox. The dispatch strategy decides how
-/// the workers run. The code in this file does not know or care, and it does
-/// not know which side of a process boundary the pump is on either.
+/// the workers run. The code in this file doesn't depend on the strategy, or
+/// on which side of a process boundary the pump is on.
 /// </summary>
 public sealed class Simulation : IDisposable
 {
@@ -78,7 +78,7 @@ public sealed class Simulation : IDisposable
     private int _saleCounter;
     private int _inflightPayments;
 
-    /// <param name="log">A log to use instead of the default Herald pipeline. Leave null in the host; tests may pass a plain EventLog. Default is a Herald.OSS pipeline with only the bridge back to this simulation; the host adds file and console sinks.</param>
+    /// <param name="log">A log to use instead of the default Herald pipeline. Leave null in the host; tests may pass a plain EventLog. When null, the simulation builds a Herald.OSS pipeline with only the bridge back to itself, and the host adds file and console sinks.</param>
     public Simulation(IDispatchStrategy dispatch, TimeProvider clock, SimulationOptions? options = null, IssuerSimulator? issuer = null, byte[]? hmacKey = null, IEventLog? log = null)
     {
         _dispatch = dispatch;
@@ -123,7 +123,7 @@ public sealed class Simulation : IDisposable
         Ledger.Appended += e => Log.Write("ledger", "#{Seq} {Kind} {Detail}", ("Seq", e.Seq), ("Kind", e.Kind), ("Detail", e.Detail), ("Hash", e.Hash), ("Prev", e.PrevHash));
         if (CustodyPath is not null)
         {
-            // Custody is written before the UI bridge fires, so a pump of the tail after each line publishes it at once.
+            // Custody is written before the UI bridge fires, so pumping the tail after each line publishes it right away.
             Custody = new CustodyStream(CustodyPath);
             Log.Written += _ => Custody.Pump();
             Ledger.Appended += _ => Custody.Pump();
@@ -176,14 +176,14 @@ public sealed class Simulation : IDisposable
         if (snapshot is not null)
         {
             Restore(snapshot);
-            // The restore set the sale counter; the placeholder sale above was numbered before it. Number the first real sale after it.
+            // Restore sets the sale counter, but the placeholder sale above was numbered before that. Create the first real sale after the restore.
             lock (_gate) _sale = NewSale();
         }
         LastRecovery = RecoveryPlan.Build(snapshot, clock.GetUtcNow(), _options.Journal?.Period ?? TimeSpan.FromSeconds(1));
         // A dispenser not yet answering, or one that started with a part already broken, is out of service from the first sale.
         OnServiceView(_link.View.Service);
 
-        // Capabilities ride beside the sale on their own workers. A capability that throws is switched off and logged; the sale never notices.
+        // Capabilities ride beside the sale on their own workers. A capability that throws is switched off and logged, and the sale is unaffected.
         Capabilities = new CapabilityHost(dispatch, Log);
         _link.ViewChanged += v => Capabilities.Publish(v);
         _owned.Add(dispatch.StartWorker("sale", _saleBox, HandleSaleEvent));
@@ -273,7 +273,7 @@ public sealed class Simulation : IDisposable
     /// </summary>
     private void OnServiceView(ServiceStatus service)
     {
-        // One lock from compare to post, so two reporters (the link thread and the constructor) cannot cross and leave
+        // One lock from compare to post, so two reporters (the link thread and the constructor) can't cross and leave
         // the sale holding one status while the station holds another. The sale worker drains the box in post order.
         lock (_serviceGate)
         {
@@ -340,7 +340,7 @@ public sealed class Simulation : IDisposable
     /// <summary>
     /// Close out what the last run left open. The pump is already disarmed (a
     /// new process has no armed authorization), so the only work is money, and
-    /// the only honest thing to say about volume is what was recorded.
+    /// the only volume to report is what was recorded.
     /// </summary>
     private void ApplyRecovery(RecoveryOutcome r, JournalSnapshot? snapshot)
     {
@@ -454,7 +454,7 @@ public sealed class Simulation : IDisposable
         }
     }
 
-    // ----- Driver-facing actions. Each one is a message, never a direct call into a worker's state.
+    // ----- Driver-facing actions. Each one posts a message to a worker. None calls into a worker's state directly.
 
     /// <summary>A grade given here is a preselection at the reader. The normal path leaves it null and the driver picks at the pump.</summary>
     public string PresentCard(string cardName, Grade? grade = null, Tender tender = Tender.Credit, CardSource source = CardSource.PumpInsert)
@@ -497,10 +497,10 @@ public sealed class Simulation : IDisposable
     /// <summary>
     /// Start a sale record for a new payment. A pump out of service refuses
     /// every payment, at the pump and at the counter, before any money moves.
-    /// Then three cases for the sale already on the screen: finished (replace
-    /// it), approved but untouched (the last driver drove off before lifting
-    /// the nozzle: cancel it, reverse its hold, replace it, all at once), or in
-    /// someone's hands (refuse the new payment).
+    /// Otherwise the sale already on the screen falls into one of three cases.
+    /// Finished: replace it. Approved but untouched (the last driver drove off
+    /// before lifting the nozzle): cancel it, reverse its hold, and replace it
+    /// in one step. In someone's hands: refuse the new payment.
     /// </summary>
     private (bool Ok, string SaleId, string Reason) BeginSale(string why)
     {
@@ -525,8 +525,8 @@ public sealed class Simulation : IDisposable
     /// End a sale that holds money and has moved no fuel (Authorizing or
     /// ReadyToPump), the way the sale worker would: cancel it, which reverses
     /// the hold through the payment worker, record the close in the ledger,
-    /// and put a fresh sale on the screen. Returns false when the sale on the
-    /// screen was not in such a state, and changes nothing then.
+    /// and put a fresh sale on the screen. Returns false and changes nothing
+    /// when the sale on the screen is in any other state.
     /// </summary>
     private bool CancelOpenSaleAndReplace(string why)
     {
@@ -593,7 +593,7 @@ public sealed class Simulation : IDisposable
         Publish();
     }
 
-    /// <summary>Under _gate. Starts a fresh sale and drops the old sale's timer so it cannot fire into the new one.</summary>
+    /// <summary>Under _gate. Starts a fresh sale and drops the old sale's timer so it can't fire into the new one.</summary>
     private void ReplaceSale()
     {
         _saleTimer?.Dispose();
@@ -640,7 +640,7 @@ public sealed class Simulation : IDisposable
     /// <summary>A pulser reporting fuel that did not move. The controller should stop on the first bad tick.</summary>
     public void AttackSpoofPulses(long pulses) => ToPump(new PumpMessage.SpoofPulses(pulses));
 
-    /// <summary>Arm with no token at all. There is no code path that accepts this, which is the point.</summary>
+    /// <summary>Arm with no token at all. No code path accepts this.</summary>
     public void AttackArmWithoutToken() => ToPump(new PumpMessage.Arm(CurrentSaleId, "", Grade.Regular));
 
     // ----- Forecourt faults. Each is a message to the pump worker, as a sensor or the tank gauge would deliver it.
@@ -671,9 +671,9 @@ public sealed class Simulation : IDisposable
     public void ResetBreakaway() => ToPump(new PumpMessage.ResetBreakaway());
 
     /// <summary>
-    /// The station emergency stop. It is not a message to the pump: it is the
-    /// power going away under the pump, the STPs, and every signal circuit, all
-    /// at once. The site controller outside the classified area writes the
+    /// The station emergency stop. It models the power going away under the
+    /// pump, the STPs, and every signal circuit at once, and sends no message
+    /// to the pump. The site controller outside the classified area writes the
     /// record first, saves one last snapshot so the restart knows this was an
     /// E-stop and not a crash, then the power drops. Reset is a cashier action
     /// that builds a new Simulation on the same journal.
@@ -684,8 +684,8 @@ public sealed class Simulation : IDisposable
         Log.Error("station", "{Code} emergency stop pressed by {By}: power removed from every dispenser and STP", ("Code", code.Code), ("By", pressedBy));
         Ledger.Append("station.estop", code.Format($"pressed by {pressedBy}; sale {CurrentSaleId} {Snapshot().State} {Snapshot().Volume} {Snapshot().Money}"));
         Custody?.Pump();
-        // The final snapshot is the last word. After it, nothing may rewrite the journal or turn the station's own
-        // power cut into a dispenser fault on the open sale: the link is about to drop because we are dropping it.
+        // The final snapshot is the last journal write. After it, nothing may rewrite the journal or turn the station's own
+        // power cut into a dispenser fault on the open sale. The link is about to drop because the station is dropping it.
         lock (_journalGate)
         {
             SaveJournal(stopReason: "ESTOP");
@@ -761,7 +761,7 @@ public sealed class Simulation : IDisposable
 
     /// <summary>
     /// A money event for a sale the screen has already moved past. The driver
-    /// is gone or on a new sale, so the machine cannot carry it. A late approval
+    /// is gone or on a new sale, so the machine can't carry it. A late approval
     /// is the one that costs money: the bank holds funds for a sale nobody will
     /// finish, so the reversal goes straight to the payment worker.
     /// </summary>
@@ -932,8 +932,8 @@ public sealed class Simulation : IDisposable
     public void Dispose() => TearDown();
 
     /// <summary>
-    /// Power loss, on purpose. Stops the workers with no close-out and no final
-    /// snapshot, which is what a crash leaves behind. The next Simulation built
+    /// Simulates a power loss. Stops the workers with no close-out and no final
+    /// snapshot, the same state a crash leaves behind. The next Simulation built
     /// on the same journal directory recovers from the last periodic snapshot.
     /// Dispose does the same work; neither writes a final snapshot, because a
     /// graceful stop has nothing open and a crash gets no chance to.

@@ -105,14 +105,15 @@ public sealed class SaleStateMachine
 
         var commands = new List<SaleCommand>(4);
 
-        // Money events are legal in every state. They move Hold, and only Completing cares about them for State,
-        // except that a settled hold is the last thing a repaired pump waits for before its screen clears.
+        // Money events are legal in every state. They move Hold. Only Completing also changes State on one.
+        // A settled hold is the last thing a repaired pump waits for before its screen clears.
         if (ApplyHoldEvent(e, commands)) return ClearIfRepaired(commands);
 
         // Service reports are legal in every state.
         if (e is SaleEvent.PumpService ps) return ApplyService(ps, commands);
 
-        // Cancel and Fault are legal from anywhere that is not already terminal.
+        // Fault is legal in any state that isn't terminal. Cancel is legal only before fueling starts
+        // (CardRead, Authorizing, ReadyToPump).
         switch (e)
         {
             case SaleEvent.Fault f when !IsTerminal(State):
@@ -194,7 +195,7 @@ public sealed class SaleStateMachine
                 EndDetail = pr.Reason;
                 return Transition(SaleState.Faulted, commands, $"pump refused: {pr.Reason}", reverse: true);
 
-            // Before the first drop the driver can take as long as the lift timer allows to pick a grade, lift, and seat.
+            // Before the first pour the driver has as long as the lift timer allows to pick a grade, lift, and seat.
             case (SaleState.ReadyToPump, SaleEvent.GradeSelected gs):
                 Grade = gs.Grade;
                 GradeSelected = true;
@@ -564,7 +565,7 @@ public sealed class SaleStateMachine
         _ => "",
     };
 
-    /// <summary>Capitalise a reason and end it with a period, or return empty for nothing.</summary>
+    /// <summary>Capitalizes a reason and ends it with a period. Returns an empty string for null or empty input.</summary>
     private static string Sentence(string? s) =>
         string.IsNullOrEmpty(s) ? "" : char.ToUpperInvariant(s[0]) + s[1..].TrimEnd('.') + ".";
 

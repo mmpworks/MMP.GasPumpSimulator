@@ -40,7 +40,7 @@ Every arrow between workers is a bounded mailbox. Only the sale worker changes s
 
 The two trust boundaries from the research note sit here:
 
-- **The reader protects the card.** Not modelled. `CardData` is plain because the numbers are fake.
+- **The reader protects the card.** The simulator doesn't model it. `CardData` is a plain record because the numbers are fake.
 - **The controller protects the fuel.** `PumpAuthority` in the pump worker. It verifies the token, clamps to `HardLimits`, and writes the ledger. No other code path can arm the pump.
 
 ## The sale, as a state machine
@@ -186,7 +186,7 @@ xychart-beta
 saleId | pumpId | ceilingCents | maxMilliGallons | issuedAtMs | expiresAtMs | nonce | HMAC-SHA256(key, the first seven fields)
 ```
 
-Verified in this order, and the order matters: format, signature, pump id, time window, nonce. A forged token fails at step two and never reaches the nonce store, so an attacker cannot burn nonces with garbage.
+The pump verifies in this order: format, signature, pump id, time window, nonce. A forged token fails at step two and never reaches the nonce store, so an attacker can't burn nonces with garbage.
 
 ## The ledger
 
@@ -202,13 +202,13 @@ A sale's ceiling passes three gates, and each one can only lower it.
 | 2. Bank's answer | `IssuerSimulator` | approved amount, may be partial | approved amount, may be partial | no bank call |
 | 3. Hard limit | `HardLimits` in the pump, fixed at construction | $500, 50 gal | $500, 50 gal | $500, 50 gal |
 
-The pump's ceiling is the lesser of gates 1 and 2, then clamped by gate 3. The admin panel can move gate 1 anywhere; it can never move gate 3. That is why the admin panel is on the attack surface: owning it buys an attacker nothing past $500.
+The pump's ceiling is the lesser of gates 1 and 2, then clamped by gate 3. The admin panel can move gate 1 anywhere, and it can never move gate 3. The panel is on the attack surface, but owning it buys an attacker nothing past $500.
 
 Cash settles at the till (`CashDrawer`): the driver prepays, the pump stops on that amount to the cent, and whatever was not pumped comes back as change. A cash sale abandoned before any pour refunds in full. No network, so a dead bank link never touches a cash sale.
 
 ## Delivery stages and the price schedule
 
-Two seams in the pump controller for parts that are not here yet, added 2026-11-01 so an additive injector, a vapor-recovery monitor, or a blend check can bolt on without the controller changing.
+Two seams in the pump controller, added 2026-11-01, for parts that don't exist yet. An additive injector, a vapor-recovery monitor, or a blend check can bolt on without the controller changing.
 
 | Seam | Type | What it replaces | How a new part uses it |
 |---|---|---|---|
@@ -219,11 +219,11 @@ Two seams in the pump controller for parts that are not here yet, added 2026-11-
 
 ## Charge lines
 
-The money is itemized from the pump outward. `IPriceSchedule.Lines(grade, volume)` returns the `ChargeLine`s (code, description, amount) whose sum is `CentsFor`; the board answers with one `FUEL` line, a wrapping schedule appends its own. The controller sets `Lines` beside `Money` on every tick; `Progress` and `CeilingReached` carry them to the station; the sale machine keeps the last breakdown and puts it on `SendCompletion`, `PendingAdvice`, `PaymentMessage.Complete`, and the journal (`JournalLine`), so a completion resent after a restart carries the same lines. `IIssuer.Complete(saleId, final, lines)` records a `Settlement` at the bank. `SaleSnapshot.Charges` is what a receipt prints; it is empty before fuel moves and reads the same lines the bank received. A sale whose pump sent no breakdown gets one fuel line for its money.
+The money is itemized from the pump outward. `IPriceSchedule.Lines(grade, volume)` returns the `ChargeLine`s (code, description, amount), and their sum is `CentsFor`. The board answers with one `FUEL` line. A wrapping schedule appends its own. The controller sets `Lines` beside `Money` on every tick, and `Progress` and `CeilingReached` carry them to the station. The sale machine keeps the last breakdown and puts it on `SendCompletion`, `PendingAdvice`, `PaymentMessage.Complete`, and the journal (`JournalLine`), so a completion resent after a restart carries the same lines. `IIssuer.Complete(saleId, final, lines)` records a `Settlement` at the bank. `SaleSnapshot.Charges` is what a receipt prints. It's empty before fuel moves, and it reads the same lines the bank received. A sale whose pump sent no breakdown gets one fuel line for its money.
 
 ## Capabilities
 
-`Simulation.Capabilities` is a `CapabilityHost`. An `IStationCapability` receives every `SaleEvent` the sale worker applied and every `DispenserView` the dispenser sent, on its own worker behind its own bounded mailbox (256). It has no way to post back. A full mailbox drops and counts; a capability that throws is switched off for the run and logged under `capability`; the sale never waits on one and never hears from one. Register before the first sale. A video that plays on `FlowStarted`, a loyalty prompt, and a forecourt display are the intended users. Proof: `SimulationTests`, a recorder sees one `FlowStarted` per sale while a capability that throws on it is switched off and the sale settles to the cent.
+`Simulation.Capabilities` is a `CapabilityHost`. An `IStationCapability` receives every `SaleEvent` the sale worker applied and every `DispenserView` the dispenser sent, on its own worker behind its own bounded mailbox (256). It has no way to post back. A full mailbox drops and counts; a capability that throws is switched off for the run and logged under `capability`; the sale never waits on one and never hears from one. Register before the first sale. A video that plays on `FlowStarted`, a loyalty prompt, and a forecourt display are the intended users. Proof, in `SimulationTests`: a recorder sees one `FlowStarted` per sale, a capability that throws on it is switched off, and the sale settles to the cent.
 
 ## Logging on Herald.OSS
 
@@ -260,7 +260,7 @@ What the restart does with it, in order: restore every store, build the plan, st
 
 Why the grade is in the journal: the close-out prices the recorded volume at the grade's price per gallon. It is never used to re-arm.
 
-The number it reports. The last snapshot is at most one period old, and fuel may have flowed until the process died, so the close-out records the metered volume and states an upper bound for what it missed: one period at the last flow rate. `recovery.closeout` carries the phrase `DELIVERY LIKELY UNDER-RECORDED`, the log line is at Error level, and the custody file has both. Nothing invents a number the meter did not count.
+What it reports about the gap. The last snapshot is at most one period old, and fuel may have flowed until the process died. So the close-out records the metered volume and states an upper bound for what it missed: one period at the last flow rate. `recovery.closeout` carries the phrase `DELIVERY LIKELY UNDER-RECORDED`, the log line is at Error level, and the custody file has both. Nothing invents a number the meter did not count.
 
 The token key survives the reboot. With a journal configured, the pump's token key is derived from the custody key under its own label, so a token issued before the reboot fails after it on its nonce (`Replayed`), not on its signature. A random key per process would make a replay look like a forgery and hide the replay. The test `Replayed_token_is_still_refused_after_a_restart` pins this.
 
@@ -301,7 +301,7 @@ One JSON object per line. `PumpMessage` and `SaleEvent` carry a type discriminat
 
 Each side is safe alone. Dispenser gone: the station faults the sale with `LINK.DISPENSER.LOST`, settles for the fuel it recorded, and refuses to pretend the pump is there. Station gone with the valve open: the dispenser keeps pouring under its own ceiling and time limit, and the first frame the new station sends is `Stop`. E-stop: the station writes its record and snapshot, sends `power off`, and the dispenser process closes its chain and exits; the cashier's reset starts it again before the new station connects.
 
-`--dispenser inproc` keeps both sides in one process behind the same `IDispenserLink` interface, which is how the 191 fake-clock tests run. The three socket tests run on a real clock over loopback.
+`--dispenser inproc` keeps both sides in one process behind the same `IDispenserLink` interface, which is how the fake-clock tests run. The six socket tests run on a real clock over loopback.
 
 The UI is two columns and a strip. Amber, left: the pump face, the hand controls, the forecourt faults, and the dispenser's own log, ledger, and chain. Blue, right: payment, bank link, administrator, E-stop, journal, and the station's own records plus its copy of the dispenser chain. The strip between them is the wire: the port, the frame counters both ways, the chain lines received. Every record carries its origin, and over the socket that origin is a fact of which process sent it.
 
@@ -319,7 +319,7 @@ Every failed part raises a diagnostic code from `docs/diagnostics.md`, and the c
 
 The tank gauge's Fuel Out alarm reaches the pump as the first row; the gauge entry `TANK.FUELOUT` is in the ledger beside it, so the record shows cause and effect.
 
-The E-stop is the odd one out: it is not a message the pump handles, it is the power leaving. The order of operations is the whole design. The site controller, outside the classified area and still powered, writes `station.estop` to the ledger and the custody file, saves one last snapshot with `StopReason = "ESTOP"`, and only then drops the pump. The cashier's reset builds a new Simulation on that snapshot, and because the snapshot was taken after the last tick, the recovery reports nothing unrecorded. A bare power loss cannot do any of that, which is why the recovery note for it says "likely under-recorded" and the note for an E-stop does not.
+The E-stop is the odd one out. The pump never receives it as a message, because it is the power leaving, so the order of operations does the work. The site controller, outside the classified area and still powered, writes `station.estop` to the ledger and the custody file, saves one last snapshot with `StopReason = "ESTOP"`, and only then drops the pump. The cashier's reset builds a new Simulation on that snapshot, and because the snapshot was taken after the last tick, the recovery reports nothing unrecorded. A bare power loss cannot do any of that, which is why the recovery note for it says "likely under-recorded" and the note for an E-stop does not.
 
 ### Service conditions
 
@@ -352,7 +352,7 @@ Every step toward "fuel for money" has a step back: a hold is reversed, a comple
 
 Both sinks hang off the same Herald pipeline. The simulator writes one structured event; Herald fans it to the UI bridge, the debug file, and the custody bridge, so the three can never disagree about what happened.
 
-Out of scope here and stated as such: the daily Merkle seal and the HSM signature (primitives 2 and 3 of the spec). A one-pump simulator has primitive 1, the per-event HMAC chain, and the software key file stands in for the custodian.
+Out of scope: the daily Merkle seal and the HSM signature (primitives 2 and 3 of the spec). A one-pump simulator has primitive 1, the per-event HMAC chain, and the software key file stands in for the custodian.
 
 ## Timers, and what each one protects
 

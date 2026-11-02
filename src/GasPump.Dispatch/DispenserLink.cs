@@ -48,9 +48,9 @@ public interface IDispenserLink : IDisposable
 }
 
 /// <summary>
-/// The dispenser in this process, behind the same mailbox and ticker as
-/// before. The pump worker belongs to the dispatch strategy, so a threaded
-/// strategy gives it a thread and a channel strategy gives it a task.
+/// The dispenser in this process, behind a mailbox and a ticker. The pump
+/// worker belongs to the dispatch strategy, so a threaded strategy gives it a
+/// thread and a channel strategy gives it a task.
 /// </summary>
 public sealed class LocalDispenserLink : IDispenserLink
 {
@@ -91,7 +91,7 @@ public sealed class LocalDispenserLink : IDispenserLink
     public event Action<LogLine>? RemoteLog { add { } remove { } }
     public event Action<LedgerEntry>? RemoteLedger { add { } remove { } }
 
-    /// <summary>The sale id is read when the message is handled, as the pump worker always did, so a replaced sale is seen.</summary>
+    /// <summary>The sale id is read when the message is handled, so a replaced sale is seen.</summary>
     public void Post(PumpMessage m, string saleId) { Interlocked.Increment(ref _sent); _box.Post((null, m)); }
 
     public void PowerOff() { }
@@ -155,10 +155,10 @@ public static class LinkJson
 }
 
 /// <summary>
-/// The dispenser in another process, over TCP. Reconnects on its own; while
-/// disconnected, posts are dropped and counted, because a pump the station
-/// cannot reach is a pump the station must not pretend to drive. Custody
-/// lines are kept so a late subscriber receives the whole chain.
+/// The dispenser in another process, over TCP. Reconnects on its own. While
+/// disconnected, posts are dropped and counted, because the station can't
+/// drive a pump it can't reach and shouldn't pretend to. Custody lines are
+/// kept so a late subscriber receives the whole chain.
 /// </summary>
 public sealed class SocketDispenserLink : IDispenserLink
 {
@@ -212,7 +212,7 @@ public sealed class SocketDispenserLink : IDispenserLink
     public void PowerOff()
     {
         Send(new LinkFrame(LinkFrame.TagPower, On: false));
-        // Give the frame a moment to leave before the socket closes under it.
+        // Wait 50 ms so the frame can leave before the socket closes.
         Thread.Sleep(50);
         lock (_gate) { try { _writer?.Flush(); } catch (IOException) { } }
     }
