@@ -23,6 +23,15 @@ var logDir = Arg("--log-dir", Environment.GetEnvironmentVariable("GASPUMP_LOG_DI
     ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "MMP.GasPumpSimulator", "logs"));
 Directory.CreateDirectory(logDir);
 
+// GASPUMP_DISPENSER_POOL_MAX caps the thread pool, so the island can be run the way a .NET Compact Framework
+// box would run it: the CF pool holds 25 threads. The cap cannot go below the processor count; the log says what took.
+if (int.TryParse(Environment.GetEnvironmentVariable("GASPUMP_DISPENSER_POOL_MAX"), out var poolMax) && poolMax > 0)
+{
+    var took = ThreadPool.SetMaxThreads(poolMax, poolMax);
+    ThreadPool.GetMaxThreads(out var workers, out var io);
+    Console.WriteLine($"[dispenser] thread pool cap {poolMax} requested, {(took ? "set" : "refused")}: max workers {workers}, io {io}, processors {Environment.ProcessorCount}");
+}
+
 var clock = TimeProvider.System;
 var ikm = CustodyKeyFile.Load(logDir);
 var heraldLogPath = Path.Combine(logDir, $"dispenser-{DateTime.Now:yyyyMMdd-HHmmss}.ndjson");

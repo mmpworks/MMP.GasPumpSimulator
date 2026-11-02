@@ -169,7 +169,7 @@ In 2018 a Detroit station lost about 600 gallons in 90 minutes while the clerk c
 
 Press "Signed token: 600 gal, $2000" in the app, pick a grade, lift, put the spout in the fill pipe, and squeeze. That token is signed with the real key, which models an upstream that is fully compromised. The pump authority verifies the signature, then clamps the ceiling to its own limits: 50 gallons, $500. The ledger shows `arm.ok ... clamped from $2000.00/600.000 gal to $500.00/50.000 gal`. Lift the nozzle and it stops at 50.000 gallons and $174.95. The test `Signed_600_gallon_token_is_clamped_to_50_gallons_and_500_dollars` runs that under every dispatch strategy.
 
-`docs/glossary.md` is the source for the trade terms every name in the code follows: nozzle boot, lever, spout, bellows interlock, pulser, totalizer, STP, and the rest. `docs/threat-model.md` lists every attack and the test that proves its control. `docs/research.md` is the sources register: every outside fact the design rests on, with its evidence tier and where it is used.
+`docs/glossary.md` is the source for the trade terms every name in the code follows: nozzle boot, lever, spout, bellows interlock, pulser, totalizer, STP, and the rest. `docs/threat-model.md` lists every attack and the test that proves its control. `docs/research.md` is the sources register: every outside fact the design rests on, with its evidence tier and where it is used. `docs/ce-budget.md` checks the island's thread and memory spending against a Windows CE 6 board with the Compact Framework 3.5 and a pool of 25, with the suite run under that cap.
 
 ## Layout
 
