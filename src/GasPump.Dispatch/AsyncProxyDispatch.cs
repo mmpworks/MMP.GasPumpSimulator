@@ -116,7 +116,24 @@ public sealed class AsyncProxyDispatch(TimeProvider clock) : IDispatchStrategy
             return true;
         }
 
-        /// <summary>The worker's await. Completed already if an item is queued, pending otherwise.</summary>
+        /// <summary>
+        /// The fast path. A message that is already queued comes out with no promise, no
+        /// future, and no park. The worker tries this first and awaits only when it fails,
+        /// the way a Channel reader tries TryRead before it waits. Row 7 of the training
+        /// track's improvements table in MMP.AsyncProxy: the await-every-time loop paid two
+        /// objects per message for a value it already had.
+        /// </summary>
+        public bool TryDequeue(out T item)
+        {
+            lock (_lock)
+            {
+                if (_items.Count > 0) { item = _items.Dequeue(); return true; }
+                item = default!;
+                return false;
+            }
+        }
+
+        /// <summary>The worker's await, for when TryDequeue found nothing. Completed already if an item landed in between, pending otherwise.</summary>
         public IFuture<T> DequeueAsync()
         {
             lock (_lock)
@@ -178,13 +195,18 @@ public sealed class AsyncProxyDispatch(TimeProvider clock) : IDispatchStrategy
         {
             while (!_stopping)
             {
-                var next = box.DequeueAsync();
-                // Observe the future so a cancelled dequeue can't fault the loop. A cancel is how the mailbox says "closed".
-                yield return Futures.Observe(next);
-                if (next.IsCanceled || next.IsFaulted || _stopping) yield break;
+                if (!box.TryDequeue(out var item))
+                {
+                    // Nothing queued: now, and only now, park on the mailbox's promise.
+                    var next = box.DequeueAsync();
+                    // Observe the future so a cancelled dequeue can't fault the loop. A cancel is how the mailbox says "closed".
+                    yield return Futures.Observe(next);
+                    if (next.IsCanceled || next.IsFaulted || _stopping) yield break;
+                    item = next.Result;
+                }
 
                 Interlocked.Increment(ref owner._busyHandlers);
-                try { handle(next.Result); }
+                try { handle(item); }
                 catch (Exception) { /* a handler that throws can't kill the worker; the sale machine logs faults itself */ }
                 finally
                 {
@@ -202,9 +224,9 @@ public sealed class AsyncProxyDispatch(TimeProvider clock) : IDispatchStrategy
             if (Interlocked.Exchange(ref _disposed, 1) == 1) return;
             _stopping = true;
             _box.Dispose();
-            // The loop's pending future cancels on close. Wait up to two seconds for the machine to notice.
-            var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(2);
-            while (!_loop.IsCompleted && DateTime.UtcNow < deadline) Thread.Yield();
+            // The loop's pending future cancels on close. Wait up to two seconds for the machine to notice,
+            // on the future's own event rather than a spin: IFuture.Wait(int) arrived in MMP.AsyncProxy 0.2.0.
+            _loop.Wait(2000);
         }
     }
 }
