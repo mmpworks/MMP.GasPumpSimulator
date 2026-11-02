@@ -6,6 +6,11 @@ import path from 'node:path'
 import os from 'node:os'
 
 const logDir = path.join(os.tmpdir(), `gaspump-e2e-${process.pid}`)
+// GASPUMP_E2E_STRATEGY runs the suite under another dispatch (channel, asyncproxy). GASPUMP_DISPENSER_POOL_MAX caps the
+// dispenser's thread pool for that run, the way a Compact Framework box would: see docs/ce-budget.md.
+const strategy = process.env.GASPUMP_E2E_STRATEGY ?? 'threaded'
+const hostEnv: Record<string, string> = { GASPUMP_LOG_DIR: logDir }
+if (process.env.GASPUMP_DISPENSER_POOL_MAX) hostEnv.GASPUMP_DISPENSER_POOL_MAX = process.env.GASPUMP_DISPENSER_POOL_MAX
 
 export default defineConfig({
   testDir: './e2e',
@@ -23,11 +28,11 @@ export default defineConfig({
   },
   webServer: [
     {
-      command: 'dotnet run --project ../src/GasPump.Host -- --strategy threaded',
+      command: `dotnet run --project ../src/GasPump.Host -- --strategy ${strategy}`,
       url: 'http://localhost:5177/api/state',
       timeout: 180_000,
       reuseExistingServer: false,
-      env: { GASPUMP_LOG_DIR: logDir },
+      env: hostEnv,
       stdout: 'ignore',
       stderr: 'pipe',
     },
