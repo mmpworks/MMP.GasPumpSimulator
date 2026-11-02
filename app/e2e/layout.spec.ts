@@ -26,4 +26,14 @@ test.describe('panels', () => {
     await expect(page.locator('.link-strip')).toContainText('TCP')
     await expect(page.locator('.link-strip')).toContainText(':5178')
   })
+
+  test('the strip shows the envelope: a sequence number climbing, a heartbeat under a few seconds old, no gaps', async ({ page }) => {
+    const seq = page.getByTestId('link-seq')
+    const beat = page.getByTestId('link-heartbeat')
+    await expect(seq).toContainText(/seq$/)                    // no " · N gap" suffix on a healthy wire
+    await expect(seq.locator('b')).not.toHaveText('0', { timeout: 10_000 })
+    await expect(beat).toContainText('beat')
+    await expect(beat.locator('b')).toHaveText(/^[0-3]s$/, { timeout: 10_000 })
+    await expect(page.getByTestId('link-open-tx')).toHaveCount(0)
+  })
 })

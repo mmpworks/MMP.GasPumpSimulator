@@ -25,6 +25,73 @@ public class StateMachineTests
 
     private static readonly ServiceStatus HoseApart = ServiceStatus.Of([DiagnosticCodes.PumpHoseBreakaway]);
 
+    // ----- The island's transaction: named by the event that ends the pour, cleared once the money is dealt with.
+
+    [Fact]
+    public void The_transaction_is_cleared_once_when_the_completion_lands_and_never_again()
+    {
+        var m = Fueling();
+        m.Apply(new SaleEvent.Progress("S1", Volume.FromGallons(1), new Money(350), FlowRate.GallonsPerMinute(10), "full"));
+        var atHang = m.Apply(new SaleEvent.NozzleHung("S1", TxSeq: 7));
+        Assert.Equal(SaleState.Completing, m.State);
+        Assert.Equal(7, m.TxSeq);
+        Assert.DoesNotContain(atHang, c => c is SaleCommand.ClearTransaction);      // the money is still in flight
+
+        var settled = m.Apply(new SaleEvent.CompletionSent("S1", new Money(350)));
+        var clear = Assert.Single(settled.OfType<SaleCommand.ClearTransaction>());
+        Assert.Equal(7, clear.TxSeq);
+        Assert.Null(m.TxSeq);
+
+        var late = m.Apply(new SaleEvent.CompletionSent("S1", new Money(350)));    // a duplicate from the bank
+        Assert.DoesNotContain(late, c => c is SaleCommand.ClearTransaction);
+    }
+
+    [Fact]
+    public void A_queued_completion_clears_the_transaction_too_because_the_money_is_safe_on_the_station()
+    {
+        var m = Fueling();
+        m.Apply(new SaleEvent.Progress("S1", Volume.FromGallons(1), new Money(350), FlowRate.GallonsPerMinute(10), "full"));
+        m.Apply(new SaleEvent.CeilingReached("S1", Volume.FromGallons(2), new Money(700), TxSeq: 3));
+        var queued = m.Apply(new SaleEvent.CompletionQueued("S1", new Money(700)));
+        Assert.Equal(SaleState.StoreAndForward, m.State);
+        Assert.Contains(queued, c => c is SaleCommand.ClearTransaction { TxSeq: 3 });
+    }
+
+    [Fact]
+    public void A_transaction_named_after_the_sale_already_settled_is_cleared_at_once()
+    {
+        var m = Fueling();
+        m.Apply(new SaleEvent.Progress("S1", Volume.FromGallons(1), new Money(350), FlowRate.GallonsPerMinute(10), "full"));
+        m.Apply(new SaleEvent.NozzleHung("S1"));                                   // the dispenser's number is not known yet
+        m.Apply(new SaleEvent.CompletionSent("S1", new Money(350)));
+        Assert.Equal(SaleState.Idle, m.State);
+        var late = m.Apply(new SaleEvent.NozzleHung("S1", TxSeq: 5));             // the island's own report, a frame behind
+        Assert.Contains(late, c => c is SaleCommand.ClearTransaction { TxSeq: 5 });
+        Assert.Equal(SaleState.Idle, m.State);
+    }
+
+    [Fact]
+    public void A_fault_with_nothing_metered_owes_no_money_so_the_transaction_is_cleared_with_the_fault()
+    {
+        var m = Fueling();
+        var c = m.Apply(new SaleEvent.Fault("S1", "[PUMP.MTR.OVERPULSE] x", "PUMP.MTR.OVERPULSE", TxSeq: 2));
+        Assert.Equal(SaleState.Faulted, m.State);
+        Assert.Contains(c, x => x is SaleCommand.Reverse);
+        Assert.Contains(c, x => x is SaleCommand.ClearTransaction { TxSeq: 2 });
+    }
+
+    [Fact]
+    public void A_fault_with_fuel_metered_keeps_the_transaction_until_the_money_is_settled()
+    {
+        var m = Fueling();
+        m.Apply(new SaleEvent.Progress("S1", Volume.FromGallons(1), new Money(350), FlowRate.GallonsPerMinute(10), "full"));
+        var c = m.Apply(new SaleEvent.Fault("S1", "[PUMP.HOSE.BREAKAWAY] x", "PUMP.HOSE.BREAKAWAY", TxSeq: 4));
+        Assert.Contains(c, x => x is SaleCommand.SendCompletion);
+        Assert.DoesNotContain(c, x => x is SaleCommand.ClearTransaction);
+        var settled = m.Apply(new SaleEvent.CompletionSent("S1", new Money(350)));
+        Assert.Contains(settled, x => x is SaleCommand.ClearTransaction { TxSeq: 4 });
+    }
+
     [Fact]
     public void A_service_report_during_fueling_or_completing_is_noted_and_changes_nothing()
     {

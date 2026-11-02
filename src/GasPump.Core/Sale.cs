@@ -153,8 +153,9 @@ public abstract record SaleEvent(string SaleId)
     public sealed record NozzleLifted(string SaleId) : SaleEvent(SaleId);
     /// <summary>Lines is the money itemized, from the pump's price schedule. Null when the sender has no breakdown; the sale then carries one fuel line.</summary>
     public sealed record Progress(string SaleId, Volume Volume, Money Money, FlowRate Flow, string Phase, IReadOnlyList<ChargeLine>? Lines = null) : SaleEvent(SaleId);
-    public sealed record NozzleHung(string SaleId) : SaleEvent(SaleId);
-    public sealed record CeilingReached(string SaleId, Volume Volume, Money Money, IReadOnlyList<ChargeLine>? Lines = null) : SaleEvent(SaleId);
+    /// <summary>TxSeq names the transaction the dispenser wrote for this delivery, so the station can clear it once the money is dealt with. Null before any pour.</summary>
+    public sealed record NozzleHung(string SaleId, long? TxSeq = null) : SaleEvent(SaleId);
+    public sealed record CeilingReached(string SaleId, Volume Volume, Money Money, IReadOnlyList<ChargeLine>? Lines = null, long? TxSeq = null) : SaleEvent(SaleId);
     public sealed record CompletionSent(string SaleId, Money Final) : SaleEvent(SaleId);
     public sealed record CompletionQueued(string SaleId, Money Final) : SaleEvent(SaleId);
     public sealed record Reversed(string SaleId) : SaleEvent(SaleId);
@@ -164,7 +165,7 @@ public abstract record SaleEvent(string SaleId)
     public sealed record Timeout(string SaleId, SaleState InState, string Tag = SaleCommand.StateTimer) : SaleEvent(SaleId);
     public sealed record Cancel(string SaleId, string Reason) : SaleEvent(SaleId);
     /// <summary>Code is the diagnostic code of the part that failed, so the notice and the records can name it.</summary>
-    public sealed record Fault(string SaleId, string Reason, string? Code = null) : SaleEvent(SaleId);
+    public sealed record Fault(string SaleId, string Reason, string? Code = null, long? TxSeq = null) : SaleEvent(SaleId);
     /// <summary>The pump's service status changed: a part broke, a part was fixed, the link dropped or came back. The station posts it once per change.</summary>
     public sealed record PumpService(string SaleId, ServiceStatus Service) : SaleEvent(SaleId);
 }
@@ -186,6 +187,8 @@ public abstract record SaleCommand(string SaleId)
     /// <summary>Settle the hold to Final. Lines itemize Final for the bank's record and the driver's receipt; their sum is Final.</summary>
     public sealed record SendCompletion(string SaleId, Money Final, IReadOnlyList<ChargeLine> Lines) : SaleCommand(SaleId);
     public sealed record Reverse(string SaleId) : SaleCommand(SaleId);
+    /// <summary>The money for the delivery is settled or queued. Tell the pump it may drop transaction TxSeq and arm again.</summary>
+    public sealed record ClearTransaction(string SaleId, long TxSeq) : SaleCommand(SaleId);
     /// <summary>Start a timer. Arming the same tag again replaces it. The Timeout it raises carries State and Tag back.</summary>
     public sealed record ArmTimer(string SaleId, SaleState State, TimeSpan After, string Tag = StateTimer) : SaleCommand(SaleId);
     /// <summary>Stop one timer by tag, or every timer of the sale when Tag is null.</summary>

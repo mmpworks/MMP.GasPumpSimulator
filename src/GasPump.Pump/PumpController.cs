@@ -64,9 +64,26 @@ public sealed class PumpController(
     IPriceSchedule pricing,
     TaperPolicy taper,
     TimeProvider clock,
-    IReadOnlyList<IDeliveryStage>? stages = null)
+    IReadOnlyList<IDeliveryStage>? stages = null,
+    TransactionBuffer? transactions = null)
 {
     private readonly IReadOnlyList<IDeliveryStage> _stages = stages ?? [];
+
+    /// <summary>The finished deliveries the island still holds for the station. The pump refuses to arm while one is open.</summary>
+    public TransactionBuffer Transactions { get; } = transactions ?? new TransactionBuffer(ledger);
+
+    /// <summary>The transaction this sale's delivery wrote, so the event that ends the sale can name it. Null when no pour ended for that sale.</summary>
+    public long? TransactionFor(string saleId) => Transactions.Last is { } t && t.SaleId == saleId ? t.TxSeq : null;
+
+    /// <summary>The code an arm refusal carries while a delivered transaction waits to be cleared.</summary>
+    public const string TransactionPayable = "PUMP.TX.PAYABLE";
+
+    /// <summary>Fuel moved and the delivery is over: write the transaction the station will settle from.</summary>
+    private void RecordTransaction(string endReason)
+    {
+        if (_armed is null || !_poured || Volume == Volume.Zero) return;
+        Transactions.Record(_armed.SaleId, _grade ?? Grade.Regular, Volume, Money, Lines, clock.GetUtcNow(), endReason);
+    }
 
     /// <summary>The parts on the delivery path downstream of the meter, in the order they see each slice.</summary>
     public IReadOnlyList<IDeliveryStage> Stages => _stages;
@@ -121,6 +138,13 @@ public sealed class PumpController(
             return (false, blocking.Code, null);
         }
 
+        if (Transactions.HasOpen)
+        {
+            // The last delivery is not settled yet. The forecourt rule: no new sale until the controller clears the buffer.
+            var open = Transactions.Open[0];
+            ledger.Append("arm.refused", $"{saleId} {TransactionPayable} #{open.TxSeq} {open.SaleId} {open.Money} awaits clearance");
+            return (false, TransactionPayable, null);
+        }
         var (armed, refusal) = authority.TryArm(saleId, tokenWire);
         if (armed is null) return (false, refusal, null);
 
@@ -327,6 +351,7 @@ public sealed class PumpController(
         LastFault = code.Format(detail);
         LastFaultCode = code.Code;
         ledger.Append("pump.fault", code.Format($"{_armed?.SaleId ?? "-"} {detail} after {Volume} {Money}"));
+        RecordTransaction($"fault {code.Code}");
         ClearSale();
     }
 
@@ -494,6 +519,7 @@ public sealed class PumpController(
         hydraulics.Close();
         Phase = PumpPhase.Stopped;
         ledger.Append("valve.close", $"{_armed?.SaleId} {reason} {Volume} {Money} totalizer {totalizer.Total}");
+        RecordTransaction(reason);
         ClearSale();
         // A close the operator asked for during the delivery takes effect now that it is over.
         if (_closedForSales) { Phase = PumpPhase.Closed; ledger.Append("pump.closed", DiagnosticCodes.PumpClosed.Format("pending close applied after the delivery")); }
@@ -511,6 +537,22 @@ public sealed class PumpController(
     public void Disarm()
     {
         hydraulics.Close();
+        ClearSale();
+        Phase = RestingPhase;
+    }
+
+    /// <summary>
+    /// The power is going. The valve is already shut by the loss itself; what
+    /// matters is that the delivery so far is written to the transaction buffer
+    /// before the lights go out, the way a dispenser's battery-backed memory
+    /// keeps the running sale. No fault is recorded: the island did nothing wrong.
+    /// </summary>
+    public void PowerLost()
+    {
+        if (Phase is not (PumpPhase.Dispensing or PumpPhase.Paused or PumpPhase.Armed)) return;
+        hydraulics.Close();
+        ledger.Append("valve.close", $"{_armed?.SaleId} power lost {Volume} {Money} totalizer {totalizer.Total}");
+        RecordTransaction("power lost");
         ClearSale();
         Phase = RestingPhase;
     }

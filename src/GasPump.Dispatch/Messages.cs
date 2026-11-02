@@ -24,6 +24,8 @@ namespace GasPump.Dispatch;
 [JsonDerivedType(typeof(ResetBreakaway), nameof(ResetBreakaway))]
 [JsonDerivedType(typeof(CloseForSales), nameof(CloseForSales))]
 [JsonDerivedType(typeof(OpenForSales), nameof(OpenForSales))]
+[JsonDerivedType(typeof(Lock), nameof(Lock))]
+[JsonDerivedType(typeof(Clear), nameof(Clear))]
 public abstract record PumpMessage
 {
     public sealed record Arm(string SaleId, string Token, Grade? Grade) : PumpMessage;
@@ -57,7 +59,14 @@ public abstract record PumpMessage
     public sealed record CloseForSales(string By) : PumpMessage;
     /// <summary>The operator puts the pump back into sales.</summary>
     public sealed record OpenForSales(string By) : PumpMessage;
+    /// <summary>The station claims a delivered transaction before settling it. Another controller is refused.</summary>
+    public sealed record Lock(long TxSeq, string By) : PumpMessage;
+    /// <summary>The station has settled or queued the money. The pump drops the transaction and may arm again.</summary>
+    public sealed record Clear(long TxSeq, string By) : PumpMessage;
 }
+
+/// <summary>What the pump worker's mailbox carries: the message, the sale it was for, and the correlation id if the sender wants an answer.</summary>
+public sealed record PumpEnvelope(string? SaleId, PumpMessage M, string? CorrelationId = null);
 
 /// <summary>What the sale worker sends the payment worker.</summary>
 public abstract record PaymentMessage(string SaleId)

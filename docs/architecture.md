@@ -300,11 +300,29 @@ GasPump.Host.exe  (the station)                     GasPump.Dispenser.exe  (the 
   StationServer: copy of the dispenser chain          dispenser-state.json (totalizer, nonces)
   SocketDispenserLink  <==== TCP 127.0.0.1:5178 ====>  DispenserServer
        msg {saleId, PumpMessage}  ---->
+       read {frames | transactions} ---->
        power off                  ---->
+       heartbeat                  <--->
                                   <----  event {SaleEvent}, view, log, ledger, custody line
+                                  <----  answer {correlation, Done | Refused | Stale | Busy}
+                                  <----  transactions [PumpTransaction]
 ```
 
-One JSON object per line. `PumpMessage` and `SaleEvent` carry a type discriminator, so the records that were the contract between two mailboxes are the contract between two processes with no translation. The tick never crosses the wire; the dispenser has its own.
+One JSON object per line, and every line wears the same envelope (`WireFrame`): protocol version, sequence number, source and destination node, kind, time sent, and for a command a correlation id and a time to live. The body is unchanged: `PumpMessage` and `SaleEvent` carry a type discriminator, so the records that were the contract between two mailboxes are the contract between two processes with no translation. The tick never crosses the wire; the dispenser has its own.
+
+### The envelope
+
+The station is node `1.1` and pump `PUMP-07` is node `2.7`, the way the forecourt standard addresses devices. `FrameCodec` is the one place a line becomes a frame; a line it cannot read, a frame from the wrong protocol version, or one addressed to another node is refused with a reason and logged, never thrown. Each side numbers its frames from one per process (`WireSequencer`) and keeps the last 512 in a ring. The receiver (`WireReceiver`) accepts in order, drops a duplicate, and on a gap asks for the missing numbers with `read frames from..to`; the sender replays them from the ring. A frame that fills a gap late is recorded and never applied to the sale, which already decided without it; if it names a transaction, the station clears that. A frame nobody could send, because no peer was on the line, gives its number back, so a station that connects later sees no gap for frames that were never on the wire.
+
+Heartbeats take no number. One goes each way every second with the sender's status word and the last number it sent, so the receiver can see frames lost at the tail with nothing after them. Two missed beats (`Liveness`) is "the device stopped talking", which is a different fault from "the socket closed": the socket is the transport, the heartbeat is the peer. The station raises `LINK.DISPENSER.SILENT` for the first and `LINK.DISPENSER.LOST` for the second.
+
+A command the sale needs (`Arm`, `Close`, `Lock`, `Clear`, the connect-time `Stop`, the pump switch) goes through `IDispenserLink.Command` and is answered: `Done`, `Refused` with the pump's reason, `Busy` when a payable transaction still sits in the buffer, or `Stale` when the frame arrived after its time to live, in which case the dispenser never ran it. The driver's hands (`Lift`, `Squeeze`, `Hang`) go through `Post` and are not answered; the pump's events are their answer. The station keeps a clock on every command (`SimulationOptions.CommandTimeout`, 3 s); an `Arm` or `Close` that goes unanswered, or comes back `Stale`, faults the sale as `LINK.DISPENSER.SILENT`. In-process the same `Command` call is answered the moment the pump worker handles the message, so the station code is one code path.
+
+### The transaction buffer
+
+A delivery that ends with fuel moved is written on the island before anything else happens: `PumpTransaction` (number, sale, grade, volume, money, charge lines, when, why) in the pump's `TransactionBuffer`, state `Payable`. The event that ends the sale (`NozzleHung`, `CeilingReached`, `Fault`) carries the number. While a transaction is open the pump refuses to arm with `PUMP.TX.PAYABLE`, so a delivery can never be paid twice or lost between the hang-up and the settlement. Once the money is settled, or safely queued on the station, or found not to be owed, the sale emits `ClearTransaction`; the station sends `Lock` (this controller claims it) and `Clear` (forget it, arm again). A second controller is told who holds the lock.
+
+The buffer is in the dispenser's state file beside the totalizer, the nonces, and the broken parts, and a power cut writes the running delivery to it before the process ends (`PumpController.PowerLost`). On every connect the station asks `read transactions` and reconciles what comes back: the sale this station restarted in the middle of is settled from the island's numbers, which are the true ones (`recovery.reconciled`), and the journal's under-recorded guess is used only when the island says nothing for `CloseoutWait` (5 s); a sale this station already finished gets its lost clear sent again; a delivery this station has no record of goes to the ledger as `tx.orphan` with its money, for the attendant, and the pump is released. In-process the buffer lives and dies with the one process, so the station journal still carries the close-out.
 
 | Belief | Where it shows |
 |---|---|
@@ -312,11 +330,11 @@ One JSON object per line. `PumpMessage` and `SaleEvent` carry a type discriminat
 | Custody is stored on the dispenser and sent to the station | The dispenser writes `dispenser-custody-<run>.ndjson` and streams each line as it lands. The station appends the same bytes to `station-copy-<run>.ndjson` through `CustodyCopy`, which keeps the last sequence number it wrote and drops any line at or below it. A station restart, a re-bind, and a socket reconnect each replay the whole chain, and the copy grows by the lines it was missing. It then verifies the copy with the same key. |
 | The station owns session open and close | `sale.open` and `sale.close` are station ledger entries. The journal is the station's. Recovery is the station's. The dispenser never knows what a sale is; it knows a token, a valve, and a counter. |
 
-Each side is safe alone. Dispenser gone: the station faults the sale with `LINK.DISPENSER.LOST`, settles for the fuel it recorded, and refuses to pretend the pump is there. Station gone with the valve open: the dispenser keeps pouring under its own ceiling and time limit, and the first frame the new station sends is `Stop`. E-stop: the station writes its record and snapshot, sends `power off`, and the dispenser process closes its chain and exits; the cashier's reset starts it again before the new station connects.
+Each side is safe alone. Dispenser gone: the station faults the sale with `LINK.DISPENSER.LOST`, settles for the fuel it recorded, and refuses to pretend the pump is there. Dispenser alive but silent: `LINK.DISPENSER.SILENT`, same settlement. Station gone with the valve open: the dispenser keeps pouring under its own ceiling and time limit, writes the delivery to its buffer when the pour ends, and the first frame the new station sends is `Stop`; the new station then reads the buffer and settles from the island's numbers. E-stop: the station writes its record and snapshot, sends `power off`, the dispenser writes the running delivery to its buffer and closes its chain and exits; the cashier's reset starts it again before the new station connects, and the new station settles the E-stopped sale from the buffer.
 
-`--dispenser inproc` keeps both sides in one process behind the same `IDispenserLink` interface, which is how the fake-clock tests run. The six socket tests run on a real clock over loopback.
+`--dispenser inproc` keeps both sides in one process behind the same `IDispenserLink` interface, which is how the fake-clock tests run. The twelve socket tests run on a real clock over loopback.
 
-The UI is two columns and a strip. Amber, left: the pump face, the hand controls, the forecourt faults, and the dispenser's own log, ledger, and chain. Blue, right: payment, bank link, administrator, E-stop, journal, and the station's own records plus its copy of the dispenser chain. The strip between them is the wire: the port, the frame counters both ways, the chain lines received. Every record carries its origin, and over the socket that origin is a fact of which process sent it.
+The UI is two columns and a strip. Amber, left: the pump face, the hand controls, the forecourt faults, and the dispenser's own log, ledger, and chain. Blue, right: payment, bank link, administrator, E-stop, journal, and the station's own records plus its copy of the dispenser chain. The strip between them is the wire: the port, the frame counters both ways, the chain lines received, the sequence number and any gaps, the age of the dispenser's last heartbeat, and the count of deliveries the island still holds. Every record carries its origin, and over the socket that origin is a fact of which process sent it.
 
 ## Forecourt faults and the E-stop
 

@@ -32,6 +32,12 @@ public class PumpTests
             Pump = new PumpController(Authority, Hydraulics, Meter, Totalizer, Ledger, prices ?? Pricing.Default, taper ?? TaperPolicy.Default, Clock, stages);
         }
 
+        /// <summary>What the station does once the money is settled: clear the island's transaction so the next arm is allowed.</summary>
+        public void ClearTransactions()
+        {
+            foreach (var t in Pump.Transactions.Open) Pump.Transactions.Clear(t.TxSeq, "test station");
+        }
+
         public string Token(string saleId, Money ceiling, Volume? max = null) =>
             Signer.Issue(saleId, "PUMP-07", ceiling, max ?? Volume.FromGallons(50), Clock.GetUtcNow(), TimeSpan.FromMinutes(5)).Serialize();
 
@@ -548,6 +554,7 @@ public class PumpTests
         Assert.Contains(rig.Ledger.Snapshot(), e => e.Kind == "arm.refused" && e.Detail.Contains("[PUMP.HOSE.BREAKAWAY]"));
 
         rig.Pump.ResetBreakaway();
+        rig.ClearTransactions();   // the station settled the last delivery
         var (okAfter, _, _) = rig.Pump.Arm("S3", rig.Token("S3", Money.FromDollars(30)));
         Assert.True(okAfter);
     }
@@ -592,6 +599,7 @@ public class PumpTests
 
         rig.Hydraulics.SupplyAvailable = true;
         Assert.True(rig.Pump.ReturnToService());
+        rig.ClearTransactions();   // the station settled the last delivery
         Assert.True(rig.Pump.Arm("S3", rig.Token("S3", Money.FromDollars(30))).Ok);
     }
 
@@ -605,6 +613,7 @@ public class PumpTests
         rig.Meter.PulserDead = true;
         Assert.Equal(DiagnosticCodes.PumpMeterNoPulse.Code, rig.Pump.Arm("S2", rig.Token("S2", Money.FromDollars(30))).Reason);
         rig.Meter.PulserDead = false;
+        rig.ClearTransactions();   // the station settled the last delivery
         Assert.True(rig.Pump.Arm("S3", rig.Token("S3", Money.FromDollars(30))).Ok);
     }
 
@@ -620,6 +629,7 @@ public class PumpTests
         Assert.True(rig.Pump.Service.InService);
         Assert.False(rig.Pump.ReturnToService());        // nothing to repair; the next arm is the reset
         Assert.Equal(PumpPhase.Faulted, rig.Pump.Phase);
+        rig.ClearTransactions();   // the station settled the last delivery
         Assert.True(rig.Pump.Arm("S2", rig.Token("S2", Money.FromDollars(30))).Ok);
         Assert.Null(rig.Pump.LastFaultCode);
     }

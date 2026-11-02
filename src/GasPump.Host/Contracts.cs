@@ -40,6 +40,13 @@ public static class Contracts
                 framesSent = link.FramesSent,
                 framesReceived = link.FramesReceived,
                 custodyLines = link.CustodyLines,
+                lastSeqSent = link.LastSeqSent,
+                lastSeqReceived = link.LastSeqReceived,
+                gaps = link.Gaps,
+                duplicates = link.Duplicates,
+                heartbeatAt = link.LastHeartbeatAt,
+                peerStatus = link.PeerStatus,
+                peerAlive = link.PeerAliveNow,
                 port = process?.Port ?? sim.Options.Dispenser?.Port,
                 processRunning = process?.Running ?? sim.DispenserIsLocal,
                 external = process?.External ?? false,
@@ -106,6 +113,7 @@ public static class Contracts
         ledgerIntact = v.LedgerIntact,
         runId = v.RunId,
         pid = v.Pid,
+        openTransactions = (v.OpenTransactions ?? []).Select(t => new { txSeq = t.TxSeq, t.SaleId, grade = t.Grade.ToString(), gallons = t.Volume.Gallons, cents = t.Money.Cents, state = t.State.ToString(), t.LockedBy, t.EndReason }),
     };
 
     public static object Sale(SaleSnapshot s) => new

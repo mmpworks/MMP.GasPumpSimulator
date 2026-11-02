@@ -79,6 +79,8 @@ public sealed class SaleStateMachine
     public Tender Tender { get; private set; } = Tender.Credit;
     public CardSource Source { get; private set; } = CardSource.PumpInsert;
     public string? FaultCode { get; private set; }
+    /// <summary>The dispenser's transaction for this delivery, once a pour ended. Cleared on the pump when the money is settled or queued.</summary>
+    public long? TxSeq { get; private set; }
     /// <summary>The pump's conditions as last reported through <see cref="SaleEvent.PumpService"/>.</summary>
     public ServiceStatus Service { get; private set; }
 
@@ -131,6 +133,7 @@ public sealed class SaleStateMachine
         switch (e)
         {
             case SaleEvent.Fault f when !IsTerminal(State):
+                TxSeq ??= f.TxSeq;
                 return FaultSale(f.Reason, f.Code, commands);
             case SaleEvent.Cancel c when State is SaleState.CardRead or SaleState.Authorizing or SaleState.ReadyToPump:
                 End = EndReason.DriverCancelled;
@@ -184,6 +187,15 @@ public sealed class SaleStateMachine
             case (SaleState.Authorizing, SaleEvent.NozzleLifted):
                 NozzleOut = true;
                 commands.Add(new SaleCommand.Log(SaleId, $"nozzle lifted with no authorization ({State}), pump calling"));
+                return commands;
+
+            // The island's own end-of-delivery report, a frame behind a sale this station already settled, names the
+            // transaction still to clear. A hang with no number in these states is the driver putting the nozzle back.
+            case (SaleState.Idle, SaleEvent.NozzleHung { TxSeq: not null } lateIdle):
+                NoteTransaction(lateIdle.TxSeq, commands);
+                NozzleOut = false;
+                SpoutInserted = false;
+                commands.Add(new SaleCommand.Log(SaleId, $"delivery end reported in {State}, transaction #{lateIdle.TxSeq}"));
                 return commands;
 
             case (SaleState.Idle, SaleEvent.NozzleHung):
@@ -330,10 +342,12 @@ public sealed class SaleStateMachine
                 if (cr.Lines is not null) Lines = cr.Lines;
                 Flow = FlowRate.Zero;
                 Phase = "ceiling";
+                TxSeq ??= cr.TxSeq;
                 commands.Add(new SaleCommand.CloseValve(SaleId));
                 return Finish(commands, "ceiling reached", EndReason.Completed);
 
-            case (SaleState.Fueling, SaleEvent.NozzleHung):
+            case (SaleState.Fueling, SaleEvent.NozzleHung nh):
+                TxSeq ??= nh.TxSeq;
                 Flow = FlowRate.Zero;
                 Phase = "hung";
                 NozzleOut = false;
@@ -353,6 +367,19 @@ public sealed class SaleStateMachine
             case (SaleState.Fueling, SaleEvent.Timeout):
                 commands.Add(new SaleCommand.CloseValve(SaleId));
                 return Finish(commands, "max fueling time, valve closed", EndReason.MaxFuelingTime);
+
+            // The dispenser's own end-of-delivery report can land after the sale already moved on (a timer finished it first,
+            // or the station closed the valve). It carries the transaction number the station still has to clear.
+            case (SaleState.Completing or SaleState.StoreAndForward or SaleState.Faulted or SaleState.Cancelled or SaleState.Idle, SaleEvent.NozzleHung late):
+                NoteTransaction(late.TxSeq, commands);
+                NozzleOut = false;
+                SpoutInserted = false;
+                commands.Add(new SaleCommand.Log(SaleId, $"delivery end reported in {State}{(late.TxSeq is { } t1 ? $", transaction #{t1}" : "")}"));
+                return commands;
+            case (SaleState.Completing or SaleState.StoreAndForward or SaleState.Faulted or SaleState.Cancelled or SaleState.Idle, SaleEvent.CeilingReached lateCeiling):
+                NoteTransaction(lateCeiling.TxSeq, commands);
+                commands.Add(new SaleCommand.Log(SaleId, $"ceiling reported in {State}{(lateCeiling.TxSeq is { } t2 ? $", transaction #{t2}" : "")}"));
+                return commands;
 
             case (SaleState.Completing, SaleEvent.Timeout):
                 // The completion is in flight and late. The gateway will queue it if the host never answers; if the
@@ -411,22 +438,26 @@ public sealed class SaleStateMachine
             case SaleEvent.CompletionSent cs when State == SaleState.Completing:
                 Hold = HoldStatus.Settled;
                 SettleCash(cs.Final);
+                ReleasePump(commands);
                 Transition(SaleState.Idle, commands, Tender == Tender.Cash ? $"cash sale {cs.Final}, change {ChangeDue}" : $"completion sent for {cs.Final}");
                 return true;
 
             case SaleEvent.CompletionSent cs:
                 Hold = HoldStatus.Settled;
                 SettleCash(cs.Final);
+                ReleasePump(commands);
                 commands.Add(new SaleCommand.Log(SaleId, $"completion for {cs.Final} posted late, hold settled"));
                 return true;
 
             case SaleEvent.CompletionQueued cq when State == SaleState.Completing:
                 Hold = HoldStatus.SettlePending;
+                ReleasePump(commands);
                 Transition(SaleState.StoreAndForward, commands, $"host down, completion for {cq.Final} queued", timeout: _timeouts.Notice);
                 return true;
 
             case SaleEvent.CompletionQueued:
                 if (Hold != HoldStatus.Settled) Hold = HoldStatus.SettlePending;
+                ReleasePump(commands);
                 commands.Add(new SaleCommand.Log(SaleId, "completion queued"));
                 return true;
         }
@@ -438,6 +469,30 @@ public sealed class SaleStateMachine
     /// sale with no fuel gives the hold back. The code names the part, so the
     /// notice can name the driver's next step.
     /// </summary>
+    /// <summary>
+    /// The money for the delivery is settled or safely queued, so the pump may
+    /// drop its transaction and arm again. Once per transaction: the number
+    /// is forgotten here so a late duplicate settlement sends nothing.
+    /// </summary>
+    private void ReleasePump(List<SaleCommand> commands)
+    {
+        if (TxSeq is not { } tx) return;
+        commands.Add(new SaleCommand.ClearTransaction(SaleId, tx));
+        TxSeq = null;
+    }
+
+    /// <summary>
+    /// The dispenser named the transaction for this delivery. Remember it, and
+    /// if the money is already dealt with (settled, queued, released, or never
+    /// asked for) clear it now; otherwise the completion will.
+    /// </summary>
+    private void NoteTransaction(long? tx, List<SaleCommand> commands)
+    {
+        if (tx is null) return;
+        TxSeq ??= tx;
+        if (Hold is not (HoldStatus.Requested or HoldStatus.Held)) ReleasePump(commands);
+    }
+
     private IReadOnlyList<SaleCommand> FaultSale(string reason, string? code, List<SaleCommand> commands)
     {
         End = EndReason.PumpFault;
@@ -448,7 +503,10 @@ public sealed class SaleStateMachine
             commands.Add(new SaleCommand.SendCompletion(SaleId, Money, Charges));
             return Transition(SaleState.Faulted, commands, $"FAULT: {reason}, settling {Money} for fuel already dispensed", closeValve: true);
         }
-        return Transition(SaleState.Faulted, commands, $"FAULT: {reason}", closeValve: true, reverse: Hold is HoldStatus.Held or HoldStatus.Requested);
+        var result = Transition(SaleState.Faulted, commands, $"FAULT: {reason}", closeValve: true, reverse: Hold is HoldStatus.Held or HoldStatus.Requested);
+        // No money is owed for this delivery (nothing metered, or the meter lied), so the pump's record can go now.
+        ReleasePump(commands);
+        return result;
     }
 
     /// <summary>
@@ -508,7 +566,9 @@ public sealed class SaleStateMachine
             // No fuel moved. A completion for zero is wrong; the hold must be reversed in full.
             End = EndReason.DriverCancelled;
             EndDetail = "no fuel was dispensed";
-            return Transition(SaleState.Cancelled, commands, $"{why}, no fuel, hold reversed", reverse: true);
+            var result = Transition(SaleState.Cancelled, commands, $"{why}, no fuel, hold reversed", reverse: true);
+            ReleasePump(commands);
+            return result;
         }
         commands.Add(new SaleCommand.SendCompletion(SaleId, Money, Charges));
         return Transition(SaleState.Completing, commands, $"{why}, {Volume} for {Money}", timeout: _timeouts.Completion);

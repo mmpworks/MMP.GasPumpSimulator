@@ -26,10 +26,10 @@ public sealed class LinkTests : IDisposable
     // 30 gal/min at 100 ms ticks is 50 pulses a tick, under the 60-pulse sanity limit. A $2 hold is about 0.65 gal, about 1.3 s.
     private static readonly DispenserOptions FastPump = new("PUMP-07", HardLimits.Default, Pricing.Default, TaperPolicy.Default, FlowRate.GallonsPerMinute(30), TimeSpan.FromMilliseconds(100));
 
-    private DispenserServer NewDispenser(int port = 0, string? runId = null) =>
-        new(new DispenserServerOptions(FastPump, port, _dir, Ikm, RunId: runId), TimeProvider.System, new ThreadedDispatch(TimeProvider.System));
+    private DispenserServer NewDispenser(int port = 0, string? runId = null, TimeSpan? heartbeat = null) =>
+        new(new DispenserServerOptions(FastPump, port, _dir, Ikm, RunId: runId, Heartbeat: heartbeat), TimeProvider.System, new ThreadedDispatch(TimeProvider.System));
 
-    private Simulation NewStation(int port, string runId) => new(
+    private Simulation NewStation(int port, string runId, TimeSpan? heartbeat = null, TimeSpan? commandTimeout = null) => new(
         new ChannelDispatch(TimeProvider.System), TimeProvider.System,
         SimulationOptions.Default with
         {
@@ -37,7 +37,8 @@ public sealed class LinkTests : IDisposable
             NominalFlow = FastPump.NominalFlow,
             TickPeriod = FastPump.TickPeriod,
             Journal = new JournalOptions(_dir, "PUMP-07", Ikm, runId),
-            Dispenser = new DispenserLinkOptions("127.0.0.1", port),
+            Dispenser = new DispenserLinkOptions("127.0.0.1", port, heartbeat),
+            CommandTimeout = commandTimeout,
         });
 
     /// <summary>Card in, wait for the keypad prompt to cross the wire, type the test ZIP.</summary>
@@ -109,7 +110,11 @@ public sealed class LinkTests : IDisposable
         Assert.Contains("sale.open", stationKinds);
         Assert.Contains("sale.close", stationKinds);
         Assert.DoesNotContain(stationKinds, k => k.StartsWith("valve."));
+        // The island's last words for this sale are the lock and the clear the station sends once the money lands. Wait for
+        // them, so the chain compared below is finished rather than still growing.
+        WaitFor(() => dispenser.Dispenser.Pump.Transactions.Open.Count == 0, TimeSpan.FromSeconds(3), () => "the island still holds the delivery\n" + Tail(station));
         WaitFor(() => dispenser.Ledger.Snapshot().Count == station.DispenserLedgerSnapshot().Count, TimeSpan.FromSeconds(3), () => $"ledger mirror short: {station.DispenserLedgerSnapshot().Count} of {dispenser.Ledger.Snapshot().Count}");
+        Thread.Sleep(300);
 
         // The station's copy of the dispenser's chain is the same bytes, and verifies with the same key.
         var copy = Path.Combine(_dir, "copy.ndjson");
@@ -215,7 +220,14 @@ public sealed class LinkTests : IDisposable
         WaitFor(() => station2.Link.Connected, TimeSpan.FromSeconds(8), () => "second station never connected\n" + Tail(station2));
         Assert.Equal(RecoveryKind.ClosedOut, station2.LastRecovery.Kind);
         Assert.Equal(Volume.Zero, station2.LastRecovery.UnrecordedUpTo);
-        WaitFor(() => station2.Issuer.OpenHolds.Count == 0 && station2.Issuer.AvailableBalance(card.Pan) == before - atStop, TimeSpan.FromSeconds(5), () => $"holds {string.Join(",", station2.Issuer.OpenHolds)}\n" + Tail(station2));
+        // The island kept the delivery across the power cut, so the new station settles from the island's number, which
+        // can run a tick past what the old station had seen, and never below it.
+        WaitFor(() => station2.Issuer.OpenHolds.Count == 0 && station2.Issuer.Settlements.Any(s => s.SaleId == "S0001"), TimeSpan.FromSeconds(8), () => $"holds {string.Join(",", station2.Issuer.OpenHolds)}\n" + Tail(station2));
+        var settled = station2.Issuer.Settlements.Single(s => s.SaleId == "S0001").Final;
+        Assert.True(settled >= atStop, $"settled {settled} below the station's own {atStop}");
+        Assert.Equal(before - settled, station2.Issuer.AvailableBalance(card.Pan));
+        Assert.Contains(station2.Ledger.Snapshot(), e => e.Kind == "recovery.reconciled");
+        WaitFor(() => dispenser.Dispenser.Pump.Transactions.Open.Count == 0, TimeSpan.FromSeconds(3), () => "the island still holds the delivery");
         dispenser.Dispose();
     }
 
@@ -306,5 +318,146 @@ public sealed class LinkTests : IDisposable
         Assert.True(station2.LastRecovery.UnderRecorded);      // the dispenser kept pouring after the last snapshot; the note says so
         WaitFor(() => dispenser.Log.Snapshot().Any(l => l.Message.Contains("disarmed: station connected")), TimeSpan.FromSeconds(3), () => "no disarm line in the dispenser log");
         Assert.Contains(station2.Ledger.Snapshot(), e => e.Kind == "link.up");
+    }
+
+    // ----- The envelope on the wire: numbered frames, answered commands, heartbeats, and the island's transactions.
+
+    [Fact]
+    public void Every_command_across_the_socket_is_answered_and_the_frames_arrive_numbered_with_no_gaps()
+    {
+        using var dispenser = NewDispenser();
+        using var station = NewStation(dispenser.Port, "STN-1");
+        WaitFor(() => station.Link.Connected && station.View.Phase != "Offline", TimeSpan.FromSeconds(5), () => "station never connected\n" + Tail(station));
+        var answers = new List<WireAnswer>();
+        station.Link.Answered += a => { lock (answers) answers.Add(a); };
+
+        Present(station, "Good");
+        WaitFor(() => station.Snapshot().State == SaleState.ReadyToPump, TimeSpan.FromSeconds(5), () => "never armed\n" + Tail(station));
+        station.StartFueling();
+        WaitFor(() => station.Snapshot().State is SaleState.Idle && station.Snapshot().Hold == HoldStatus.Settled, TimeSpan.FromSeconds(20), () => "never settled\n" + Tail(station));
+        WaitFor(() => dispenser.Dispenser.Pump.Transactions.Open.Count == 0, TimeSpan.FromSeconds(3), () => "the island still holds the delivery\n" + Tail(station));
+        // The clear's answer is the last frame of the sale; it lands a moment after the island forgets the delivery.
+        WaitFor(() => station.Ledger.Snapshot().Any(e => e.Kind == "cmd.answer" && e.Detail.StartsWith("Clear S0001")), TimeSpan.FromSeconds(3), () => "the clear was never answered\n" + Tail(station));
+
+        // Arm, Lock and Clear each earned a Done, matched by correlation id, and the ledger has the same story.
+        lock (answers) Assert.All(answers, a => Assert.Equal(AnswerCode.Done, a.Code));
+        var details = station.Ledger.Snapshot().Where(e => e.Kind == "cmd.answer").Select(e => e.Detail).ToList();
+        Assert.Contains(details, d => d.StartsWith("Arm S0001 Done"));
+        Assert.Contains(details, d => d.StartsWith("Lock S0001 Done"));
+        Assert.Contains(details, d => d.StartsWith("Clear S0001 Done"));
+        Assert.DoesNotContain(station.Ledger.Snapshot(), e => e.Kind == "cmd.unanswered");
+
+        // Both sides number their frames from one; nothing was lost or doubled on a healthy socket.
+        Assert.True(station.Link.LastSeqSent > 0);
+        Assert.True(station.Link.LastSeqReceived > 0);
+        Assert.Equal(0, station.Link.Gaps);
+        Assert.Equal(0, station.Link.Duplicates);
+        Assert.Equal(station.Link.LastSeqSent, dispenser.LastSeqReceived);
+        Assert.Equal(dispenser.LastSeqSent, station.Link.LastSeqReceived);
+        Assert.NotNull(station.Link.LastHeartbeatAt);
+        Assert.True(station.Link.PeerAliveNow);
+        Assert.NotNull(dispenser.StationHeartbeatAt);
+        // The dispenser answered every command the station ever sent, the connect-time Stop included.
+        Assert.Equal(station.Ledger.Snapshot().Count(e => e.Kind == "cmd.answer"), dispenser.Answers);
+    }
+
+    [Fact]
+    public void A_refused_command_answers_Refused_with_the_reason_and_a_command_past_its_time_to_live_answers_Stale_and_never_runs()
+    {
+        using var dispenser = NewDispenser();
+        using var station = NewStation(dispenser.Port, "STN-1");
+        WaitFor(() => station.Link.Connected && station.View.Phase != "Offline", TimeSpan.FromSeconds(5), () => "station never connected\n" + Tail(station));
+        var answers = new Dictionary<string, WireAnswer>();
+        station.Link.Answered += a => { lock (answers) answers[a.CorrelationId] = a; };
+
+        // A forged token: the authority says no, and the answer says why.
+        var refused = station.Link.Command(new PumpMessage.Arm("S9", "not-a-token", null), "S9", TimeSpan.FromSeconds(3));
+        WaitFor(() => { lock (answers) return answers.ContainsKey(refused); }, TimeSpan.FromSeconds(3), () => "no answer to the forged arm\n" + Tail(station));
+        Assert.Equal(AnswerCode.Refused, answers[refused].Code);
+        Assert.False(string.IsNullOrEmpty(answers[refused].Detail));
+        Assert.Equal(PumpPhase.Disarmed, dispenser.Dispenser.Pump.Phase);
+
+        // One tick of time to live is gone before the frame crosses the loopback. The pump never sees the close.
+        var stale = station.Link.Command(new PumpMessage.CloseForSales("tester"), "S9", TimeSpan.FromTicks(1));
+        WaitFor(() => { lock (answers) return answers.ContainsKey(stale); }, TimeSpan.FromSeconds(3), () => "no answer to the stale command\n" + Tail(station));
+        Assert.Equal(AnswerCode.Stale, answers[stale].Code);
+        Assert.Equal(1, dispenser.StaleCommands);
+        Thread.Sleep(200);
+        Assert.False(dispenser.Dispenser.Pump.ClosedForSales);
+        Assert.Equal(PumpPhase.Disarmed, dispenser.Dispenser.Pump.Phase);
+    }
+
+    [Fact]
+    public void A_dispenser_that_stops_its_heartbeat_with_the_socket_open_faults_the_sale_as_SILENT_and_is_welcomed_back()
+    {
+        var beat = TimeSpan.FromMilliseconds(200);                 // three missed beats is 600 ms
+        using var dispenser = NewDispenser(heartbeat: beat);
+        using var station = NewStation(dispenser.Port, "STN-1", heartbeat: beat);
+        WaitFor(() => station.Link.Connected && station.View.Phase != "Offline", TimeSpan.FromSeconds(5), () => "station never connected\n" + Tail(station));
+        Present(station, "Good");
+        WaitFor(() => station.Snapshot().State == SaleState.ReadyToPump, TimeSpan.FromSeconds(5), () => "never armed\n" + Tail(station));
+
+        dispenser.HeartbeatsPaused = true;
+        WaitFor(() => station.Snapshot().State == SaleState.Faulted, TimeSpan.FromSeconds(5), () => "station never noticed the silence\n" + Tail(station));
+        Assert.Equal("LINK.DISPENSER.SILENT", station.Snapshot().FaultCode);
+        Assert.False(station.Link.PeerAliveNow);
+        Assert.True(station.Link.Connected);                      // the socket never closed; the device went quiet
+        Assert.Contains(station.Ledger.Snapshot(), e => e.Kind == "link.silent");
+
+        dispenser.HeartbeatsPaused = false;
+        WaitFor(() => station.Ledger.Snapshot().Any(e => e.Kind == "link.alive"), TimeSpan.FromSeconds(3), () => "heartbeats never came back\n" + Tail(station));
+        Assert.True(station.Link.PeerAliveNow);
+    }
+
+    [Fact]
+    public void A_dispenser_that_swallows_commands_leaves_the_arm_unanswered_and_the_station_faults_the_sale_instead_of_waiting_forever()
+    {
+        using var dispenser = NewDispenser();
+        using var station = NewStation(dispenser.Port, "STN-1", commandTimeout: TimeSpan.FromSeconds(1));
+        WaitFor(() => station.Link.Connected && station.View.Phase != "Offline", TimeSpan.FromSeconds(5), () => "station never connected\n" + Tail(station));
+
+        dispenser.CommandsDropped = true;
+        Present(station, "Good");
+        WaitFor(() => station.Snapshot().State == SaleState.Faulted, TimeSpan.FromSeconds(6), () => "the unanswered arm never faulted the sale\n" + Tail(station));
+        Assert.Equal("LINK.DISPENSER.SILENT", station.Snapshot().FaultCode);
+        Assert.Contains(station.Ledger.Snapshot(), e => e.Kind == "cmd.unanswered" && e.Detail.StartsWith("Arm "));
+        Assert.Equal(PumpPhase.Disarmed, dispenser.Dispenser.Pump.Phase);
+        WaitFor(() => station.Issuer.OpenHolds.Count == 0, TimeSpan.FromSeconds(5), () => "the hold was never given back\n" + Tail(station));
+    }
+
+    [Fact]
+    public void A_lost_clear_is_found_again_after_the_island_reboots_because_the_buffer_is_on_disk()
+    {
+        var dispenser = NewDispenser();
+        var port = dispenser.Port;
+        using var station = NewStation(port, "STN-1");
+        WaitFor(() => station.Link.Connected && station.View.Phase != "Offline", TimeSpan.FromSeconds(5), () => "station never connected\n" + Tail(station));
+        Present(station, "Good");
+        WaitFor(() => station.Snapshot().State == SaleState.ReadyToPump, TimeSpan.FromSeconds(5), () => "never armed\n" + Tail(station));
+        station.StartFueling();
+        WaitFor(() => station.Snapshot().Volume > Volume.Zero, TimeSpan.FromSeconds(5), () => "no fuel recorded\n" + Tail(station));
+
+        // The island stops hearing the station just as the driver hangs up: the delivery is written, the clear is lost.
+        dispenser.CommandsDropped = true;
+        station.HangNozzle();                                     // this message is dropped too; the pump's own limits end the pour
+        WaitFor(() => dispenser.Dispenser.Pump.Transactions.Open.Count == 1, TimeSpan.FromSeconds(10), () => "the island never wrote the delivery\n" + Tail(station));
+        WaitFor(() => station.Snapshot().State == SaleState.Idle && station.Snapshot().Hold == HoldStatus.Settled, TimeSpan.FromSeconds(20), () => "station never settled\n" + Tail(station));
+        var payable = dispenser.Dispenser.Pump.Transactions.Open.Single();
+        Assert.Equal("S0001", payable.SaleId);
+        Assert.Equal(TransactionState.Payable, payable.State);
+        WaitFor(() => station.Ledger.Snapshot().Any(e => e.Kind == "cmd.unanswered" && e.Detail.StartsWith("Clear ")), TimeSpan.FromSeconds(6), () => "the dropped clear was never reported\n" + Tail(station));
+
+        dispenser.Dispose();                                     // the island reboots with the delivery still on its disk
+        using var back = NewDispenserOnSamePort(port);
+        Assert.Equal(["S0001"], back.Dispenser.Pump.Transactions.Open.Select(t => t.SaleId));
+        WaitFor(() => station.Link.Connected && station.Link.RemoteRunId == back.RunId, TimeSpan.FromSeconds(8), () => "station never reconnected\n" + Tail(station));
+
+        // On connect the station asks what the island holds, recognises its own finished sale, and clears it.
+        WaitFor(() => back.Dispenser.Pump.Transactions.Open.Count == 0, TimeSpan.FromSeconds(5), () => "the delivery was never cleared\n" + Tail(station));
+        Assert.Contains(station.Ledger.Snapshot(), e => e.Kind == "tx.reported" && e.Detail.Contains("S0001"));
+        Assert.Contains(station.Ledger.Snapshot(), e => e.Kind == "tx.clear" && e.Detail.Contains("clear sent again"));
+        Assert.DoesNotContain(station.Ledger.Snapshot(), e => e.Kind == "tx.orphan");
+        Assert.True(TryPresent(station, "Good").Ok);
+        WaitFor(() => station.Snapshot().State == SaleState.ReadyToPump, TimeSpan.FromSeconds(5), () => "never armed after the reboot\n" + Tail(station));
     }
 }
