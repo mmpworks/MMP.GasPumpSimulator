@@ -6,7 +6,7 @@ using Xunit;
 namespace GasPump.Tests;
 
 /// <summary>
-/// The idle timer. A driver who lets go of the trigger gets a minute to
+/// The idle timer. A driver who lets go of the lever gets a minute to
 /// squeeze again. A squeeze inside the minute cancels the timer and nothing
 /// else changes. Silence past the minute closes the valve and settles the sale
 /// for the fuel that moved, so a forgotten nozzle never holds a pump open.
@@ -22,7 +22,7 @@ public class PausedFlowTests
         m.Apply(new SaleEvent.CodeEntered("S1", TestCards.Zip));
         m.Apply(new SaleEvent.Approved("S1", Money.FromDollars(30), "tok"));
         m.Apply(new SaleEvent.NozzleLifted("S1"));
-        m.Apply(new SaleEvent.NozzleSeated("S1"));
+        m.Apply(new SaleEvent.SpoutInserted("S1"));
         m.Apply(new SaleEvent.FlowStarted("S1"));
         m.Apply(new SaleEvent.Progress("S1", Volume.FromGallons(2), new Money(700), FlowRate.GallonsPerMinute(10), "full"));
         Assert.Equal(SaleState.Fueling, m.State);
@@ -35,7 +35,7 @@ public class PausedFlowTests
     public void Letting_go_arms_the_idle_timer_beside_the_max_fueling_timer()
     {
         var m = Fueling();
-        var c = m.Apply(new SaleEvent.FlowPaused("S1", "trigger released"));
+        var c = m.Apply(new SaleEvent.FlowPaused("S1", "lever released"));
         Assert.Equal("paused", m.Phase);
         var idle = Assert.Single(c.OfType<SaleCommand.ArmTimer>());
         Assert.Equal(SaleCommand.IdleTimer, idle.Tag);
@@ -48,7 +48,7 @@ public class PausedFlowTests
     public void Squeezing_again_cancels_only_the_idle_timer()
     {
         var m = Fueling();
-        m.Apply(new SaleEvent.FlowPaused("S1", "trigger released"));
+        m.Apply(new SaleEvent.FlowPaused("S1", "lever released"));
         var c = m.Apply(new SaleEvent.FlowResumed("S1"));
         Assert.Equal("full", m.Phase);
         var cancel = Assert.Single(c.OfType<SaleCommand.CancelTimer>());
@@ -59,7 +59,7 @@ public class PausedFlowTests
     public void The_idle_timer_firing_closes_the_valve_and_settles_for_the_fuel_delivered()
     {
         var m = Fueling();
-        m.Apply(new SaleEvent.FlowPaused("S1", "trigger released"));
+        m.Apply(new SaleEvent.FlowPaused("S1", "lever released"));
         var c = m.Apply(new SaleEvent.Timeout("S1", SaleState.Fueling, SaleCommand.IdleTimer));
         Assert.Equal(SaleState.Completing, m.State);
         Assert.Equal(EndReason.NoFlow, m.End);
@@ -72,7 +72,7 @@ public class PausedFlowTests
     public void An_idle_timer_that_fires_after_the_squeeze_crossed_it_is_ignored()
     {
         var m = Fueling();
-        m.Apply(new SaleEvent.FlowPaused("S1", "trigger released"));
+        m.Apply(new SaleEvent.FlowPaused("S1", "lever released"));
         m.Apply(new SaleEvent.FlowResumed("S1"));
         var c = m.Apply(new SaleEvent.Timeout("S1", SaleState.Fueling, SaleCommand.IdleTimer));
         Assert.Equal(SaleState.Fueling, m.State);
@@ -104,7 +104,7 @@ public class PausedFlowTests
         Assert.True(atCall > Volume.Zero);
 
         // The phone rings. The driver lets go and talks for twenty seconds.
-        h.Sim.ReleaseTrigger();
+        h.Sim.ReleaseLever();
         h.Advance(TimeSpan.FromSeconds(1));
         Assert.Equal("paused", h.State.Phase);
         var pausedAt = h.Clock.GetUtcNow();
@@ -116,7 +116,7 @@ public class PausedFlowTests
         Assert.Equal(Volume.Zero, h.Sim.Totalizer.Total - atCall);
 
         // Call over. One squeeze and the fuel moves again.
-        h.Sim.SqueezeTrigger();
+        h.Sim.SqueezeLever();
         h.Advance(TimeSpan.FromSeconds(5));
         Assert.Equal("full", h.State.Phase);
         Assert.True(h.State.Volume > atCall);
@@ -142,13 +142,13 @@ public class PausedFlowTests
         h.Sim.StartFueling();
         h.AdvanceUntilState(SaleState.Fueling, TimeSpan.FromSeconds(1));
         h.Advance(TimeSpan.FromSeconds(5));
-        h.Sim.ReleaseTrigger();
+        h.Sim.ReleaseLever();
         h.Advance(TimeSpan.FromSeconds(1));
         var delivered = h.State.Volume;
         var owed = h.State.Money;
         Assert.True(owed > Money.Zero);
 
-        // Nobody comes back. The idle minute runs out with the nozzle still in the tank.
+        // Nobody comes back. The idle minute runs out with the spout still in the fill pipe.
         h.Advance(h.Options.Timeouts.PausedFlow);
         h.AdvanceUntilState(SaleState.Idle, TimeSpan.FromSeconds(10));
 
@@ -165,7 +165,7 @@ public class PausedFlowTests
         Assert.Contains(h.Sim.Ledger.Snapshot(), e => e.Kind == "sale.close" && e.Detail.Contains("NoFlow"));
 
         // A squeeze now does nothing: the sale is over and the pump is disarmed.
-        h.Sim.SqueezeTrigger();
+        h.Sim.SqueezeLever();
         h.Advance(TimeSpan.FromSeconds(2));
         Assert.Equal(delivered, h.Sim.Totalizer.Total);
 
@@ -183,7 +183,7 @@ public class PausedFlowTests
 
     [Theory]
     [MemberData(nameof(SimHarness.Strategies), MemberType = typeof(SimHarness))]
-    public void Pulling_the_nozzle_out_of_the_tank_pauses_too_and_the_same_minute_applies(string strategy)
+    public void Withdrawing_the_spout_pauses_too_and_the_same_minute_applies(string strategy)
     {
         using var h = new SimHarness(strategy, ThirtyDollarHold);
         h.Present("Good");
@@ -191,10 +191,10 @@ public class PausedFlowTests
         h.Sim.StartFueling();
         h.AdvanceUntilState(SaleState.Fueling, TimeSpan.FromSeconds(1));
         h.Advance(TimeSpan.FromSeconds(3));
-        h.Sim.UnseatNozzle();
+        h.Sim.WithdrawSpout();
         h.Advance(TimeSpan.FromSeconds(1));
         Assert.Equal("paused", h.State.Phase);
-        Assert.Contains("Put the nozzle back in the tank", h.State.Notice.Detail);
+        Assert.Contains("Insert the nozzle again", h.State.Notice.Detail);
         h.Advance(h.Options.Timeouts.PausedFlow);
         h.AdvanceUntilState(SaleState.Idle, TimeSpan.FromSeconds(10));
         Assert.Equal(EndReason.NoFlow, h.State.End);

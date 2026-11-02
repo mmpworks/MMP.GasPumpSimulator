@@ -64,13 +64,13 @@ export async function enterCode(page: Page, code: string) {
   await d.getByRole('button', { name: 'Enter', exact: true }).click()
 }
 
-/** Grade, lift, seat, squeeze: the hand sequence, and wait until fuel is moving. */
+/** Grade, lift, insert, squeeze: the hand sequence, and wait until fuel is moving. */
 export async function startFueling(page: Page, grade = 'Regular') {
   const d = dispenser(page)
   await d.getByRole('button', { name: new RegExp(`^${grade} `) }).click()
   await d.getByRole('button', { name: 'Lift nozzle' }).click()
-  await d.getByRole('button', { name: 'Put in tank' }).click()
-  await d.getByRole('button', { name: /^Squeeze trigger/ }).click()
+  await d.getByRole('button', { name: 'Insert spout' }).click()
+  await d.getByRole('button', { name: /^Squeeze lever/ }).click()
   await expect(face(page)).toContainText('Fueling')
 }
 

@@ -30,8 +30,8 @@ public sealed record DispenserView(
     string? FaultCode,
     long TotalizerMilliGallons,
     bool NozzleLifted,
-    bool NozzleSeated,
-    bool TriggerHeld,
+    bool SpoutInserted,
+    bool LeverHeld,
     Grade? SelectedGrade,
     bool Poured,
     bool SupplyAvailable,
@@ -113,24 +113,24 @@ public sealed class Dispenser
                 else Log.Write("pump", "nozzle lifted while {Phase}, nothing happens", ("Phase", Pump.Phase));
                 break;
 
-            case PumpMessage.Seat:
-                if (Pump.SeatNozzle()) events.Add(new SaleEvent.NozzleSeated(saleId));
+            case PumpMessage.InsertSpout:
+                if (Pump.InsertSpout()) events.Add(new SaleEvent.SpoutInserted(saleId));
                 break;
 
-            case PumpMessage.Unseat:
-                var paused = Pump.UnseatNozzle();
-                if (Pump.Armed is not null || paused) events.Add(new SaleEvent.NozzleUnseated(saleId));
-                if (paused) events.Add(new SaleEvent.FlowPaused(saleId, "nozzle removed from fill point"));
+            case PumpMessage.WithdrawSpout:
+                var paused = Pump.WithdrawSpout();
+                if (Pump.Armed is not null || paused) events.Add(new SaleEvent.SpoutWithdrawn(saleId));
+                if (paused) events.Add(new SaleEvent.FlowPaused(saleId, "spout withdrawn from the fill pipe"));
                 break;
 
             case PumpMessage.Squeeze:
-                var (flowOk, flowWhy, firstPour) = Pump.SqueezeTrigger();
-                if (!flowOk) Log.Write("pump", "trigger ignored: {Reason}", ("Reason", flowWhy));
+                var (flowOk, flowWhy, firstPour) = Pump.SqueezeLever();
+                if (!flowOk) Log.Write("pump", "lever ignored: {Reason}", ("Reason", flowWhy));
                 else events.Add(firstPour ? new SaleEvent.FlowStarted(saleId) : new SaleEvent.FlowResumed(saleId));
                 break;
 
             case PumpMessage.Release:
-                if (Pump.ReleaseTrigger()) events.Add(new SaleEvent.FlowPaused(saleId, "trigger released"));
+                if (Pump.ReleaseLever()) events.Add(new SaleEvent.FlowPaused(saleId, "lever released"));
                 break;
 
             case PumpMessage.Hang:
@@ -171,7 +171,7 @@ public sealed class Dispenser
                 Log.Error("pump", "{Code} breakaway coupling separated", ("Code", DiagnosticCodes.PumpHoseBreakaway.Code));
                 if (Pump.Phase is PumpPhase.Dispensing or PumpPhase.Paused)
                 {
-                    // Mid-delivery, trigger held or released: the delivery ends here and the sale must hear it now,
+                    // Mid-delivery, lever held or released: the delivery ends here and the sale must hear it now,
                     // because a paused pump has no tick that would notice the coupling.
                     Pump.EmergencyStop(DiagnosticCodes.PumpHoseBreakaway, "breakaway coupling separated during delivery");
                     Log.Error("pump", "FAULT {Code} {Fault}", ("Code", Pump.LastFaultCode), ("Part", DiagnosticCodes.PumpHoseBreakaway.Part), ("Fault", Pump.LastFault));
@@ -242,7 +242,7 @@ public sealed class Dispenser
 
     public DispenserView View(string runId, int pid, string? custodyPath) => new(
         Options.PumpId, runId, pid, Pump.Phase.ToString(), Pump.LastFault, Pump.LastFaultCode, Totalizer.Total.MilliGallons,
-        Pump.NozzleLifted, Pump.NozzleSeated, Pump.TriggerHeld, Pump.SelectedGrade, Pump.Poured,
+        Pump.NozzleLifted, Pump.SpoutInserted, Pump.LeverHeld, Pump.SelectedGrade, Pump.Poured,
         Pump.SupplyAvailable, Pump.BreakawayOpen, Meter.PulserDead, Pump.Armed, Ledger.Verify() == 0, custodyPath, Pump.Service);
 }
 
@@ -257,7 +257,7 @@ public static class Origins
     public const string Dispenser = "dispenser";
     public const string Station = "station";
 
-    private static readonly string[] DispenserLedgerPrefixes = ["valve.", "nozzle.", "grade.", "trigger.", "arm.", "pump.", "hose.", "totalizer"];
+    private static readonly string[] DispenserLedgerPrefixes = ["valve.", "nozzle.", "grade.", "lever.", "arm.", "pump.", "hose.", "totalizer"];
 
     public static string OfLedger(string kind) => DispenserLedgerPrefixes.Any(kind.StartsWith) ? Dispenser : Station;
 

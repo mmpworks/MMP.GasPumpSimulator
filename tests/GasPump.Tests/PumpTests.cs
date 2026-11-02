@@ -35,15 +35,15 @@ public class PumpTests
         public string Token(string saleId, Money ceiling, Volume? max = null) =>
             Signer.Issue(saleId, "PUMP-07", ceiling, max ?? Volume.FromGallons(50), Clock.GetUtcNow(), TimeSpan.FromMinutes(5)).Serialize();
 
-        /// <summary>Arm, then the driver's hand sequence: grade, lift, seat, squeeze.</summary>
+        /// <summary>Arm, then the driver's hand sequence: grade, lift, insert, squeeze.</summary>
         public ArmedAuthorization ArmAndPour(Money ceiling, Grade grade = Grade.Regular)
         {
             var (ok, reason, armed) = Pump.Arm("S1", Token("S1", ceiling));
             Assert.True(ok, reason);
             Assert.True(Pump.SelectGrade(grade).Ok);
             Assert.True(Pump.LiftNozzle());
-            Assert.True(Pump.SeatNozzle());
-            var squeeze = Pump.SqueezeTrigger();
+            Assert.True(Pump.InsertSpout());
+            var squeeze = Pump.SqueezeLever();
             Assert.True(squeeze.Ok, squeeze.Reason);
             Assert.True(squeeze.FirstPour);
             return armed!;
@@ -357,8 +357,8 @@ public class PumpTests
     {
         var rig = new Rig();
         Assert.False(rig.Pump.LiftNozzle());
-        rig.Pump.SeatNozzle();
-        Assert.False(rig.Pump.SqueezeTrigger().Ok);
+        rig.Pump.InsertSpout();
+        Assert.False(rig.Pump.SqueezeLever().Ok);
         var t = rig.Pump.Tick(Tick);
         Assert.Equal(Volume.Zero, t.Volume);
         Assert.Contains(rig.Ledger.Snapshot(), e => e.Kind == "nozzle.lift.ignored");
@@ -390,36 +390,36 @@ public class PumpTests
         Assert.True(before > Money.Zero);
     }
 
-    // ----- Interlocks: grade, seat, trigger.
+    // ----- Interlocks: grade, spout, lever.
 
     [Fact]
-    public void Trigger_does_nothing_until_grade_lift_and_seat_are_all_true()
+    public void Lever_does_nothing_until_grade_lift_and_spout_are_all_true()
     {
         var rig = new Rig();
         rig.Pump.Arm("S1", rig.Token("S1", Money.FromDollars(30)));
 
-        var r1 = rig.Pump.SqueezeTrigger();
+        var r1 = rig.Pump.SqueezeLever();
         Assert.False(r1.Ok); Assert.Contains("grade", r1.Reason);
 
         rig.Pump.SelectGrade(Grade.Plus);
-        var r2 = rig.Pump.SqueezeTrigger();
+        var r2 = rig.Pump.SqueezeLever();
         Assert.False(r2.Ok); Assert.Contains("lift", r2.Reason);
 
         rig.Pump.LiftNozzle();
-        var r3 = rig.Pump.SqueezeTrigger();
-        Assert.False(r3.Ok); Assert.Contains("tank", r3.Reason);
+        var r3 = rig.Pump.SqueezeLever();
+        Assert.False(r3.Ok); Assert.Contains("spout", r3.Reason);
 
         rig.Run(5);
         Assert.Equal(Volume.Zero, rig.Pump.Volume);
         Assert.Equal(PumpPhase.Armed, rig.Pump.Phase);
 
-        rig.Pump.SeatNozzle();
-        var r4 = rig.Pump.SqueezeTrigger();
+        rig.Pump.InsertSpout();
+        var r4 = rig.Pump.SqueezeLever();
         Assert.True(r4.Ok);
         Assert.True(r4.FirstPour);
         rig.Run(5);
         Assert.True(rig.Pump.Volume > Volume.Zero);
-        Assert.Equal(3, rig.Ledger.Snapshot().Count(e => e.Kind == "trigger.ignored"));
+        Assert.Equal(3, rig.Ledger.Snapshot().Count(e => e.Kind == "lever.ignored"));
     }
 
     [Fact]
@@ -430,20 +430,20 @@ public class PumpTests
         rig.Run(10);
         var afterFirst = rig.Pump.Volume;
 
-        Assert.True(rig.Pump.ReleaseTrigger());
+        Assert.True(rig.Pump.ReleaseLever());
         Assert.Equal(PumpPhase.Paused, rig.Pump.Phase);
         rig.Run(10);
         Assert.Equal(afterFirst, rig.Pump.Volume);   // nothing flows while paused
 
-        var again = rig.Pump.SqueezeTrigger();
+        var again = rig.Pump.SqueezeLever();
         Assert.True(again.Ok);
         Assert.False(again.FirstPour);
         rig.Run(10);
         Assert.True(rig.Pump.Volume > afterFirst);
 
-        rig.Pump.ReleaseTrigger();
-        rig.Pump.SqueezeTrigger();
-        rig.Pump.ReleaseTrigger();
+        rig.Pump.ReleaseLever();
+        rig.Pump.SqueezeLever();
+        rig.Pump.ReleaseLever();
         Assert.Equal(PumpPhase.Paused, rig.Pump.Phase);
         Assert.Equal(3, rig.Ledger.Snapshot().Count(e => e.Kind == "valve.pause"));
         Assert.Equal(0, rig.Ledger.Verify());
@@ -455,11 +455,11 @@ public class PumpTests
         var rig = new Rig();
         rig.ArmAndPour(Money.FromDollars(30));
         rig.Run(5);
-        Assert.True(rig.Pump.UnseatNozzle());
+        Assert.True(rig.Pump.WithdrawSpout());
         Assert.Equal(PumpPhase.Paused, rig.Pump.Phase);
-        Assert.False(rig.Pump.SqueezeTrigger().Ok);   // still out of the tank
-        rig.Pump.SeatNozzle();
-        Assert.True(rig.Pump.SqueezeTrigger().Ok);
+        Assert.False(rig.Pump.SqueezeLever().Ok);   // still out of the tank
+        rig.Pump.InsertSpout();
+        Assert.True(rig.Pump.SqueezeLever().Ok);
     }
 
     [Fact]
@@ -480,7 +480,7 @@ public class PumpTests
         var rig = new Rig();
         rig.ArmAndPour(Money.FromDollars(30));
         rig.Run(5);
-        rig.Pump.ReleaseTrigger();
+        rig.Pump.ReleaseLever();
         Assert.True(rig.Pump.HangNozzle());
         Assert.Equal(PumpPhase.Stopped, rig.Pump.Phase);
         Assert.Null(rig.Pump.Armed);
@@ -648,7 +648,7 @@ public class PumpTests
         var rig = new Rig();
         rig.ArmAndPour(Money.FromDollars(30), Grade.Regular);
         rig.Run(5);
-        rig.Pump.ReleaseTrigger();
+        rig.Pump.ReleaseLever();
         var change = rig.Pump.SelectGrade(Grade.Premium);
         Assert.False(change.Ok);
         Assert.Equal(Grade.Regular, rig.Pump.SelectedGrade);

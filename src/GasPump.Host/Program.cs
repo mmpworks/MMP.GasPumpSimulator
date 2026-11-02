@@ -190,11 +190,11 @@ app.MapPost("/api/admin/limits", (AdminRequest r) =>
 });
 app.MapPost("/api/grade", (GradeRequest r) => { Sim().SelectGrade(r.Grade); return Results.Ok(); });
 app.MapPost("/api/nozzle/lift", () => { Sim().LiftNozzle(); return Results.Ok(); });
-app.MapPost("/api/nozzle/seat", () => { Sim().SeatNozzle(); return Results.Ok(); });
-app.MapPost("/api/nozzle/unseat", () => { Sim().UnseatNozzle(); return Results.Ok(); });
+app.MapPost("/api/spout/insert", () => { Sim().InsertSpout(); return Results.Ok(); });
+app.MapPost("/api/spout/withdraw", () => { Sim().WithdrawSpout(); return Results.Ok(); });
 app.MapPost("/api/nozzle/hang", () => { Sim().HangNozzle(); return Results.Ok(); });
-app.MapPost("/api/trigger/squeeze", () => { Sim().SqueezeTrigger(); return Results.Ok(); });
-app.MapPost("/api/trigger/release", () => { Sim().ReleaseTrigger(); return Results.Ok(); });
+app.MapPost("/api/lever/squeeze", () => { Sim().SqueezeLever(); return Results.Ok(); });
+app.MapPost("/api/lever/release", () => { Sim().ReleaseLever(); return Results.Ok(); });
 app.MapPost("/api/cancel", () => { Sim().Cancel(); return Results.Ok(); });
 app.MapPost("/api/reset", () => { Sim().ResetSale(); return Results.Ok(); });
 app.MapPost("/api/drain", () => { Sim().DrainPendingCompletions(); return Results.Ok(); });

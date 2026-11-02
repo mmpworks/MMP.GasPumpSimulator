@@ -69,7 +69,7 @@ public enum EndReason
     /// <summary>The card was read and no PIN or ZIP code followed before the entry timer ran out.</summary>
     NoCodeEntered,
     MaxFuelingTime,
-    /// <summary>The driver let go of the trigger and never squeezed again. The pump finished the sale for the fuel delivered.</summary>
+    /// <summary>The driver let go of the lever and never squeezed again. The pump finished the sale for the fuel delivered.</summary>
     NoFlow,
     PumpFault,
     SecurityRefusal,
@@ -102,8 +102,8 @@ public sealed record DriverNotice(string Headline, string Detail, DriverAction A
 [JsonDerivedType(typeof(CodeEntered), nameof(CodeEntered))]
 [JsonDerivedType(typeof(CashPaid), nameof(CashPaid))]
 [JsonDerivedType(typeof(GradeSelected), nameof(GradeSelected))]
-[JsonDerivedType(typeof(NozzleSeated), nameof(NozzleSeated))]
-[JsonDerivedType(typeof(NozzleUnseated), nameof(NozzleUnseated))]
+[JsonDerivedType(typeof(SpoutInserted), nameof(SpoutInserted))]
+[JsonDerivedType(typeof(SpoutWithdrawn), nameof(SpoutWithdrawn))]
 [JsonDerivedType(typeof(FlowStarted), nameof(FlowStarted))]
 [JsonDerivedType(typeof(FlowPaused), nameof(FlowPaused))]
 [JsonDerivedType(typeof(FlowResumed), nameof(FlowResumed))]
@@ -135,9 +135,9 @@ public abstract record SaleEvent(string SaleId)
     /// <summary>The cashier took cash. Amount is the ceiling, to the cent.</summary>
     public sealed record CashPaid(string SaleId, Money Amount, Grade? Grade = null) : SaleEvent(SaleId);
     public sealed record GradeSelected(string SaleId, Grade Grade) : SaleEvent(SaleId);
-    public sealed record NozzleSeated(string SaleId) : SaleEvent(SaleId);
-    public sealed record NozzleUnseated(string SaleId) : SaleEvent(SaleId);
-    /// <summary>The first squeeze of the trigger opened the valve. Fueling begins here, never at the lift.</summary>
+    public sealed record SpoutInserted(string SaleId) : SaleEvent(SaleId);
+    public sealed record SpoutWithdrawn(string SaleId) : SaleEvent(SaleId);
+    /// <summary>The first squeeze of the lever opened the valve. Fueling begins here, never at the lift.</summary>
     public sealed record FlowStarted(string SaleId) : SaleEvent(SaleId);
     public sealed record FlowPaused(string SaleId, string Reason) : SaleEvent(SaleId);
     public sealed record FlowResumed(string SaleId) : SaleEvent(SaleId);
@@ -209,7 +209,7 @@ public sealed record SaleSnapshot(
     DriverNotice Notice,
     bool GradeSelected,
     bool NozzleOut,
-    bool NozzleSeated,
+    bool SpoutInserted,
     Tender Tender,
     /// <summary>Where the card was read, or Station for cash.</summary>
     CardSource Source,

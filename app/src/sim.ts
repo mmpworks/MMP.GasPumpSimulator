@@ -12,7 +12,7 @@ export interface Sale {
   saleId: string; state: string; cardName: string | null; grade: string
   ceilingCents: number; cents: number; gallons: number; gpm: number; phase: string; lastMessage: string | null
   hold: string; end: string; notice: Notice; deadlineAt: string | null
-  gradeSelected: boolean; nozzleOut: boolean; nozzleSeated: boolean
+  gradeSelected: boolean; nozzleOut: boolean; spoutInserted: boolean
   tender: 'Credit' | 'Debit' | 'Cash'; cashPrepaidCents: number; changeDueCents: number
   source: 'PumpInsert' | 'PumpTap' | 'Station'
   faultCode: string | null; faultPart: string | null
@@ -37,7 +37,7 @@ export interface Armed { saleId: string; ceilingCents: number; maxGallons: numbe
 export interface Pending { saleId: string; kind: 'Completion' | 'Reversal'; cents: number }
 export interface Pump {
   phase: string; armed: Armed | null; fault: string | null; faultCode: string | null; totalizerGallons: number
-  nozzleLifted: boolean; nozzleSeated: boolean; triggerHeld: boolean; selectedGrade: string | null; poured: boolean
+  nozzleLifted: boolean; spoutInserted: boolean; leverHeld: boolean; selectedGrade: string | null; poured: boolean
   supplyAvailable: boolean; breakawayOpen: boolean; pulserDead: boolean; ledgerIntact: boolean; runId: string; pid: number
   /** Empty codes means in service. Each code names the part that holds the pump out of service until its repair. */
   inService: boolean; serviceCodes: string[]; serviceParts: string[]
@@ -146,10 +146,10 @@ export const api = {
     (await (await fetch(`${HOST}/api/admin/limits`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ pin, tender, cents }) })).json()) as { ok: boolean; reason: string },
   selectGrade: (grade: string) => post('/api/grade', { grade }),
   lift: () => post('/api/nozzle/lift'),
-  seat: () => post('/api/nozzle/seat'),
-  unseat: () => post('/api/nozzle/unseat'),
-  squeeze: () => post('/api/trigger/squeeze'),
-  release: () => post('/api/trigger/release'),
+  insertSpout: () => post('/api/spout/insert'),
+  withdrawSpout: () => post('/api/spout/withdraw'),
+  squeeze: () => post('/api/lever/squeeze'),
+  release: () => post('/api/lever/release'),
   hang: () => post('/api/nozzle/hang'),
   cancel: () => post('/api/cancel'),
   reset: () => { flowTrace.splice(0); return post('/api/reset') },

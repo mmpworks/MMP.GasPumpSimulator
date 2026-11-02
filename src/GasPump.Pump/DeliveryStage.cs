@@ -32,7 +32,7 @@ public interface IDeliveryStage
     /// valve, counts nothing on the fuel meter or the totalizer, and calls
     /// <see cref="Pour"/>. The switch, each way, is a ledger entry written by the
     /// controller, so the custody chain shows every flip. <paramref name="pouredFor"/>
-    /// is how long the trigger has been held open this sale, additive time included.
+    /// is how long the lever has been held open this sale, additive time included.
     /// </summary>
     bool ClaimsHose(TimeSpan pouredFor) => false;
 

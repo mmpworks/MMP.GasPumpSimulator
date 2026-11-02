@@ -1,5 +1,7 @@
 # Architecture
 
+Names follow the fuel-dispenser trade. `docs/glossary.md` maps each trade term to the code that models it.
+
 ## Three workers, two boundaries
 
 ```mermaid
@@ -55,11 +57,11 @@ stateDiagram-v2
     Authorizing --> ReadyToPump : Approved<br/>→ ArmPump, 120 s timer
     Authorizing --> Declined : Declined
     Authorizing --> Declined : Timeout<br/>→ Reverse (bank may have heard us)
-    ReadyToPump --> ReadyToPump : GradeSelected / NozzleLifted / NozzleSeated / NozzleHung<br/>(no pour yet, timer keeps running)
-    ReadyToPump --> Fueling : FlowStarted<br/>(first trigger squeeze), 10 min timer
+    ReadyToPump --> ReadyToPump : GradeSelected / NozzleLifted / SpoutInserted / NozzleHung<br/>(no pour yet, timer keeps running)
+    ReadyToPump --> Fueling : FlowStarted<br/>(first lever squeeze), 10 min timer
     ReadyToPump --> Cancelled : Timeout<br/>→ Reverse
     ReadyToPump --> Faulted : PumpRefused<br/>→ Reverse
-    Fueling --> Fueling : FlowPaused / FlowResumed<br/>(trigger released arms a 60 s idle timer, squeezing again cancels it)
+    Fueling --> Fueling : FlowPaused / FlowResumed<br/>(lever released arms a 60 s idle timer, squeezing again cancels it)
     Fueling --> Completing : CeilingReached / NozzleHung / idle timer<br/>→ CloseValve, SendCompletion, 30 s timer
     Fueling --> Cancelled : NozzleHung with zero volume<br/>→ Reverse
     Fueling --> Faulted : Fault<br/>→ CloseValve, SendCompletion for fuel poured
@@ -79,14 +81,14 @@ A card alone asks the bank for nothing. A debit card wants its four-digit PIN an
 
 ### The idle minute
 
-Letting go of the trigger, or pulling the nozzle out of the tank, pauses the flow and arms a second timer beside the ten-minute max-fueling timer: 60 s, tagged `idle`. Timers are tagged so the two can run side by side (`ArmTimer.Tag`, `Timeout.Tag`), and a `CancelTimer` with no tag drops every timer of the sale, which is what every state change does. A squeeze inside the minute cancels the idle timer and nothing else changes. Silence past the minute closes the valve and finishes the sale for the fuel delivered, with `EndReason.NoFlow` in the ledger, so a nozzle forgotten in a tank never holds the pump open. The screen counts down to whichever timer is closer. The tests in `PausedFlowTests` walk a phone call (pause 20 s, resume, hang) and a forgotten nozzle under all three dispatch strategies.
+Letting go of the lever, or pulling the nozzle out of the tank, pauses the flow and arms a second timer beside the ten-minute max-fueling timer: 60 s, tagged `idle`. Timers are tagged so the two can run side by side (`ArmTimer.Tag`, `Timeout.Tag`), and a `CancelTimer` with no tag drops every timer of the sale, which is what every state change does. A squeeze inside the minute cancels the idle timer and nothing else changes. Silence past the minute closes the valve and finishes the sale for the fuel delivered, with `EndReason.NoFlow` in the ledger, so a nozzle forgotten in a tank never holds the pump open. The screen counts down to whichever timer is closer. The tests in `PausedFlowTests` walk a phone call (pause 20 s, resume, hang) and a forgotten nozzle under all three dispatch strategies.
 
 ### The nozzle, as the driver uses it
 
-Fuel flows only when four things are true at once, and the pump controller owns all four: the pump is armed from a verified token, a grade is selected, the nozzle is off the harness and seated in a fill point (tank or can), and the trigger is held.
+Fuel flows only when four things are true at once, and the pump controller owns all four: the pump is armed from a verified token, a grade is selected, the nozzle is out of the boot and inserted in the fill pipe (tank or can), and the lever is held.
 
-1. **Lift** takes the nozzle off the harness. Nothing opens.
-2. **Seat** is the fill-point sensor. Nothing opens.
+1. **Lift** takes the nozzle out of the boot. Nothing opens.
+2. **Insert** puts the spout in the fill pipe and presses the bellows interlock. Nothing opens.
 3. **Squeeze** opens the valve if every interlock passes. The first squeeze is the first pour, and `Fueling` begins here, never at the lift.
 4. **Release** shuts the valve. The sale stays open for a minute. Squeeze again as often as you like inside it; a minute of silence finishes the sale for the fuel delivered. The grade is locked after the first drop.
 5. **Hang** after any pour ends the delivery. Hang before any pour changes nothing; the 120 s timer will cancel the sale if the driver has walked off.
@@ -248,7 +250,7 @@ The plain `EventLog` in `GasPump.Core` stays as a dependency-free fallback that 
 
 ## Power loss: the journal and the close-out
 
-A pump that loses power mid-sale has one job when it comes back: close the sale for what it knows, say how much it does not know, and be ready for the next driver. It never resumes. A resumed sale would need the nozzle still seated, the token still valid, and the meter trusted across the gap, and none of those hold after a reboot.
+A pump that loses power mid-sale has one job when it comes back: close the sale for what it knows, say how much it does not know, and be ready for the next driver. It never resumes. A resumed sale would need the spout still inserted, the token still valid, and the meter trusted across the gap, and none of those hold after a reboot.
 
 ```mermaid
 flowchart LR

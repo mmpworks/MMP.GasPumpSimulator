@@ -75,7 +75,7 @@ public sealed class SaleStateMachine
     public string? EndDetail { get; private set; }
     public bool GradeSelected { get; private set; }
     public bool NozzleOut { get; private set; }
-    public bool NozzleSeated { get; private set; }
+    public bool SpoutInserted { get; private set; }
     public Tender Tender { get; private set; } = Tender.Credit;
     public CardSource Source { get; private set; } = CardSource.PumpInsert;
     public string? FaultCode { get; private set; }
@@ -110,7 +110,7 @@ public sealed class SaleStateMachine
         s is SaleState.Declined or SaleState.Cancelled or SaleState.Faulted or SaleState.StoreAndForward;
 
     public SaleSnapshot Snapshot(DateTimeOffset? deadlineAt = null) =>
-        new(SaleId, State, CardName, Grade, Ceiling, Volume, Money, Flow, Phase, LastMessage, Hold, End, Notice(), GradeSelected, NozzleOut, NozzleSeated, Tender, Source, FaultCode, CashPrepaid, ChangeDue, deadlineAt, Charges);
+        new(SaleId, State, CardName, Grade, Ceiling, Volume, Money, Flow, Phase, LastMessage, Hold, End, Notice(), GradeSelected, NozzleOut, SpoutInserted, Tender, Source, FaultCode, CashPrepaid, ChangeDue, deadlineAt, Charges);
 
     public IReadOnlyList<SaleCommand> Apply(SaleEvent e)
     {
@@ -227,7 +227,7 @@ public sealed class SaleStateMachine
                 EndDetail = pr.Reason;
                 return Transition(SaleState.Faulted, commands, $"pump refused: {pr.Reason}", reverse: true);
 
-            // Before the first pour the driver has as long as the lift timer allows to pick a grade, lift, and seat.
+            // Before the first pour the driver has as long as the lift timer allows to pick a grade, lift, and insert.
             case (SaleState.ReadyToPump, SaleEvent.GradeSelected gs):
                 Grade = gs.Grade;
                 GradeSelected = true;
@@ -236,22 +236,22 @@ public sealed class SaleStateMachine
 
             case (SaleState.ReadyToPump, SaleEvent.NozzleLifted):
                 NozzleOut = true;
-                commands.Add(new SaleCommand.Log(SaleId, "nozzle lifted, waiting for grade, seat, and trigger"));
+                commands.Add(new SaleCommand.Log(SaleId, "nozzle lifted, waiting for grade, spout, and lever"));
                 return commands;
 
-            case (SaleState.ReadyToPump, SaleEvent.NozzleSeated):
-                NozzleSeated = true;
-                commands.Add(new SaleCommand.Log(SaleId, "nozzle seated in fill point"));
+            case (SaleState.ReadyToPump, SaleEvent.SpoutInserted):
+                SpoutInserted = true;
+                commands.Add(new SaleCommand.Log(SaleId, "spout inserted in the fill pipe"));
                 return commands;
 
-            case (SaleState.ReadyToPump, SaleEvent.NozzleUnseated):
-                NozzleSeated = false;
+            case (SaleState.ReadyToPump, SaleEvent.SpoutWithdrawn):
+                SpoutInserted = false;
                 return commands;
 
             case (SaleState.ReadyToPump, SaleEvent.NozzleHung):
                 // No pour yet, so the sale stays armed. The lift timer still runs.
                 NozzleOut = false;
-                NozzleSeated = false;
+                SpoutInserted = false;
                 commands.Add(new SaleCommand.Log(SaleId, "nozzle hung before any pour, still armed"));
                 return commands;
 
@@ -280,12 +280,12 @@ public sealed class SaleStateMachine
                 commands.Add(new SaleCommand.Log(SaleId, $"flow paused: {fp.Reason}, {Volume} for {Money} so far, finishes in {_timeouts.PausedFlow.TotalSeconds:0} s without a squeeze"));
                 return commands;
 
-            case (SaleState.Fueling, SaleEvent.NozzleSeated):
-                NozzleSeated = true;
+            case (SaleState.Fueling, SaleEvent.SpoutInserted):
+                SpoutInserted = true;
                 return commands;
 
-            case (SaleState.Fueling, SaleEvent.NozzleUnseated):
-                NozzleSeated = false;
+            case (SaleState.Fueling, SaleEvent.SpoutWithdrawn):
+                SpoutInserted = false;
                 return commands;
 
             case (SaleState.Fueling, SaleEvent.FlowResumed):
@@ -311,7 +311,7 @@ public sealed class SaleStateMachine
                 Flow = FlowRate.Zero;
                 Phase = "hung";
                 NozzleOut = false;
-                NozzleSeated = false;
+                SpoutInserted = false;
                 commands.Add(new SaleCommand.CloseValve(SaleId));
                 return Finish(commands, "nozzle hung", EndReason.Completed);
 
@@ -428,7 +428,7 @@ public sealed class SaleStateMachine
     /// <summary>
     /// The pump's service status changed. Two reactions. Before the first
     /// pour, an out-of-service pump ends the sale and gives the hold back,
-    /// because the driver must never be told to squeeze a trigger that cannot
+    /// because the driver must never be told to squeeze a lever that cannot
     /// deliver. After a fault, the repair of the part that caused it clears the
     /// screen, once the bank has answered.
     /// </summary>
@@ -555,14 +555,14 @@ public sealed class SaleStateMachine
                     : $"If you leave, the pump cancels after {LiftTimeout.TotalSeconds:0} s and releases the hold. A new card at this pump cancels it at once.";
                 var step = !GradeSelected ? "Select a grade."
                     : !NozzleOut ? "Lift the nozzle."
-                    : !NozzleSeated ? "Put the nozzle in your tank."
-                    : "Squeeze the trigger to begin.";
+                    : !SpoutInserted ? "Insert the nozzle into your fill pipe."
+                    : "Squeeze the lever to begin.";
                 return new($"Approved for up to {Ceiling}", Join(step, Tender == Tender.Cash ? holdLine : "", leave), DriverAction.LiftNozzle);
             }
             case SaleState.Fueling when Phase == "paused":
-                return new($"Paused at {Money}", Join(NozzleSeated ? "Squeeze the trigger to continue." : "Put the nozzle back in the tank and squeeze to continue.", $"Hang up the nozzle to finish, or the pump finishes by itself after {_timeouts.PausedFlow.TotalSeconds:0} s."), DriverAction.HangToStop);
+                return new($"Paused at {Money}", Join(SpoutInserted ? "Squeeze the lever to continue." : "Insert the nozzle again and squeeze the lever to continue.", $"Hang up the nozzle to finish, or the pump finishes by itself after {_timeouts.PausedFlow.TotalSeconds:0} s."), DriverAction.HangToStop);
             case SaleState.Fueling:
-                return new("Fueling", "Let go of the trigger to pause. Hang up the nozzle to finish. The pump stops by itself at your limit.", DriverAction.HangToStop);
+                return new("Fueling", "Let go of the lever to pause. Hang up the nozzle to finish. The pump stops by itself at your limit.", DriverAction.HangToStop);
             case SaleState.Completing:
                 return new($"Finishing: {Money}", "Settling with your bank. This usually takes a few seconds.", DriverAction.Wait);
             case SaleState.StoreAndForward:

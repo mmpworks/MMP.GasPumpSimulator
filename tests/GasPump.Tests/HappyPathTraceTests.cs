@@ -38,18 +38,18 @@ public class HappyPathTraceTests(ITestOutputHelper output)
         h.Sim.EnterCode(TestCards.Zip);
         h.AdvanceUntilState(SaleState.ReadyToPump, TimeSpan.FromSeconds(5));
 
-        // 4. Grade, lift, seat, squeeze. Fuel moves.
+        // 4. Grade, lift, insert, squeeze. Fuel moves.
         h.Sim.SelectGrade(Grade.Regular);
         h.Sim.LiftNozzle();
-        h.Sim.SeatNozzle();
-        h.Sim.SqueezeTrigger();
+        h.Sim.InsertSpout();
+        h.Sim.SqueezeLever();
         h.AdvanceUntilState(SaleState.Fueling, TimeSpan.FromSeconds(1));
         h.Advance(TimeSpan.FromSeconds(5));
 
         // 5. The phone rings. Let go, talk, squeeze again.
-        h.Sim.ReleaseTrigger();
+        h.Sim.ReleaseLever();
         h.Advance(TimeSpan.FromSeconds(10));
-        h.Sim.SqueezeTrigger();
+        h.Sim.SqueezeLever();
         h.Advance(TimeSpan.FromSeconds(5));
 
         // 6. Hang up the nozzle. 7. The bank settles the real amount.
@@ -65,7 +65,7 @@ public class HappyPathTraceTests(ITestOutputHelper output)
             nameof(SaleEvent.PumpArmed),
             nameof(SaleEvent.GradeSelected),
             nameof(SaleEvent.NozzleLifted),
-            nameof(SaleEvent.NozzleSeated),
+            nameof(SaleEvent.SpoutInserted),
             nameof(SaleEvent.FlowStarted),
             nameof(SaleEvent.Progress),
             nameof(SaleEvent.FlowPaused),
