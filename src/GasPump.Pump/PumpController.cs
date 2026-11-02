@@ -37,10 +37,11 @@ public sealed record PumpTick(
 /// diagnostic code naming the part.
 ///
 /// Two seams for parts that are not here yet. The price schedule is an
-/// interface, so a surcharge or a discount wraps the price board without this
-/// class knowing. The delivery stages see every metered slice and can hold the
-/// pump out of service, so an additive injector or a vapor monitor bolts on
-/// without this class changing.
+/// interface, so a fee or a discount wraps the price board without this
+/// class knowing. The delivery stages see every metered slice, can hold the
+/// pump out of service, and can take the hose for a slice (fuel valve shut,
+/// fuel meter idle, the switch in the ledger), so an additive injector or a
+/// vapor monitor bolts on without this class changing.
 ///
 /// Nozzle lifecycle. Lift takes the nozzle off the harness. Seat puts it in
 /// the tank or can. Squeeze opens the valve, Release shuts it, as many times
@@ -78,6 +79,8 @@ public sealed class PumpController(
     private string _tickPhase = "armed";
     private TimeSpan _noFlowFor;
     private TimeSpan _noPulseFor;
+    private TimeSpan _pouredFor;
+    private IDeliveryStage? _hoseOwner;
 
     public PumpPhase Phase { get; private set; } = PumpPhase.Disarmed;
     public Money Money { get; private set; }
@@ -117,6 +120,8 @@ public sealed class PumpController(
         _triggerHeld = false;
         _noFlowFor = TimeSpan.Zero;
         _noPulseFor = TimeSpan.Zero;
+        _pouredFor = TimeSpan.Zero;
+        _hoseOwner = null;
         Money = Money.Zero;
         Lines = [];
         LastFault = null;
@@ -308,6 +313,32 @@ public sealed class PumpController(
             return Current(ceilingReached: false, stopped: true);
         }
 
+        _pouredFor += dt;
+
+        // A stage may take the hose for this slice: its product moves, fuel does not. The fuel valve is shut,
+        // the fuel meter counts nothing, and the switch each way is in the ledger. The two watchdogs rest,
+        // because a silent fuel meter is the design while the hose is not carrying fuel.
+        var claimant = _stages.FirstOrDefault(s => s.ClaimsHose(_pouredFor));
+        if (claimant is not null)
+        {
+            if (!ReferenceEquals(_hoseOwner, claimant))
+            {
+                hydraulics.Close();
+                ledger.Append("hose.switch", $"{armed.SaleId} fuel -> {claimant.Name} after {Volume} fuel {Money}, {_pouredFor.TotalSeconds:0.0} s open");
+                _hoseOwner = claimant;
+            }
+            var moved = claimant.Pour(dt, hydraulics.NominalFlow);
+            _noFlowFor = TimeSpan.Zero;
+            _noPulseFor = TimeSpan.Zero;
+            _tickPhase = claimant.Name;
+            return Current(ceilingReached: false, stopped: false, hoseFlow: moved > Volume.Zero ? hydraulics.NominalFlow : FlowRate.Zero);
+        }
+        if (_hoseOwner is { } released)
+        {
+            ledger.Append("hose.switch", $"{armed.SaleId} {released.Name} -> fuel after {Volume} fuel {Money}, {_pouredFor.TotalSeconds:0.0} s open");
+            _hoseOwner = null;
+        }
+
         // Where the stop is, in volume: whichever comes first, the money ceiling or the volume ceiling.
         var volumeCap = armed.MaxVolume - Volume;
         var moneyCapVolume = pricing.MaxVolumeFor(grade, armed.Ceiling) - Volume;
@@ -422,9 +453,12 @@ public sealed class PumpController(
         Phase = PumpPhase.Disarmed;
     }
 
-    private PumpTick Current(bool ceilingReached, bool stopped)
+    /// <summary>The stage holding the hose right now, or null while fuel flows.</summary>
+    public IDeliveryStage? HoseOwner => _hoseOwner;
+
+    private PumpTick Current(bool ceilingReached, bool stopped, FlowRate? hoseFlow = null)
     {
         var phaseName = Phase == PumpPhase.Dispensing ? _tickPhase : Phase.ToString().ToLowerInvariant();
-        return new PumpTick(Phase, Volume, Money, hydraulics.CurrentFlow, phaseName, ceilingReached, stopped, LastFault, LastFaultCode, Lines);
+        return new PumpTick(Phase, Volume, Money, hoseFlow ?? hydraulics.CurrentFlow, phaseName, ceilingReached, stopped, LastFault, LastFaultCode, Lines);
     }
 }

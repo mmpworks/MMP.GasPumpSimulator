@@ -213,7 +213,7 @@ Two seams in the pump controller for parts that are not here yet, added 2026-11-
 | Seam | Type | What it replaces | How a new part uses it |
 |---|---|---|---|
 | Price schedule | `IPriceSchedule` (Core) | The controller took the concrete `Pricing` record | A schedule that wraps the price board, for a surcharge or a discount. `MaxVolumeFor` must agree with `CentsFor`, so the sale still lands on the cent. |
-| Delivery stage | `IDeliveryStage` (Pump) | Nothing; the tick had no hook after the totalizer | `OnArmed` per sale, `OnDelivered` per metered slice after the totalizer counted it, `Conditions()` to hold the pump out of service with its own diagnostic code, `TryRestoreCondition` so a restart repairs nothing. |
+| Delivery stage | `IDeliveryStage` (Pump) | Nothing; the tick had no hook after the totalizer | `OnArmed` per sale, `OnDelivered` per metered slice after the totalizer counted it, `Conditions()` to hold the pump out of service with its own diagnostic code, `TryRestoreCondition` so a restart repairs nothing. `ClaimsHose(pouredFor)` and `Pour(dt, hoseFlow)` let a stage take the hose for a slice: the controller shuts the fuel valve, counts nothing on the fuel meter or the totalizer, rests both watchdogs, names the stage as the tick phase, and writes `hose.switch` to the ledger on every flip each way. |
 
 `Dispenser` takes both as optional constructor arguments. Nothing is built on them yet. Three tests in `PumpTests.cs` prove the contract: a stage sees every slice and their sum is the sale volume; a broken stage refuses the arm with its code in the ledger and clears when fixed; a wrapped schedule bills more and the sale still stops under the ceiling.
 

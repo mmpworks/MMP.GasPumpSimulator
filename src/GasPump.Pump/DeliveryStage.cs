@@ -25,6 +25,19 @@ public interface IDeliveryStage
     /// <summary>One metered slice, after the totalizer counted it.</summary>
     void OnDelivered(Grade grade, Volume delivered);
 
+    /// <summary>
+    /// Ask to take the hose for this slice. True means this stage moves its own
+    /// product through the hose instead of fuel: the controller shuts the fuel
+    /// valve, counts nothing on the fuel meter or the totalizer, and calls
+    /// <see cref="Pour"/>. The switch, each way, is a ledger entry written by the
+    /// controller, so the custody chain shows every flip. <paramref name="pouredFor"/>
+    /// is how long the trigger has been held open this sale, additive time included.
+    /// </summary>
+    bool ClaimsHose(TimeSpan pouredFor) => false;
+
+    /// <summary>Move this stage's product for one slice while it holds the hose, at the hose's rate. Returns what moved, for the record.</summary>
+    Volume Pour(TimeSpan dt, FlowRate hoseFlow) => Volume.Zero;
+
     /// <summary>The conditions this stage holds the pump out of service for. Empty when it can run.</summary>
     IEnumerable<DiagnosticCode> Conditions() => [];
 

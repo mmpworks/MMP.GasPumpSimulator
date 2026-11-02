@@ -92,6 +92,105 @@ public class PumpTests
         public IReadOnlyList<ChargeLine> Lines(Grade grade, Volume volume) => [.. inner.Lines(grade, volume), new ChargeLine("ADDITIVE", "detergent additive", fee)];
     }
 
+    /// <summary>
+    /// A stage that takes the hose in slugs, as an additive injector would: after
+    /// the first three seconds of fuel, 16 oz of its product, then 16 oz of fuel,
+    /// back and forth until its total is delivered.
+    /// </summary>
+    private sealed class SlugDiverter(Volume total, Volume slug) : IDeliveryStage
+    {
+        public string Name => "additive";
+        public Volume Delivered = Volume.Zero;
+        public int Slugs;
+        private bool _holding;
+        private Volume _inSlug = Volume.Zero;
+        public static readonly TimeSpan Lead = TimeSpan.FromSeconds(3);
+
+        public void OnArmed(string saleId) { Delivered = Volume.Zero; Slugs = 0; _holding = false; _inSlug = Volume.Zero; }
+
+        public void OnDelivered(Grade grade, Volume delivered)
+        {
+            // Fuel slug: count fuel until a slug's worth has passed, then take the hose again.
+            if (_holding || Delivered >= total || Delivered == Volume.Zero) return;
+            _inSlug += delivered;
+        }
+
+        public bool ClaimsHose(TimeSpan pouredFor)
+        {
+            if (Delivered >= total || pouredFor < Lead) return false;
+            if (_holding) return true;
+            if (Delivered == Volume.Zero || _inSlug >= slug) { _holding = true; _inSlug = Volume.Zero; Slugs++; return true; }
+            return false;
+        }
+
+        public Volume Pour(TimeSpan dt, FlowRate hoseFlow)
+        {
+            var moved = Volume.Min(hoseFlow.Over(dt), Volume.Min(slug - _inSlug, total - Delivered));
+            _inSlug += moved;
+            Delivered += moved;
+            if (_inSlug >= slug || Delivered >= total) { _holding = false; _inSlug = Volume.Zero; }
+            return moved;
+        }
+    }
+
+    [Fact]
+    public void A_stage_that_takes_the_hose_moves_its_product_unmetered_and_every_switch_is_in_the_ledger()
+    {
+        var oz16 = new Volume(125);                      // 16 fl oz = 0.125 gal
+        var stage = new SlugDiverter(total: new Volume(250), slug: oz16);   // 32 oz in two slugs
+        var rig = new Rig(stages: [stage]);
+        rig.ArmAndPour(Money.FromDollars(30));
+        var trace = rig.RunToStop();
+        var last = trace[^1];
+
+        // All of the additive went out, in two slugs, and none of it was metered or billed as fuel.
+        Assert.Equal(new Volume(250), stage.Delivered);
+        Assert.Equal(2, stage.Slugs);
+        Assert.Equal(last.Volume, rig.Totalizer.Total);
+        Assert.Equal(Pricing.Default.CentsFor(Grade.Regular, last.Volume), last.Money);
+        Assert.Equal(3000, last.Money.Cents);
+        Assert.True(last.CeilingReached);
+
+        // While the stage held the hose the fuel volume stood still and the phase named the stage.
+        var additiveTicks = trace.Where(t => t.TaperPhase == "additive").ToList();
+        Assert.NotEmpty(additiveTicks);
+        for (int i = 1; i < trace.Count; i++)
+            if (trace[i].TaperPhase == "additive") Assert.Equal(trace[i - 1].Volume, trace[i].Volume);
+
+        // Nothing took the hose before three seconds of fuel had run (the 30th tick is the three-second mark, and the first additive slice).
+        Assert.All(trace.Take(29), t => Assert.NotEqual("additive", t.TaperPhase));
+        Assert.Equal("additive", trace[29].TaperPhase);
+
+        // Four switches: to additive, back to fuel, to additive, back to fuel. Each one is a ledger entry.
+        var switches = rig.Ledger.Snapshot().Where(e => e.Kind == "hose.switch").ToList();
+        Assert.Equal(4, switches.Count);
+        Assert.Contains("fuel -> additive", switches[0].Detail);
+        Assert.Contains("additive -> fuel", switches[1].Detail);
+        Assert.Equal(0, rig.Ledger.Verify());
+    }
+
+    [Fact]
+    public void A_fault_while_a_stage_holds_the_hose_bills_only_the_fuel_that_was_metered()
+    {
+        var stage = new SlugDiverter(total: new Volume(1_000), slug: new Volume(125));
+        var rig = new Rig(stages: [stage]);
+        rig.ArmAndPour(Money.FromDollars(30));
+
+        PumpTick? t = null;
+        for (int i = 0; i < 200 && t?.TaperPhase != "additive"; i++) { rig.Clock.Advance(Tick); t = rig.Pump.Tick(Tick); }
+        Assert.Equal("additive", t!.TaperPhase);
+        Assert.NotNull(rig.Pump.HoseOwner);
+        var fuelBefore = rig.Pump.Volume;
+
+        rig.Pump.EmergencyStop(DiagnosticCodes.PumpHoseBreakaway, "drive-off mid-additive");
+
+        Assert.Equal(PumpPhase.Faulted, rig.Pump.Phase);
+        Assert.Equal(fuelBefore, rig.Pump.Volume);
+        Assert.Equal(fuelBefore, rig.Totalizer.Total);
+        Assert.Equal(Pricing.Default.CentsFor(Grade.Regular, fuelBefore), rig.Pump.Money);
+        Assert.Contains(rig.Ledger.Snapshot(), e => e.Kind == "hose.switch" && e.Detail.Contains("fuel -> additive"));
+    }
+
     [Fact]
     public void Every_tick_itemizes_the_money_and_the_lines_always_sum_to_it()
     {
