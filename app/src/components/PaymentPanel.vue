@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
-import { api, cards, state, dollars } from '../sim'
+import { api, cards, state, dollars, pumpState } from '../sim'
 
 // The station's side of a sale: who pays, how much the site will hold, and the attacks that come from
 // upstream (a signed token, a tampered one, a replay). None of this touches the valve directly; the
@@ -11,7 +11,7 @@ const cashDollars = ref(20)
 const refused = ref<string | null>(null)
 const gallons = ref(600)
 const dollarsWanted = ref(2000)
-const sale = computed(() => state.value?.sale)
+const sale = computed(() => pumpState.value?.sale)
 const s = computed(() => sale.value?.state)
 const estop = computed(() => !!state.value?.station.estopActive)
 const canCancel = computed(() => s.value === 'Authorizing' || s.value === 'ReadyToPump')

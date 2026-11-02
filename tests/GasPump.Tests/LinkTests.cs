@@ -26,20 +26,35 @@ public sealed class LinkTests : IDisposable
     // 30 gal/min at 100 ms ticks is 50 pulses a tick, under the 60-pulse sanity limit. A $2 hold is about 0.65 gal, about 1.3 s.
     private static readonly DispenserOptions FastPump = new("PUMP-07", HardLimits.Default, Pricing.Default, TaperPolicy.Default, FlowRate.GallonsPerMinute(30), TimeSpan.FromMilliseconds(100));
 
-    private DispenserServer NewDispenser(int port = 0, string? runId = null, TimeSpan? heartbeat = null) =>
-        new(new DispenserServerOptions(FastPump, port, _dir, Ikm, RunId: runId, Heartbeat: heartbeat), TimeProvider.System, new ThreadedDispatch(TimeProvider.System));
+    private DispenserServer NewDispenser(int port = 0, string? runId = null, TimeSpan? heartbeat = null, string pumpId = "PUMP-07") =>
+        new(new DispenserServerOptions(FastPump with { PumpId = pumpId }, port, _dir, Ikm, RunId: runId, Heartbeat: heartbeat), TimeProvider.System, new ThreadedDispatch(TimeProvider.System));
 
-    private Simulation NewStation(int port, string runId, TimeSpan? heartbeat = null, TimeSpan? commandTimeout = null) => new(
+    /// <summary>A one-pump station on PUMP-07, as every socket test here began. <paramref name="pumps"/> above one drives PUMP-01, PUMP-02, ... on consecutive ports.</summary>
+    private Simulation NewStation(int port, string runId, TimeSpan? heartbeat = null, TimeSpan? commandTimeout = null, int pumps = 1) => new(
         new ChannelDispatch(TimeProvider.System), TimeProvider.System,
         SimulationOptions.Default with
         {
+            PumpId = pumps == 1 ? "PUMP-07" : "PUMP-01",
+            PumpCount = pumps,
             HoldAmount = Money.FromDollars(2),
             NominalFlow = FastPump.NominalFlow,
             TickPeriod = FastPump.TickPeriod,
-            Journal = new JournalOptions(_dir, "PUMP-07", Ikm, runId),
+            Journal = new JournalOptions(_dir, "STATION", Ikm, runId),
             Dispenser = new DispenserLinkOptions("127.0.0.1", port, heartbeat),
             CommandTimeout = commandTimeout,
         });
+
+    /// <summary>Two islands on consecutive ports, PUMP-01 and PUMP-02, the way a two-pump station expects them. Tries another pair when the second port is taken.</summary>
+    private (DispenserServer Pump1, DispenserServer Pump2) NewPair()
+    {
+        for (var attempt = 0; attempt < 5; attempt++)
+        {
+            var first = NewDispenser(pumpId: "PUMP-01");
+            try { return (first, NewDispenser(first.Port + 1, pumpId: "PUMP-02")); }
+            catch (System.Net.Sockets.SocketException) { first.Dispose(); }
+        }
+        throw new InvalidOperationException("no free pair of consecutive loopback ports after five tries");
+    }
 
     /// <summary>Card in, wait for the keypad prompt to cross the wire, type the test ZIP.</summary>
     private static void Present(Simulation station, string card)
@@ -212,7 +227,7 @@ public sealed class LinkTests : IDisposable
         }
         var snapshot = StateJournal.Load(Path.Combine(_dir, "state.json"))!;
         Assert.Equal("ESTOP", snapshot.StopReason);              // the station's own link drop did not overwrite it
-        Assert.Equal("Fueling", snapshot.Sale.State);
+        Assert.Equal("Fueling", snapshot.Point(1)!.Sale.State);
 
         // The cashier's reset: power back to the island, then a new station.
         dispenser = NewDispenserOnSamePort(port);
@@ -222,8 +237,8 @@ public sealed class LinkTests : IDisposable
         Assert.Equal(Volume.Zero, station2.LastRecovery.UnrecordedUpTo);
         // The island kept the delivery across the power cut, so the new station settles from the island's number, which
         // can run a tick past what the old station had seen, and never below it.
-        WaitFor(() => station2.Issuer.OpenHolds.Count == 0 && station2.Issuer.Settlements.Any(s => s.SaleId == "S0001"), TimeSpan.FromSeconds(8), () => $"holds {string.Join(",", station2.Issuer.OpenHolds)}\n" + Tail(station2));
-        var settled = station2.Issuer.Settlements.Single(s => s.SaleId == "S0001").Final;
+        WaitFor(() => station2.Issuer.OpenHolds.Count == 0 && station2.Issuer.Settlements.Any(s => s.SaleId == "P1-S0001"), TimeSpan.FromSeconds(8), () => $"holds {string.Join(",", station2.Issuer.OpenHolds)}\n" + Tail(station2));
+        var settled = station2.Issuer.Settlements.Single(s => s.SaleId == "P1-S0001").Final;
         Assert.True(settled >= atStop, $"settled {settled} below the station's own {atStop}");
         Assert.Equal(before - settled, station2.Issuer.AvailableBalance(card.Pan));
         Assert.Contains(station2.Ledger.Snapshot(), e => e.Kind == "recovery.reconciled");
@@ -337,14 +352,14 @@ public sealed class LinkTests : IDisposable
         WaitFor(() => station.Snapshot().State is SaleState.Idle && station.Snapshot().Hold == HoldStatus.Settled, TimeSpan.FromSeconds(20), () => "never settled\n" + Tail(station));
         WaitFor(() => dispenser.Dispenser.Pump.Transactions.Open.Count == 0, TimeSpan.FromSeconds(3), () => "the island still holds the delivery\n" + Tail(station));
         // The clear's answer is the last frame of the sale; it lands a moment after the island forgets the delivery.
-        WaitFor(() => station.Ledger.Snapshot().Any(e => e.Kind == "cmd.answer" && e.Detail.StartsWith("Clear S0001")), TimeSpan.FromSeconds(3), () => "the clear was never answered\n" + Tail(station));
+        WaitFor(() => station.Ledger.Snapshot().Any(e => e.Kind == "cmd.answer" && e.Detail.StartsWith("Clear P1-S0001")), TimeSpan.FromSeconds(3), () => "the clear was never answered\n" + Tail(station));
 
         // Arm, Lock and Clear each earned a Done, matched by correlation id, and the ledger has the same story.
         lock (answers) Assert.All(answers, a => Assert.Equal(AnswerCode.Done, a.Code));
         var details = station.Ledger.Snapshot().Where(e => e.Kind == "cmd.answer").Select(e => e.Detail).ToList();
-        Assert.Contains(details, d => d.StartsWith("Arm S0001 Done"));
-        Assert.Contains(details, d => d.StartsWith("Lock S0001 Done"));
-        Assert.Contains(details, d => d.StartsWith("Clear S0001 Done"));
+        Assert.Contains(details, d => d.StartsWith("Arm P1-S0001 Done"));
+        Assert.Contains(details, d => d.StartsWith("Lock P1-S0001 Done"));
+        Assert.Contains(details, d => d.StartsWith("Clear P1-S0001 Done"));
         Assert.DoesNotContain(station.Ledger.Snapshot(), e => e.Kind == "cmd.unanswered");
 
         // Both sides number their frames from one; nothing was lost or doubled on a healthy socket.
@@ -443,18 +458,18 @@ public sealed class LinkTests : IDisposable
         WaitFor(() => dispenser.Dispenser.Pump.Transactions.Open.Count == 1, TimeSpan.FromSeconds(10), () => "the island never wrote the delivery\n" + Tail(station));
         WaitFor(() => station.Snapshot().State == SaleState.Idle && station.Snapshot().Hold == HoldStatus.Settled, TimeSpan.FromSeconds(20), () => "station never settled\n" + Tail(station));
         var payable = dispenser.Dispenser.Pump.Transactions.Open.Single();
-        Assert.Equal("S0001", payable.SaleId);
+        Assert.Equal("P1-S0001", payable.SaleId);
         Assert.Equal(TransactionState.Payable, payable.State);
         WaitFor(() => station.Ledger.Snapshot().Any(e => e.Kind == "cmd.unanswered" && e.Detail.StartsWith("Clear ")), TimeSpan.FromSeconds(6), () => "the dropped clear was never reported\n" + Tail(station));
 
         dispenser.Dispose();                                     // the island reboots with the delivery still on its disk
         using var back = NewDispenserOnSamePort(port);
-        Assert.Equal(["S0001"], back.Dispenser.Pump.Transactions.Open.Select(t => t.SaleId));
+        Assert.Equal(["P1-S0001"], back.Dispenser.Pump.Transactions.Open.Select(t => t.SaleId));
         WaitFor(() => station.Link.Connected && station.Link.RemoteRunId == back.RunId, TimeSpan.FromSeconds(8), () => "station never reconnected\n" + Tail(station));
 
         // On connect the station asks what the island holds, recognises its own finished sale, and clears it.
         WaitFor(() => back.Dispenser.Pump.Transactions.Open.Count == 0, TimeSpan.FromSeconds(5), () => "the delivery was never cleared\n" + Tail(station));
-        Assert.Contains(station.Ledger.Snapshot(), e => e.Kind == "tx.reported" && e.Detail.Contains("S0001"));
+        Assert.Contains(station.Ledger.Snapshot(), e => e.Kind == "tx.reported" && e.Detail.Contains("P1-S0001"));
         Assert.Contains(station.Ledger.Snapshot(), e => e.Kind == "tx.clear" && e.Detail.Contains("clear sent again"));
         Assert.DoesNotContain(station.Ledger.Snapshot(), e => e.Kind == "tx.orphan");
         Assert.True(TryPresent(station, "Good").Ok);
@@ -527,5 +542,64 @@ public sealed class LinkTests : IDisposable
         Assert.Contains(station.Ledger.Snapshot(), e => e.Kind == "totals.read" && e.Detail.Contains($"Premium {sale.Volume} {sale.Money} in 1") && e.Detail.EndsWith("last tx #1"));
         // A read changes nothing on the island: no ledger line there for it.
         Assert.DoesNotContain(dispenser.Ledger.Snapshot(), e => e.Kind.StartsWith("totals"));
+    }
+
+    [Fact]
+    public void Two_islands_over_two_sockets_fuel_at_once_and_losing_one_faults_only_its_own_sale()
+    {
+        var (pump1, pump2) = NewPair();
+        using var station = NewStation(pump1.Port, "STN-1", pumps: 2);
+        try
+        {
+            WaitFor(() => station.Points.All(p => p.Link.Connected && p.View.Phase != "Offline"), TimeSpan.FromSeconds(5), () => "a station link never connected\n" + Tail(station));
+            Assert.Equal(pump1.RunId, station.Point(1).Link.RemoteRunId);
+            Assert.Equal(pump2.RunId, station.Point(2).Link.RemoteRunId);
+            Assert.Equal(["PUMP-01", "PUMP-02"], station.Points.Select(p => p.View.PumpId));
+            // Each island was addressed as its own node and refused nothing.
+            Assert.DoesNotContain(pump1.Log.Snapshot(), l => l.Message.Contains("refused: WrongDest"));
+            Assert.DoesNotContain(pump2.Log.Snapshot(), l => l.Message.Contains("refused: WrongDest"));
+
+            Present(station.Point(1), "Good");
+            Present(station.Point(2), "Good");
+            WaitFor(() => station.Points.All(p => p.Snapshot().State == SaleState.ReadyToPump), TimeSpan.FromSeconds(5), () => "a pump never armed\n" + Tail(station));
+            station.Point(1).StartFueling(Grade.Regular);
+            station.Point(2).StartFueling(Grade.Premium);
+            WaitFor(() => station.Points.All(p => p.Snapshot().State == SaleState.Fueling), TimeSpan.FromSeconds(5), () => "a pump never fueled\n" + Tail(station));
+            WaitFor(() => station.Point(2).Snapshot().Volume > Volume.Zero, TimeSpan.FromSeconds(5), () => "pump 2 moved nothing\n" + Tail(station));
+
+            // Pump 1's island dies mid-pour. Only pump 1's sale hears about it.
+            pump1.Dispose();
+            WaitFor(() => station.Point(1).Snapshot().State == SaleState.Faulted || station.Point(1).Snapshot().FaultCode == DiagnosticCodes.LinkDispenserLost.Code, TimeSpan.FromSeconds(5), () => "pump 1 never faulted\n" + Tail(station));
+            Assert.Equal(DiagnosticCodes.LinkDispenserLost.Code, station.Point(1).Snapshot().FaultCode);
+            Assert.True(station.Point(2).Link.Connected);
+            Assert.Equal(SaleState.Fueling, station.Point(2).Snapshot().State);
+            Assert.Null(station.Point(2).Snapshot().FaultCode);
+
+            // Pump 2 finishes its $2 on its own.
+            WaitFor(() => station.Point(2).Snapshot().State is SaleState.Idle or SaleState.Completing && station.Point(2).Snapshot().Hold == HoldStatus.Settled, TimeSpan.FromSeconds(20), () => "pump 2 never settled\n" + Tail(station));
+            Assert.Equal(Money.FromDollars(2), station.Point(2).Snapshot().Money);
+            Assert.Equal(station.Point(2).Snapshot().Volume, pump2.Dispenser.Totalizer.Total);
+            // Pump 1's sale settled for what its island recorded before the link went.
+            WaitFor(() => station.Point(1).Snapshot().Hold is HoldStatus.Settled or HoldStatus.Released, TimeSpan.FromSeconds(10), () => "pump 1 never settled\n" + Tail(station));
+            Assert.Empty(station.Issuer.OpenHolds);
+
+            // The one ledger: pump 2's link never dropped, pump 1's did, and each line says which.
+            var downs = station.Ledger.Snapshot().Where(e => e.Kind == "link.down").Select(e => e.Detail).ToList();
+            Assert.Single(downs);
+            Assert.Contains("PUMP-01", downs[0]);
+            Assert.Contains(station.Ledger.Snapshot(), e => e.Kind == "sale.close" && e.Detail.StartsWith("P2-S0001 "));
+        }
+        finally
+        {
+            pump1.Dispose();
+            pump2.Dispose();
+        }
+    }
+
+    private static void Present(FuellingPoint point, string card)
+    {
+        point.PresentCard(card);
+        WaitFor(() => point.Snapshot().State == SaleState.CardRead, TimeSpan.FromSeconds(5), () => $"keypad never asked on pump {point.Number}");
+        point.EnterCode(TestCards.Zip);
     }
 }

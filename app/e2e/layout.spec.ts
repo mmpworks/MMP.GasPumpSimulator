@@ -27,7 +27,7 @@ test.describe('panels', () => {
   })
 
   test('both columns name their own process and the strip names the wire', async ({ page }) => {
-    await expect(page.locator('.side.dispenser .side-title')).toContainText(/DISPENSER · GasPump\.Dispenser\.exe pid \d+/)
+    await expect(page.locator('.side.dispenser .side-title')).toContainText(/DISPENSER 1 · GasPump\.Dispenser\.exe pid \d+/)
     await expect(page.locator('.side.station .side-title')).toContainText(/STATION · GasPump\.Host\.exe pid \d+/)
     await expect(page.locator('.link-strip')).toContainText('TCP')
     await expect(page.locator('.link-strip')).toContainText(':5178')

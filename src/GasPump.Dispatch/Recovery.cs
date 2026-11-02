@@ -40,12 +40,15 @@ public sealed record RecoveryOutcome(
 /// </summary>
 public static class RecoveryPlan
 {
-    public static RecoveryOutcome Build(JournalSnapshot? snapshot, DateTimeOffset now, TimeSpan snapshotPeriod)
+    /// <summary>The decision for fuelling point <paramref name="pump"/>. No snapshot, or a snapshot with no such point, is a clean start.</summary>
+    public static RecoveryOutcome Build(JournalSnapshot? snapshot, int pump, DateTimeOffset now, TimeSpan snapshotPeriod)
     {
         if (snapshot is null)
             return new(RecoveryKind.CleanStart, "", null, Tender.Credit, Grade.Regular, Volume.Zero, Money.Zero, Volume.Zero, TimeSpan.Zero, "no journal found, first run");
+        if (snapshot.Point(pump) is not { } point)
+            return new(RecoveryKind.CleanStart, snapshot.RunId, null, Tender.Credit, Grade.Regular, Volume.Zero, Money.Zero, Volume.Zero, TimeSpan.Zero, $"the journal of {snapshot.RunId} had no pump {pump}; nothing to close");
 
-        var s = snapshot.Sale;
+        var s = point.Sale;
         var state = Enum.Parse<SaleState>(s.State);
         var tender = Enum.Parse<Tender>(s.Tender);
         var grade = Enum.Parse<Grade>(s.Grade);

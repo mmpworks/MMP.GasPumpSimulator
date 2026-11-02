@@ -1,11 +1,11 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { state } from '../sim'
+import { state, pumpState } from '../sim'
 
 // The link between the two processes. Frames down are PumpMessages the station sent. Frames up are
 // events, views, log, ledger, and custody lines the dispenser sent. Both counters come from the
 // station's end of the link.
-const d = computed(() => state.value?.dispenser)
+const d = computed(() => pumpState.value?.dispenser)
 const up = computed(() => !!d.value?.connected)
 const kind = computed(() => d.value?.link ?? 'socket')
 // Heartbeat age in whole seconds, from the station's clock in the same state push. Null before the first beat.
@@ -15,7 +15,7 @@ const beatAge = computed(() => {
   return Math.max(0, Math.round((new Date(now).getTime() - new Date(at).getTime()) / 1000))
 })
 const silent = computed(() => up.value && d.value?.peerAlive === false)
-const openTx = computed(() => state.value?.pump.openTransactions?.length ?? 0)
+const openTx = computed(() => pumpState.value?.pump.openTransactions?.length ?? 0)
 </script>
 
 <template>

@@ -19,7 +19,8 @@ A pay-at-the-pump fuel dispenser, simulated. Present a card, get a two-phase aut
 11. **E-stop.** One button, station-wide. The record is written before the power drops, so the cashier's reset closes the open sale with nothing unrecorded.
 12. **Custody stream.** Every custody line goes out byte for byte as it lands. A station server keeps its own copy per run and verifies it with the same verifier. `ws://localhost:5177/ws/custody` is the same stream for anything outside.
 13. **Card at the pump or at the station.** Insert or tap at the pump's own reader, or hand the card or cash to the cashier. A station sale waits 300 s for the lift, because the cashier can cancel by hand; a pump sale waits 120 s. A new card on an approved sale nobody touched cancels it, reverses its hold, and starts over. A pump with a nozzle in hand refuses the new card.
-14. **Two processes.** The dispenser runs in `GasPump.Dispenser.exe` and the station in `GasPump.Host.exe`, joined by TCP on localhost. The pump's hard limits, authority, nonces, totalizer, ledger, and chain live in the dispenser process; the sale, the money, the journal, and the copy of the dispenser's chain live in the station. Pull either plug and watch the other side stay safe. The app shows them as two columns, amber and blue, with the wire between them.
+14. **Three processes, two pumps.** Each pump runs in its own `GasPump.Dispenser.exe` and the station in `GasPump.Host.exe`, joined by TCP on localhost, one connection per pump. A pump's hard limits, authority, nonces, totalizer, ledger, and chain live in its dispenser process; the sales, the money, the journal, and the copies of the dispensers' chains live in the station. Pull any plug and watch the other sides stay safe. The app shows one pump at a time, as two columns, amber and blue, with the wire between them, and a tab per pump above.
+21. **One controller, two fuelling points.** The station is the forecourt controller: one payment worker, one bank link, one journal, one ledger, one admin panel, one E-stop, and a `FuellingPoint` per pump, each with its own sale, sale worker, link, and island. Sale ids name the pump (`P1-S0001`, `P2-S0001`), so the one payment worker routes every answer back to the pump it came from and every ledger line says which pump it is about. With two pumps the head-of-line blocking under the threaded strategy shows across pumps: pump 2's driver waits because pump 1's bank call is slow. A token signed for pump 1 is refused by pump 2. Closing pump 2 leaves pump 1 selling. Pulling pump 1's dispenser plug faults pump 1's sale and nothing else.
 15. **Logging on Herald.OSS.** Every worker writes structured events through [Herald.OSS](https://github.com/mmpworks/Herald.OSS) 0.14.0. A bridge sink feeds the UI stream and the tests; the host adds a console sink and an NDJSON file per session so a run can be reviewed later with every property intact.
 16. **The keypad.** A debit card asks for its PIN and a credit card for its billing ZIP before anything goes to the bank. The bank checks the digits (test ZIP 12345, test PIN 1234) and declines a mismatch. The digits never reach a log.
 17. **The idle minute.** Let go of the lever to take a phone call and the pump waits a minute for you. Squeeze again and it picks up where it left off. Stay silent and it closes the valve and settles for the fuel delivered, so a forgotten nozzle never holds a pump open.
@@ -30,19 +31,19 @@ A pay-at-the-pump fuel dispenser, simulated. Present a card, get a two-phase aut
 ## Run it
 
 ```
-dotnet test                       # 348 tests, about 105 s: most on a fake clock under all three dispatch strategies, 6 over a real TCP socket
-cd app && npm run e2e             # 16 Playwright specs against the two live processes: sales, faults and repairs, the E-stop, prices and totals, the layout; about 3.5 min
-dotnet run --project src/GasPump.Host -- --strategy threaded                 # station; spawns the dispenser on port 5178
-dotnet run --project src/GasPump.Host -- --dispenser inproc                  # the old single process
-dotnet run --project src/GasPump.Dispenser -- --port 5178                    # a dispenser by hand, in its own terminal; the station adopts it
+dotnet test                       # 425 tests, about 3.5 min: most on a fake clock under all three dispatch strategies, 15 over real TCP sockets
+cd app && npm run e2e             # 22 Playwright specs against the three live processes: sales, faults and repairs, the E-stop, prices and totals, two pumps at once, the layout
+dotnet run --project src/GasPump.Host -- --strategy threaded                 # station; spawns a dispenser per pump on ports 5178 and 5179
+dotnet run --project src/GasPump.Host -- --dispenser inproc                  # both pumps inside the station process
+dotnet run --project src/GasPump.Dispenser -- --port 5178 --pump PUMP-01     # a dispenser by hand, in its own terminal; the station adopts it
 cd app && npm install && npm run build && npx electron .
 ```
 
-The Electron app starts the host for you on `localhost:5177`. Set `GASPUMP_STRATEGY=channel` or `GASPUMP_STRATEGY=asyncproxy` to run the Task-and-Channel or the AsyncProxy dispatch instead of threads. Set `GASPUMP_HOST=external` if you started the host yourself with `dotnet run --project src/GasPump.Host -- --strategy asyncproxy`.
+The Electron app starts the host for you on `localhost:5177`. Set `GASPUMP_STRATEGY=channel` or `GASPUMP_STRATEGY=asyncproxy` to run the Task-and-Channel or the AsyncProxy dispatch instead of threads. Set `GASPUMP_HOST=external` if you started the host yourself with `dotnet run --project src/GasPump.Host -- --strategy asyncproxy`. `GASPUMP_PUMPS` sets how many pumps the station drives (default 2, up to 8); pump n's dispenser listens on the first dispenser port plus n minus 1.
 
 ### Two stations across the street
 
-The station carries a name, a theme, and two ports, all from the environment. The defaults are **Howard's** on `5177` and `5178` with the green-and-amber theme. Start a second station with its own values and both run on one machine, each with its own dispenser process, log folder, and journal:
+The station carries a name, a theme, a pump count, and its ports, all from the environment. The defaults are **Howard's** on `5177` with dispensers on `5178` and `5179`, in the green-and-amber theme. Start a second station with its own values and both run on one machine, each with its own dispenser processes, log folder, and journal:
 
 ```
 set GASPUMP_STATION=Samms
@@ -53,7 +54,7 @@ set GASPUMP_LOG_DIR=%LOCALAPPDATA%\MMP.GasPumpSimulator\samms\logs
 cd app && npx electron .
 ```
 
-The host answers `station.name` and `station.theme` in `/api/state`; the renderer sets its title and its colours from them. Two themes ship: `howards` and `samms`. The `v0.1.0` tag, run from a second clone with those values, is Samms: the station as it stood at the first release, across the street from the current one.
+The host answers `station.name` and `station.theme` in `/api/state`; the renderer sets its title and its colours from them. Two themes ship: `howards` and `samms`. Samms runs from a second clone of this repo with those values: the same two-pump build, across the street from Howard's, on its own ports (dispensers on `5278` and `5279`).
 
 MMP.AsyncProxy is a sibling checkout, referenced by project from `..\MMP.AsyncProxy` until the package publishes. Point elsewhere with `-p:AsyncProxyProjectPath=<path to MMP.AsyncProxy.csproj>`. TesseraSeal's chain code is compiled in from the sibling `..\Herald\Modules\Herald.Compliance\src\Audit` checkout by source link; point elsewhere with `-p:HeraldCompliancePath=<that folder>`.
 
@@ -138,11 +139,11 @@ The ledger carries `recovery.restart` and `recovery.closeout ... DELIVERY LIKELY
 
 The under-recording is by design. The journal is one second old at worst, so up to one second of flow at the last rate can leave the hose after the last record. The restart reports that bound and doesn't guess a number.
 
-## Two processes, two plugs
+## Three processes, three plugs
 
-- **Pull the dispenser's plug** (left column, while fuel is flowing). `GasPump.Dispenser.exe` dies. The left column goes OFFLINE, the strip goes red, and the station faults the sale with `LINK.DISPENSER.LOST`: "Pump offline. You were charged only for the N gal delivered. See the attendant." Restore dispenser power and a new dispenser run connects; the station starts a new copy of its chain.
-- **Pull the station's plug** (right column, Power tab). `GasPump.Host.exe` restarts its simulation while the dispenser keeps pouring under its own limits. The new station's first frame is `Stop`; the valve closes; the journal closes the sale and says how much may be unrecorded.
-- **E-STOP**. The station writes the record, then cuts the dispenser's power: the dispenser process exits. Reset at the cashier restarts it, then the station.
+- **Pull a dispenser's plug** (left column of that pump's tab, while fuel is flowing). That pump's `GasPump.Dispenser.exe` dies. Its left column goes OFFLINE, its strip goes red, its tab chip reads out of service, and the station faults that sale with `LINK.DISPENSER.LOST`: "Pump offline. You were charged only for the N gal delivered. See the attendant." The other pump keeps pouring. Restore dispenser power and a new dispenser run connects; the station starts a new copy of that pump's chain.
+- **Pull the station's plug** (right column, Power tab). `GasPump.Host.exe` restarts its simulation while both dispensers keep pouring under their own limits. The new station's first frame to each is `Stop`; the valves close; the journal closes both sales and says how much may be unrecorded.
+- **E-STOP**. The station writes the record naming both sales, then cuts every dispenser's power: both processes exit. Reset at the cashier restarts them, then the station, which settles both sales from the islands' transaction buffers.
 
 ## Forecourt faults
 
@@ -188,7 +189,7 @@ docs/                  prd, threat model, architecture
 
 ## What this is not
 
-No real card data. No EMV kernel. No PCI claim. No serial pump protocol. One pump, one hose, three grades. One shared HMAC key where a real site would use per-device keys and a MAC counter. Each one is a stand-in, and the repo teaches what it stands in for.
+No real card data. No EMV kernel. No PCI claim. No serial pump protocol. Two pumps on their own TCP connections rather than many on one shared current loop; the frames carry node addresses, so a shared bus is a listener that routes on the destination. One hose and three grades per pump. One shared HMAC key where a real site would use per-device keys and a MAC counter. Each one is a stand-in, and the repo teaches what it stands in for.
 
 ## Licence
 

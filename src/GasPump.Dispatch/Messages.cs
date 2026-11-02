@@ -71,13 +71,13 @@ public abstract record PumpMessage
 /// <summary>What the pump worker's mailbox carries: the message, the sale it was for, and the correlation id if the sender wants an answer.</summary>
 public sealed record PumpEnvelope(string? SaleId, PumpMessage M, string? CorrelationId = null);
 
-/// <summary>What the sale worker sends the payment worker.</summary>
+/// <summary>What the sale workers send the one payment worker. The sale id names the pump (<c>P1-S0001</c>), so the answer finds its way back.</summary>
 public abstract record PaymentMessage(string SaleId)
 {
-    /// <summary>Code is the PIN or ZIP from the keypad. It stays inside the process and never reaches a log.</summary>
-    public sealed record PreAuthorize(string SaleId, CardData Card, Tender Tender, string? Code) : PaymentMessage(SaleId);
-    /// <summary>Cash taken at the cashier. The payment side signs a token for that amount and never calls the bank.</summary>
-    public sealed record CashAuthorize(string SaleId, Money Amount) : PaymentMessage(SaleId);
+    /// <summary>Code is the PIN or ZIP from the keypad. It stays inside the process and never reaches a log. PumpId is the pump the token is signed for.</summary>
+    public sealed record PreAuthorize(string SaleId, string PumpId, CardData Card, Tender Tender, string? Code) : PaymentMessage(SaleId);
+    /// <summary>Cash taken at the cashier. The payment side signs a token for that amount, for that pump, and never calls the bank.</summary>
+    public sealed record CashAuthorize(string SaleId, string PumpId, Money Amount) : PaymentMessage(SaleId);
     /// <summary>Lines itemize Final for the bank. Null means the sender had no breakdown.</summary>
     public sealed record Complete(string SaleId, Money Final, IReadOnlyList<ChargeLine>? Lines = null) : PaymentMessage(SaleId);
     public sealed record Reverse(string SaleId) : PaymentMessage(SaleId);

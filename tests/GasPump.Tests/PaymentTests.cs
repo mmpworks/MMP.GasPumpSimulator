@@ -88,7 +88,7 @@ public class PaymentTests
         var issuer = IssuerSimulator.WithTestCards();
         var net = new NetworkFaultPolicy();
         var wire = new NetworkSimulator(net, clock);
-        var gw = new PaymentGateway(issuer, wire, new HmacAuthorizationSigner(new byte[32]), clock, "PUMP-07");
+        var gw = new PaymentGateway(issuer, wire, new HmacAuthorizationSigner(new byte[32]), clock);
         return (gw, net, clock, issuer, wire);
     }
 
@@ -96,7 +96,7 @@ public class PaymentTests
     public async Task Gateway_approves_after_the_network_latency()
     {
         var (gw, _, clock, _) = Gateway();
-        var task = gw.PreAuthorizeAsync("S1", Card("Good"), Tender.Credit, TestCards.Zip, CancellationToken.None);
+        var task = gw.PreAuthorizeAsync("S1", "PUMP-07", Card("Good"), Tender.Credit, TestCards.Zip, CancellationToken.None);
         Assert.False(task.IsCompleted);
         clock.Advance(TimeSpan.FromMilliseconds(250));
         var r = await task;
@@ -110,7 +110,7 @@ public class PaymentTests
     {
         var (gw, net, clock, _) = Gateway();
         net.Mode = NetworkMode.Down;
-        var task = gw.PreAuthorizeAsync("S1", Card("Good"), Tender.Credit, TestCards.Zip, CancellationToken.None);
+        var task = gw.PreAuthorizeAsync("S1", "PUMP-07", Card("Good"), Tender.Credit, TestCards.Zip, CancellationToken.None);
         clock.Advance(TimeSpan.FromMilliseconds(50));
         var r = await task;
         Assert.False(r.Approved);
@@ -123,7 +123,7 @@ public class PaymentTests
     {
         var (gw, net, clock, _) = Gateway();
         net.Mode = NetworkMode.Timeout;
-        var task = gw.PreAuthorizeAsync("S1", Card("Good"), Tender.Credit, TestCards.Zip, CancellationToken.None);
+        var task = gw.PreAuthorizeAsync("S1", "PUMP-07", Card("Good"), Tender.Credit, TestCards.Zip, CancellationToken.None);
         clock.Advance(TimeSpan.FromSeconds(29));
         Assert.False(task.IsCompleted);
         clock.Advance(TimeSpan.FromSeconds(1));
@@ -136,7 +136,7 @@ public class PaymentTests
     {
         var (gw, net, clock, issuer) = Gateway();
         var card = Card("Good");
-        var pre = gw.PreAuthorizeAsync("S1", card, Tender.Credit, TestCards.Zip, CancellationToken.None);
+        var pre = gw.PreAuthorizeAsync("S1", "PUMP-07", card, Tender.Credit, TestCards.Zip, CancellationToken.None);
         clock.Advance(TimeSpan.FromMilliseconds(250));
         await pre;
 
@@ -161,7 +161,7 @@ public class PaymentTests
         var (gw, net, clock, issuer) = Gateway();
         var card = Card("Good");
         var before = issuer.AvailableBalance(card.Pan);
-        var pre = gw.PreAuthorizeAsync("S1", card, Tender.Credit, TestCards.Zip, CancellationToken.None);
+        var pre = gw.PreAuthorizeAsync("S1", "PUMP-07", card, Tender.Credit, TestCards.Zip, CancellationToken.None);
         clock.Advance(TimeSpan.FromMilliseconds(250));
         await pre;
 
@@ -187,7 +187,7 @@ public class PaymentTests
         gw.Intend(new PendingAdvice("S1", PendingKind.Reversal, Money.Zero));
         Assert.Single(gw.Pending);
         Assert.Equal(3, changes);
-        gw.CashAuthorize("C1", Money.FromDollars(10));
+        gw.CashAuthorize("C1", "PUMP-07", Money.FromDollars(10));
         gw.Intend(new PendingAdvice("C1", PendingKind.Reversal, Money.Zero));
         Assert.Single(gw.Pending);
     }
@@ -198,7 +198,7 @@ public class PaymentTests
         var (gw, net, clock, issuer) = Gateway();
         var card = Card("Good");
         var before = issuer.AvailableBalance(card.Pan);
-        var pre = gw.PreAuthorizeAsync("S1", card, Tender.Credit, TestCards.Zip, CancellationToken.None);
+        var pre = gw.PreAuthorizeAsync("S1", "PUMP-07", card, Tender.Credit, TestCards.Zip, CancellationToken.None);
         clock.Advance(TimeSpan.FromMilliseconds(250));
         await pre;
 
@@ -243,7 +243,7 @@ public class PaymentTests
         var (gw, net, clock, issuer, wire) = GatewayWithWire();
         var card = Card("Good");
         net.Mode = NetworkMode.Late;
-        var task = gw.PreAuthorizeAsync("S1", card, Tender.Credit, TestCards.Zip, CancellationToken.None);
+        var task = gw.PreAuthorizeAsync("S1", "PUMP-07", card, Tender.Credit, TestCards.Zip, CancellationToken.None);
         clock.Advance(TimeSpan.FromMilliseconds(250));
         // The issuer call and the second wait run on a pool continuation after Advance returns. Wait for the
         // second timer to be parked on the clock before moving the clock again, or the test races itself.
@@ -264,7 +264,7 @@ public class PaymentTests
     public async Task Ceiling_is_the_lesser_of_the_site_ceiling_and_the_banks_answer(string card, Tender tender, long cents)
     {
         var (gw, _, clock, _) = Gateway();
-        var task = gw.PreAuthorizeAsync("S1", Card(card), tender, SimHarness.CodeFor(tender), CancellationToken.None);
+        var task = gw.PreAuthorizeAsync("S1", "PUMP-07", Card(card), tender, SimHarness.CodeFor(tender), CancellationToken.None);
         clock.Advance(TimeSpan.FromMilliseconds(250));
         var r = await task;
         Assert.True(r.Approved, r.Message);
@@ -276,7 +276,7 @@ public class PaymentTests
     public async Task Debit_with_a_card_that_has_no_pin_is_a_pin_decline_at_the_bank()
     {
         var (gw, _, clock, issuer) = Gateway();
-        var task = gw.PreAuthorizeAsync("S1", Card("Good"), Tender.Debit, TestCards.Pin, CancellationToken.None);
+        var task = gw.PreAuthorizeAsync("S1", "PUMP-07", Card("Good"), Tender.Debit, TestCards.Pin, CancellationToken.None);
         clock.Advance(TimeSpan.FromMilliseconds(250));
         var r = await task;
         Assert.False(r.Approved);
@@ -290,7 +290,7 @@ public class PaymentTests
         var (gw, _, clock, _) = Gateway();
         var set = gw.Site.TrySet("1234", Tender.Debit, Money.FromDollars(30));
         Assert.True(set.Ok, set.Reason);
-        var task = gw.PreAuthorizeAsync("S1", Card("DebitGoodPin"), Tender.Debit, TestCards.Pin, CancellationToken.None);
+        var task = gw.PreAuthorizeAsync("S1", "PUMP-07", Card("DebitGoodPin"), Tender.Debit, TestCards.Pin, CancellationToken.None);
         clock.Advance(TimeSpan.FromMilliseconds(250));
         Assert.Equal(Money.FromDollars(30), (await task).Ceiling);
     }
@@ -326,7 +326,7 @@ public class PaymentTests
         var (gw, net, _, issuer) = Gateway();
         Assert.False(gw.Site.TrySet("1234", Tender.Cash, Money.FromDollars(10)).Ok);
         net.Mode = NetworkMode.Down;   // the bank is unreachable and cash does not care
-        var r = gw.CashAuthorize("S1", new Money(2_037));
+        var r = gw.CashAuthorize("S1", "PUMP-07", new Money(2_037));
         Assert.True(r.Approved);
         Assert.Equal(new Money(2_037), r.Ceiling);
         Assert.Equal("CashPrepaid", r.ReasonCode);
@@ -339,14 +339,14 @@ public class PaymentTests
     {
         var (gw, net, _, _) = Gateway();
         net.Mode = NetworkMode.Down;
-        gw.CashAuthorize("S1", Money.FromDollars(20));
+        gw.CashAuthorize("S1", "PUMP-07", Money.FromDollars(20));
         var done = await gw.CompleteAsync("S1", new Money(1_234), CancellationToken.None);
         Assert.True(done.Sent);
         Assert.Equal(new Money(766), done.Change);
         Assert.Equal(new Money(766), gw.Drawer.ChangeDue["S1"]);
         Assert.Empty(gw.Pending);
 
-        gw.CashAuthorize("S2", Money.FromDollars(20));
+        gw.CashAuthorize("S2", "PUMP-07", Money.FromDollars(20));
         var back = await gw.ReverseAsync("S2", CancellationToken.None);
         Assert.True(back.Sent);
         Assert.Equal(Money.FromDollars(20), back.Refund);
@@ -359,7 +359,7 @@ public class PaymentTests
     {
         var (gw, net, _, _) = Gateway();
         net.Mode = NetworkMode.Down;
-        var r = await gw.PreAuthorizeAsync("S1", Card("Expired"), Tender.Credit, TestCards.Zip, CancellationToken.None);
+        var r = await gw.PreAuthorizeAsync("S1", "PUMP-07", Card("Expired"), Tender.Credit, TestCards.Zip, CancellationToken.None);
         Assert.Equal("Expired", r.ReasonCode);
         Assert.False(r.NetworkFailure);
     }

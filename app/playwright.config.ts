@@ -1,6 +1,6 @@
 // End-to-end checks against the real pair of processes: the station host (which spawns the dispenser) and the
 // built renderer served by Vite preview. Both run under a throwaway log directory so the suite never touches
-// the journal and chains of a real session. One worker, because there is one pump.
+// the journal and chains of a real session. One worker, because there is one station.
 import { defineConfig } from '@playwright/test'
 import path from 'node:path'
 import os from 'node:os'

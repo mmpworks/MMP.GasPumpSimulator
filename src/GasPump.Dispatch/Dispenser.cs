@@ -322,16 +322,45 @@ public static class Origins
         foreach (var p in l.Props) if (p.Key == "Origin" && p.Value is string s) return s;
         return l.Source == "pump" ? Dispenser : Station;
     }
+
+    /// <summary>Which pump a log line is about, from its Pump property. Null for a line about the site (admin, network, E-stop).</summary>
+    public static int? PumpOfLog(LogLine l)
+    {
+        foreach (var p in l.Props) if (p.Key == "Pump") return p.Value switch { int n => n, string s when int.TryParse(s, out var n) => n, _ => null };
+        return null;
+    }
+
+    /// <summary>
+    /// Which pump a ledger line is about. Every line a fuelling point writes
+    /// opens with a sale id (P1-S0001) or the pump id (PUMP-01); the station's
+    /// own lines (admin, E-stop, recovery of the site) open with neither and
+    /// belong to every pump. The dispenser's ledger lines over the wire are
+    /// known by the link that carried them and never come through here.
+    /// </summary>
+    public static int? PumpOfLedger(string detail)
+    {
+        foreach (var token in detail.Split(' ', 4, StringSplitOptions.RemoveEmptyEntries))
+        {
+            if (SaleIds.PumpOf(token) is { } fromSale) return fromSale;
+            if (token.StartsWith("PUMP-", StringComparison.Ordinal) && int.TryParse(token.AsSpan(5), out var n) && n > 0) return n;
+        }
+        return null;
+    }
 }
 
-/// <summary>Stamps every line with an Origin property, so a shared log still says which side wrote it.</summary>
-public sealed class OriginTaggedLog(IEventLog inner, string origin) : IEventLog
+/// <summary>
+/// Stamps every line with fixed properties, so one shared log still says
+/// which side (Origin) and which pump (Pump) wrote it. The in-process
+/// dispenser of pump 2 writes with both tags; the station's own lines about
+/// pump 2 carry only the pump.
+/// </summary>
+public sealed class TaggedLog(IEventLog inner, params (string Name, object? Value)[] tags) : IEventLog
 {
     public event Action<LogLine>? Written { add => inner.Written += value; remove => inner.Written -= value; }
     public IReadOnlyList<LogLine> Snapshot() => inner.Snapshot();
-    public void Write(string source, string message) => inner.Write(source, message, ("Origin", origin));
+    public void Write(string source, string message) => inner.Write(source, message, tags);
     public void Write(string source, string template, params (string Name, object? Value)[] props) => inner.Write(source, template, Tag(props));
     public void Warn(string source, string template, params (string Name, object? Value)[] props) => inner.Warn(source, template, Tag(props));
     public void Error(string source, string template, params (string Name, object? Value)[] props) => inner.Error(source, template, Tag(props));
-    private (string, object?)[] Tag((string Name, object? Value)[] props) => [.. props, ("Origin", origin)];
+    private (string, object?)[] Tag((string Name, object? Value)[] props) => [.. props, .. tags];
 }

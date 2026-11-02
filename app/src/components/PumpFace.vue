@@ -1,14 +1,14 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { state, flowTrace, dollars, nowMs, secondsLeft, mmss } from '../sim'
+import { state, flowTrace, dollars, nowMs, secondsLeft, mmss, pumpState } from '../sim'
 
-const sale = computed(() => state.value?.sale)
-const recovery = computed(() => state.value?.recovery && state.value.recovery.kind !== 'CleanStart' ? state.value.recovery : null)
+const sale = computed(() => pumpState.value?.sale)
+const recovery = computed(() => pumpState.value?.recovery && pumpState.value!.recovery.kind !== 'CleanStart' ? pumpState.value!.recovery : null)
 const showRecovery = ref(true)
 // A new run means a new recovery record; show it again.
 watch(() => state.value?.runId, () => { showRecovery.value = true })
 const pct = computed(() => sale.value && sale.value.ceilingCents > 0 ? Math.min(100, (sale.value.cents / sale.value.ceilingCents) * 100) : 0)
-const maxTrace = computed(() => Math.max(1, ...flowTrace))
+const maxTrace = computed(() => Math.max(1, ...flowTrace.value))
 const left = computed(() => secondsLeft(sale.value, nowMs.value))
 
 const noticeType = computed<'success' | 'warning' | 'error' | 'info'>(() => {
@@ -63,11 +63,11 @@ const holdText: Record<string, string> = {
         <div class="text-body-2">{{ recovery.note }}</div>
       </v-alert>
       <!-- The service strip: which parts hold the pump out of service, and what clears each. Lit only while something does. -->
-      <div v-if="state && !state.pump.inService" class="service-strip mb-2">
+      <div v-if="pumpState && !pumpState.pump.inService" class="service-strip mb-2">
         <v-icon size="18" color="error">mdi-alert-octagon-outline</v-icon>
         <b>OUT OF SERVICE</b>
-        <v-chip v-for="(c, i) in state.pump.serviceCodes" :key="c" size="small" color="error" variant="flat" :title="state.pump.serviceParts[i]">{{ c }}</v-chip>
-        <span class="muted">{{ state.pump.serviceParts.join(' · ') }}</span>
+        <v-chip v-for="(c, i) in pumpState!.pump.serviceCodes" :key="c" size="small" color="error" variant="flat" :title="pumpState!.pump.serviceParts[i]">{{ c }}</v-chip>
+        <span class="muted">{{ pumpState!.pump.serviceParts.join(' · ') }}</span>
       </div>
       <v-alert v-if="sale" :type="noticeType" :title="sale.notice.headline" class="mb-3 notice">
         <div class="text-body-2">{{ sale.notice.detail }}</div>
@@ -77,10 +77,10 @@ const holdText: Record<string, string> = {
         </div>
       </v-alert>
 
-      <div v-if="sale && state" class="face mb-3">
+      <div v-if="sale && pumpState" class="face mb-3">
         <div class="row"><span class="label">THIS SALE</span><span class="big">{{ dollars(sale.cents) }}</span></div>
         <div class="row"><span class="label">GALLONS</span><span class="big">{{ sale.gallons.toFixed(3) }}</span></div>
-        <div class="row"><span class="label">PRICE / GAL ({{ sale.grade }})</span><span class="mid" data-testid="face-price">{{ state.prices[sale.grade] }}</span></div>
+        <div class="row"><span class="label">PRICE / GAL ({{ sale.grade }})</span><span class="mid" data-testid="face-price">{{ pumpState!.prices[sale.grade] }}</span></div>
         <div class="row"><span class="label">FLOW</span><span class="mid">{{ sale.gpm.toFixed(2) }} gpm</span></div>
         <div class="row"><span class="label">CEILING</span><span class="mid">{{ sale.ceilingCents ? dollars(sale.ceilingCents) : '--' }}</span></div>
       </div>
@@ -90,12 +90,12 @@ const holdText: Record<string, string> = {
         <v-chip :color="phaseColor">{{ sale?.phase }}</v-chip>
         <v-chip :color="holdColor">{{ sale?.tender?.toLowerCase() }}: {{ holdText[sale?.hold ?? 'None'] }}</v-chip>
         <v-chip v-if="sale && sale.state !== 'Idle'" variant="outlined">{{ sale.source === 'Station' ? 'set at the station' : sale.source === 'PumpTap' ? 'tapped at the pump' : 'inserted at the pump' }}</v-chip>
-        <v-chip :color="state?.pump.phase === 'Faulted' ? 'error' : undefined">pump {{ state?.pump.phase }}</v-chip>
+        <v-chip :color="pumpState?.pump.phase === 'Faulted' ? 'error' : undefined">pump {{ pumpState?.pump.phase }}</v-chip>
         <v-chip v-if="sale?.faultCode" color="error" variant="flat" :title="sale.faultPart ?? ''">{{ sale.faultCode }}</v-chip>
-        <v-chip v-if="state?.pump.breakawayOpen" color="error">breakaway open</v-chip>
-        <v-chip v-if="state && !state.pump.supplyAvailable" color="warning">no supply</v-chip>
-        <v-chip v-if="state?.pump.pulserDead" color="warning">pulser dead</v-chip>
-        <v-chip v-if="state?.pump.armed?.clamped" color="error" variant="flat">CLAMPED: {{ state?.pump.armed?.clampNote }}</v-chip>
+        <v-chip v-if="pumpState?.pump.breakawayOpen" color="error">breakaway open</v-chip>
+        <v-chip v-if="pumpState && !pumpState.pump.supplyAvailable" color="warning">no supply</v-chip>
+        <v-chip v-if="pumpState?.pump.pulserDead" color="warning">pulser dead</v-chip>
+        <v-chip v-if="pumpState?.pump.armed?.clamped" color="error" variant="flat">CLAMPED: {{ pumpState?.pump.armed?.clampNote }}</v-chip>
         <!-- The pump needs the bank only at authorization and settlement. During a sale a dead link changes nothing on the hose. -->
         <v-chip v-if="state && state.network.mode !== 'Up'" color="warning" prepend-icon="mdi-lan-disconnect"
                 :title="sale?.state === 'Fueling' ? 'fuel keeps flowing on the token; settlement will queue' : 'authorizations will fail until the link is back'">
@@ -112,9 +112,9 @@ const holdText: Record<string, string> = {
       <div class="kv">
         <b>sale</b><span>{{ sale?.saleId }} {{ sale?.cardName ?? '' }}</span>
         <b>last</b><span>{{ sale?.lastMessage ?? '' }}</span>
-        <b>fault</b><span :class="{ 'text-error': state?.pump.fault }">{{ state?.pump.fault ?? 'none' }}</span>
-        <b>totalizer</b><span>{{ state?.pump.totalizerGallons.toFixed(3) }} gal, sealed, owned by the dispenser</span>
-        <b>armed</b><span>{{ state?.pump.armed ? `${state.pump.armed.saleId} ceiling ${dollars(state.pump.armed.ceilingCents)}, max ${state.pump.armed.maxGallons.toFixed(1)} gal` : 'no authorization held' }}</span>
+        <b>fault</b><span :class="{ 'text-error': pumpState?.pump.fault }">{{ pumpState?.pump.fault ?? 'none' }}</span>
+        <b>totalizer</b><span>{{ pumpState?.pump.totalizerGallons.toFixed(3) }} gal, sealed, owned by the dispenser</span>
+        <b>armed</b><span>{{ pumpState?.pump.armed ? `${pumpState!.pump.armed.saleId} ceiling ${dollars(pumpState!.pump.armed.ceilingCents)}, max ${pumpState!.pump.armed.maxGallons.toFixed(1)} gal` : 'no authorization held' }}</span>
       </div>
     </v-card-text>
   </v-card>

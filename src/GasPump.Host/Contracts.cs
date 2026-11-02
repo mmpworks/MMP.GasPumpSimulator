@@ -5,19 +5,17 @@ using GasPump.Security;
 
 namespace GasPump.Host;
 
-/// <summary>The JSON the UI sees. One shape for the REST snapshot and the socket push.</summary>
+/// <summary>The JSON the UI sees. One shape for the REST snapshot and the socket push. Site-wide fields at the top, one entry per pump under <c>pumps</c>.</summary>
 public static class Contracts
 {
-    public static object State(Simulation sim, SimulationHost? host = null, StationServer? station = null, DispenserProcess? process = null, StationIdentity? identity = null)
+    public static object State(Simulation sim, SimulationHost? host = null, StationServer? station = null, IReadOnlyList<DispenserProcess>? processes = null, StationIdentity? identity = null)
     {
-        var s = sim.Snapshot();
-        var link = sim.Link;
         var who = identity ?? StationIdentity.Default;
         return new
         {
             type = "state",
             strategy = sim.StrategyName,
-            pumpId = sim.Options.PumpId,
+            pumpCount = sim.Points.Count,
             station = new
             {
                 name = who.Name,
@@ -28,36 +26,8 @@ public static class Contracts
                 custodyPath = sim.CustodyPath,
                 estopActive = host?.EStopActive ?? false,
                 estopAt = host?.EStopAt,
-                custodyLinesPublished = sim.DispenserCustodyLines,
-                custodyLinesReceived = station?.LinesReceived ?? 0,
-                custodyCopyPath = station?.CopyPath,
-                custodyCopyRunId = station?.RunId,
             },
-            dispenser = new
-            {
-                link = link.Kind,
-                connected = link.Connected,
-                pid = link.RemotePid,
-                runId = link.RemoteRunId,
-                custodyPath = link.RemoteCustodyPath,
-                framesSent = link.FramesSent,
-                framesReceived = link.FramesReceived,
-                custodyLines = link.CustodyLines,
-                lastSeqSent = link.LastSeqSent,
-                lastSeqReceived = link.LastSeqReceived,
-                gaps = link.Gaps,
-                duplicates = link.Duplicates,
-                heartbeatAt = link.LastHeartbeatAt,
-                peerStatus = link.PeerStatus,
-                peerAlive = link.PeerAliveNow,
-                port = process?.Port ?? sim.Options.Dispenser?.Port,
-                processRunning = process?.Running ?? sim.DispenserIsLocal,
-                external = process?.External ?? false,
-                lastExit = process?.LastExit,
-            },
-            sale = Sale(s),
-            // While the E-stop holds, the forecourt has no power: the pump is out of service whatever its last view said.
-            pump = Pump(host?.EStopActive == true ? sim.View with { Service = EStopStatus } : sim.View),
+            pumps = sim.Points.Select(p => PumpEntry(sim, p, host, station, processes?.FirstOrDefault(x => x.Number == p.Number))).ToArray(),
             network = new { mode = sim.Network.Mode.ToString(), latencyMs = sim.Network.Latency.TotalMilliseconds, lateResponseMs = sim.Network.LateResponse.TotalMilliseconds, flapFailureRate = sim.Network.FlapFailureRate },
             pendingCompletions = sim.Gateway.PendingCompletions.Select(p => new { p.SaleId, cents = p.Final.Cents }),
             pending = sim.Gateway.Pending.Select(p => new { p.SaleId, kind = p.Kind.ToString(), cents = p.Final.Cents }),
@@ -77,7 +47,6 @@ public static class Contracts
             },
             now = sim.Clock.GetUtcNow(),
             runId = sim.RunId,
-            recovery = Recovery(sim.LastRecovery),
             custody = new { path = sim.CustodyPath, journalPath = sim.JournalPath },
             limits = new
             {
@@ -86,14 +55,55 @@ public static class Contracts
                 maxMinutes = sim.Options.HardLimits.MaxSaleDuration.TotalMinutes,
                 maxGpm = sim.Options.HardLimits.MaxFlow.GallonsPerMinuteValue,
             },
-            // What the pump bills by, as the pump face shows it. The station's own board stands in until a dispenser has answered.
-            prices = Display(sim.View.Prices is { } inForce ? new Pricing(inForce) : sim.Prices),
             // The station's posted board in mills, for the admin panel's fields.
             priceBoard = sim.Prices.TenthCentsPerGallon.ToDictionary(kv => kv.Key.ToString(), kv => kv.Value),
-            // False while the island still bills by an older board: a write refused, unanswered, or waiting for a delivery to end.
-            pricesInSync = sim.View.Prices is null || sim.Prices.SameAs(new Pricing(sim.View.Prices)),
-            totals = sim.LastTotals is { } t ? Totals(t) : null,
             ledgerOk = sim.Ledger.Verify() == 0,
+        };
+    }
+
+    /// <summary>One pump as the station knows it: its sale, its island's view, its link and process, what the last restart did about it, its totals, and the prices it bills by.</summary>
+    private static object PumpEntry(Simulation sim, FuellingPoint p, SimulationHost? host, StationServer? station, DispenserProcess? process)
+    {
+        var link = p.Link;
+        var copy = station?.Copy(p.Number);
+        return new
+        {
+            number = p.Number,
+            pumpId = p.PumpId,
+            node = PumpNodes.Of(p.PumpId).ToString(),
+            sale = Sale(p.Snapshot()),
+            // While the E-stop holds, the forecourt has no power: the pump is out of service whatever its last view said.
+            pump = Pump(host?.EStopActive == true ? p.View with { Service = EStopStatus } : p.View),
+            dispenser = new
+            {
+                link = link.Kind,
+                connected = link.Connected,
+                pid = link.RemotePid,
+                runId = link.RemoteRunId,
+                custodyPath = link.RemoteCustodyPath,
+                framesSent = link.FramesSent,
+                framesReceived = link.FramesReceived,
+                custodyLines = link.CustodyLines,
+                lastSeqSent = link.LastSeqSent,
+                lastSeqReceived = link.LastSeqReceived,
+                gaps = link.Gaps,
+                duplicates = link.Duplicates,
+                heartbeatAt = link.LastHeartbeatAt,
+                peerStatus = link.PeerStatus,
+                peerAlive = link.PeerAliveNow,
+                port = process?.Port ?? sim.Options.DispenserFor(p.Number)?.Port,
+                processRunning = process?.Running ?? p.DispenserIsLocal,
+                external = process?.External ?? false,
+                lastExit = process?.LastExit,
+            },
+            // The station's copy of this pump's chain.
+            copy = new { path = copy?.Path, linesReceived = copy?.Lines ?? 0, runId = copy?.RunId, linesPublished = p.DispenserCustodyLines },
+            recovery = Recovery(p.LastRecovery),
+            totals = p.LastTotals is { } t ? Totals(t) : null,
+            // What the pump bills by, as the pump face shows it. The station's own board stands in until a dispenser has answered.
+            prices = Display(p.View.Prices is { } inForce ? new Pricing(inForce) : sim.Prices),
+            // False while the island still bills by an older board: a write refused, unanswered, or waiting for a delivery to end.
+            pricesInSync = p.View.Prices is null || sim.Prices.SameAs(new Pricing(p.View.Prices)),
         };
     }
 
@@ -111,10 +121,12 @@ public static class Contracts
 
     private static readonly ServiceStatus EStopStatus = new([DiagnosticCodes.StationEStop.Code]);
 
-    /// <summary>The pump as the station knows it. Same shape whether the dispenser is a mailbox away or a socket away.</summary>
-    public static object Pump(DispenserView v) => new
+    /// <summary>The pump as the station knows it. Same shape whether the dispenser is a mailbox away or a socket away. <paramref name="pump"/> is set on a push, so the UI knows which tab it is for.</summary>
+    public static object Pump(DispenserView v, int? pump = null) => new
     {
         type = "pump",
+        pump,
+        pumpId = v.PumpId,
         phase = v.Phase,
         faultCode = v.FaultCode,
         supplyAvailable = v.SupplyAvailable,
@@ -138,9 +150,11 @@ public static class Contracts
         prices = v.Prices?.ToDictionary(kv => kv.Key.ToString(), kv => kv.Value),
     };
 
+    /// <summary>The sale on one pump's screen. The sale id names the pump; <c>pump</c> repeats it as a number for the UI.</summary>
     public static object Sale(SaleSnapshot s) => new
     {
         type = "sale",
+        pump = SaleIds.PumpOf(s.SaleId),
         s.SaleId,
         state = s.State.ToString(),
         s.CardName,
@@ -182,16 +196,18 @@ public static class Contracts
         r.Note,
     };
 
-    public static object Log(LogLine l, string origin) => new
+    /// <summary><paramref name="pump"/> is the pump the line is about, or null for a line about the site. The Origin and Pump properties are the record's own and are not repeated in <c>props</c>.</summary>
+    public static object Log(LogLine l, string origin, int? pump) => new
     {
         type = "log",
         origin,
+        pump,
         at = l.At,
         l.Source,
         l.Message,
         severity = l.Severity.ToString(),
-        props = l.Props.Where(p => p.Key != "Origin").ToDictionary(p => p.Key, p => p.Value?.ToString()),
+        props = l.Props.Where(p => p.Key is not ("Origin" or "Pump")).ToDictionary(p => p.Key, p => p.Value?.ToString()),
     };
 
-    public static object Ledger(LedgerEntry e, string origin) => new { type = "ledger", origin, e.Seq, e.At, e.Kind, e.Detail, hash = e.Hash[..12], prev = e.PrevHash[..12] };
+    public static object Ledger(LedgerEntry e, string origin, int? pump) => new { type = "ledger", origin, pump, e.Seq, e.At, e.Kind, e.Detail, hash = e.Hash[..12], prev = e.PrevHash[..12] };
 }

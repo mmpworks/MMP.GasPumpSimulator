@@ -34,7 +34,8 @@ if (int.TryParse(Environment.GetEnvironmentVariable("GASPUMP_DISPENSER_POOL_MAX"
 
 var clock = TimeProvider.System;
 var ikm = CustodyKeyFile.Load(logDir);
-var heraldLogPath = Path.Combine(logDir, $"dispenser-{DateTime.Now:yyyyMMdd-HHmmss}.ndjson");
+// Named by pump as well as time: two islands start in the same second when the station starts them both.
+var heraldLogPath = Path.Combine(logDir, $"dispenser-{pumpId}-{DateTime.Now:yyyyMMdd-HHmmss}.ndjson");
 
 IDispatchStrategy dispatch = strategyName switch
 {
