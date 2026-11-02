@@ -356,12 +356,14 @@ public class PumpTests
     public void Nozzle_lift_without_authorization_opens_nothing()
     {
         var rig = new Rig();
-        Assert.False(rig.Pump.LiftNozzle());
+        // With no authorization the lift is a call: the station hears it, and the valve stays shut.
+        Assert.True(rig.Pump.LiftNozzle());
+        Assert.Equal(PumpPhase.Calling, rig.Pump.Phase);
         rig.Pump.InsertSpout();
         Assert.False(rig.Pump.SqueezeLever().Ok);
         var t = rig.Pump.Tick(Tick);
         Assert.Equal(Volume.Zero, t.Volume);
-        Assert.Contains(rig.Ledger.Snapshot(), e => e.Kind == "nozzle.lift.ignored");
+        Assert.Contains(rig.Ledger.Snapshot(), e => e.Kind == "nozzle.lift.calling");
     }
 
     [Fact]

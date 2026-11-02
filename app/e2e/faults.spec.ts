@@ -31,6 +31,42 @@ test.describe('faults and their repairs', () => {
     await tapCardAtPump(page, 'DebitGoodPin', 'Debit')
   })
 
+  test('the operator closes the pump for sales, both readers refuse, and opening it admits the next card', async ({ page, request }) => {
+    const d = dispenser(page)
+    const s = station(page)
+    await s.getByRole('tab', { name: /Power/ }).click()
+    await s.getByRole('button', { name: 'Close pump for sales' }).click()
+    await expect(face(page)).toContainText('Out of service: pump switch')
+    await expect.poll(async () => (await state(request)).pump.phase).toBe('Closed')
+    await d.getByRole('button', { name: 'Tap' }).click()
+    await expect(d.locator('.reader-note')).toContainText(/out of service/i)
+    expect((await state(request)).openHolds).toHaveLength(0)
+
+    // The lift button is shut while the pump is closed; the unit tests cover a lift that arrives anyway.
+    await expect(d.getByRole('button', { name: /^Lift nozzle/ })).toBeDisabled()
+
+    await s.getByRole('button', { name: 'Open pump for sales' }).click()
+    await expect.poll(async () => (await state(request)).pump.inService).toBe(true)
+    await tapCardAtPump(page, 'Good')
+  })
+
+  test('a lifted nozzle with no sale is a calling pump, and a card then arms it without a second lift', async ({ page, request }) => {
+    const d = dispenser(page)
+    await d.getByRole('button', { name: /^Lift nozzle/ }).click()
+    await expect.poll(async () => (await state(request)).pump.phase).toBe('Calling')
+    await expect(face(page)).toContainText('Nozzle lifted')
+    await tapCardAtPump(page, 'Good')
+    await expect.poll(async () => (await state(request)).pump.phase).toBe('Armed')
+    expect((await state(request)).sale.nozzleOut).toBe(true)
+    await d.getByRole('button', { name: /^Regular / }).click()
+    await d.getByRole('button', { name: 'Insert spout' }).click()
+    await d.getByRole('button', { name: /^Squeeze lever/ }).click()
+    await expect(face(page)).toContainText('Fueling')
+    await d.getByRole('button', { name: 'Hang nozzle' }).click()
+    await expect(face(page)).toContainText('Thank you', { timeout: 30_000 })
+    expect((await state(request)).sale.hold).toBe('Settled')
+  })
+
   test('a dry tank while idle closes the reader and the counter until the supply is back', async ({ page, request }) => {
     const d = dispenser(page)
     await d.getByRole('button', { name: 'Tank runs dry' }).click()

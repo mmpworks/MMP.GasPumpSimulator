@@ -116,7 +116,7 @@ public sealed class DispenserServer : IDisposable
         if (env.SaleId is not null) _lastSaleId = env.SaleId;
         var events = Dispenser.Handle(env.M, env.SaleId ?? _lastSaleId);
         // A part broke or was fixed without a ledger entry (supply, pulser): the state file must still know.
-        if (env.M is PumpMessage.Supply or PumpMessage.PulserDead or PumpMessage.DriveOff or PumpMessage.ResetBreakaway) SaveState();
+        if (env.M is PumpMessage.Supply or PumpMessage.PulserDead or PumpMessage.DriveOff or PumpMessage.ResetBreakaway or PumpMessage.CloseForSales or PumpMessage.OpenForSales) SaveState();
         foreach (var e in events) Send(new LinkFrame(LinkFrame.TagEvent, E: e));
         var view = Dispenser.View(RunId, Environment.ProcessId, CustodyPath);
         // Every non-tick message and every tick that changed something. An idle tick sends nothing.

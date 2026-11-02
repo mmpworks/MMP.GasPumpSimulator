@@ -170,6 +170,9 @@ export const api = {
   custodyInfo: async () => (await fetch(`${HOST}/api/custody`)).json() as Promise<{ runId: string; path: string | null; journalPath: string | null; ikmPath: string; files: string[]; dispenserPath: string | null; dispenserRunId: string | null }>,
   verifyCustody: async () => (await (await fetch(`${HOST}/api/custody/verify`, { method: 'POST' })).json()) as { ok: boolean; failureAtSeq: number | null; reason: string | null; lines: number; status: string },
   fault: (kind: 'tankout' | 'tankback' | 'pulserdead' | 'pulserfix' | 'driveoff' | 'breakawayreset') => post(`/api/fault/${kind}`),
+  /** The operator's pump switch. Closed is a state, never a fault. */
+  closePump: (by = 'operator') => post('/api/station/pump/close', { by }),
+  openPump: (by = 'operator') => post('/api/station/pump/open', { by }),
   estop: (pressedBy: string) => post('/api/station/estop', { pressedBy }),
   estopReset: async () => (await (await fetch(`${HOST}/api/station/reset`, { method: 'POST' })).json()) as { estopActive: boolean; recovery: Recovery; runId: string },
   verifyStationCopy: async () => (await (await fetch(`${HOST}/api/station/custody/verify`, { method: 'POST' })).json()) as { ok: boolean; failureAtSeq: number | null; reason: string | null; lines: number },

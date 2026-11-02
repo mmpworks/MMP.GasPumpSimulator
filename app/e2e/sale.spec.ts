@@ -54,7 +54,7 @@ test.describe('a sale through the wire', () => {
     const first = (await state(request)).sale.saleId
     const d = dispenser(page)
     await d.getByRole('button', { name: /^Regular / }).click()
-    await d.getByRole('button', { name: 'Lift nozzle' }).click()
+    await d.getByRole('button', { name: /^Lift nozzle/ }).click()
     await d.getByRole('button', { name: 'Tap' }).click()
     await expect(d.locator('.reader-note')).toContainText('pump in use')
     expect((await state(request)).sale.saleId).toBe(first)

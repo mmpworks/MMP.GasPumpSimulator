@@ -22,6 +22,8 @@ namespace GasPump.Dispatch;
 [JsonDerivedType(typeof(PulserDead), nameof(PulserDead))]
 [JsonDerivedType(typeof(DriveOff), nameof(DriveOff))]
 [JsonDerivedType(typeof(ResetBreakaway), nameof(ResetBreakaway))]
+[JsonDerivedType(typeof(CloseForSales), nameof(CloseForSales))]
+[JsonDerivedType(typeof(OpenForSales), nameof(OpenForSales))]
 public abstract record PumpMessage
 {
     public sealed record Arm(string SaleId, string Token, Grade? Grade) : PumpMessage;
@@ -51,6 +53,10 @@ public abstract record PumpMessage
     public sealed record DriveOff : PumpMessage;
     /// <summary>The attendant reconnected the coupling.</summary>
     public sealed record ResetBreakaway : PumpMessage;
+    /// <summary>The operator takes the pump out of sales. The pump works; it refuses every arm until opened. A delivery in progress finishes first.</summary>
+    public sealed record CloseForSales(string By) : PumpMessage;
+    /// <summary>The operator puts the pump back into sales.</summary>
+    public sealed record OpenForSales(string By) : PumpMessage;
 }
 
 /// <summary>What the sale worker sends the payment worker.</summary>

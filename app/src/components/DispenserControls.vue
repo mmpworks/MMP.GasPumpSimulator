@@ -90,7 +90,7 @@ const estop = computed(() => !!state.value?.station.estopActive)
         <v-chip :color="spoutIn ? 'success' : undefined">{{ spoutIn ? 'spout in fill pipe' : 'spout out' }}</v-chip>
       </div>
       <div class="row-wrap">
-        <v-btn v-if="!nozzleOut" :disabled="!armed || offline" prepend-icon="mdi-gas-station" @click="api.lift()">Lift nozzle</v-btn>
+        <v-btn v-if="!nozzleOut" :disabled="offline || outOfService" prepend-icon="mdi-gas-station" @click="api.lift()">Lift nozzle{{ armed ? '' : ' (calls for authorization)' }}</v-btn>
         <v-btn v-else :disabled="offline" prepend-icon="mdi-gas-station-off" @click="api.hang()">Hang nozzle{{ pump?.poured ? ' (ends sale)' : '' }}</v-btn>
         <v-btn v-if="!spoutIn" :disabled="!armed || !nozzleOut || offline" prepend-icon="mdi-car" @click="api.insertSpout()">Insert spout</v-btn>
         <v-btn v-else :disabled="offline" prepend-icon="mdi-car-off" @click="api.withdrawSpout()">Withdraw spout</v-btn>

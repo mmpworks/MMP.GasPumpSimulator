@@ -133,6 +133,9 @@ app.MapPost("/api/station/reset", () =>
     simHost.Reset();
     return Results.Json(new { estopActive = simHost.EStopActive, recovery = Contracts.Recovery(Sim().LastRecovery), runId = Sim().RunId }, json);
 });
+// The operator's pump switch. Closed is a state, never a fault: the pump works and refuses sales until opened.
+app.MapPost("/api/station/pump/close", (PumpSwitchRequest? r) => { Sim().ClosePump(r?.By ?? "operator"); return Results.Ok(); });
+app.MapPost("/api/station/pump/open", (PumpSwitchRequest? r) => { Sim().OpenPump(r?.By ?? "operator"); return Results.Ok(); });
 app.MapGet("/api/station/custody", () => Results.Json(new { station.RunId, copyPath = station.CopyPath, linesReceived = station.LinesReceived, replayedDuplicatesDropped = station.Duplicates, dispenserLines = Sim().DispenserCustodyLines }, json));
 app.MapPost("/api/station/custody/verify", () =>
 {
@@ -246,6 +249,7 @@ app.Run();
 record CardRequest(string Name, Grade? Grade, Tender? Tender, CardSource? Source);
 record CodeRequest(string? Code);
 record EStopRequest(string? PressedBy);
+record PumpSwitchRequest(string? By);
 record CashRequest(long Cents, Grade? Grade);
 record AdminRequest(string? Pin, Tender Tender, long Cents);
 record GradeRequest(Grade Grade);

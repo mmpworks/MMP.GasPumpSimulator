@@ -68,7 +68,7 @@ export async function enterCode(page: Page, code: string) {
 export async function startFueling(page: Page, grade = 'Regular') {
   const d = dispenser(page)
   await d.getByRole('button', { name: new RegExp(`^${grade} `) }).click()
-  await d.getByRole('button', { name: 'Lift nozzle' }).click()
+  await d.getByRole('button', { name: /^Lift nozzle/ }).click()
   await d.getByRole('button', { name: 'Insert spout' }).click()
   await d.getByRole('button', { name: /^Squeeze lever/ }).click()
   await expect(face(page)).toContainText('Fueling')

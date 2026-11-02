@@ -196,7 +196,8 @@ public class StateMachineTests
     public void Illegal_events_are_logged_and_ignored()
     {
         var m = Machine();
-        var c = m.Apply(new SaleEvent.NozzleLifted("S1"));
+        // A nozzle lift in Idle is legal now (the pump is calling), so the illegal event here is flow with no sale.
+        var c = m.Apply(new SaleEvent.FlowStarted("S1"));
         Assert.Equal(SaleState.Idle, m.State);
         Assert.Single(c);
         Assert.Contains("illegal", ((SaleCommand.Log)c[0]).Message);

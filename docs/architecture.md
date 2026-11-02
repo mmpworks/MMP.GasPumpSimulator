@@ -87,7 +87,7 @@ Letting go of the lever, or pulling the nozzle out of the tank, pauses the flow 
 
 Fuel flows only when four things are true at once, and the pump controller owns all four: the pump is armed from a verified token, a grade is selected, the nozzle is out of the boot and inserted in the fill pipe (tank or can), and the lever is held.
 
-1. **Lift** takes the nozzle out of the boot. Nothing opens.
+1. **Lift** takes the nozzle out of the boot. Nothing opens. With no sale behind it, the pump moves to `Calling`: the screen says "Nozzle lifted. Insert or tap your card, or pay the cashier, to begin", and a card presented now arms a pump that already has the nozzle out, so the sale skips the lift step. Hanging up withdraws the call.
 2. **Insert** puts the spout in the fill pipe and presses the bellows interlock. Nothing opens.
 3. **Squeeze** opens the valve if every interlock passes. The first squeeze is the first pour, and `Fueling` begins here, never at the lift.
 4. **Release** shuts the valve. The sale stays open for a minute. Squeeze again as often as you like inside it; a minute of silence finishes the sale for the fuel delivered. The grade is locked after the first drop.
@@ -333,6 +333,10 @@ Every failed part raises a diagnostic code from `docs/diagnostics.md`, and the c
 The tank gauge's Fuel Out alarm reaches the pump as the first row; the gauge entry `TANK.FUELOUT` is in the ledger beside it, so the record shows cause and effect.
 
 The E-stop is the odd one out. The pump never receives it as a message, because it is the power leaving, so the order of operations does the work. The site controller, outside the classified area and still powered, writes `station.estop` to the ledger and the custody file, saves one last snapshot with `StopReason = "ESTOP"`, and only then drops the pump. The cashier's reset builds a new Simulation on that snapshot, and because the snapshot was taken after the last tick, the recovery reports nothing unrecorded. A bare power loss cannot do any of that, which is why the recovery note for it says "likely under-recorded" and the note for an E-stop does not.
+
+### The operator's pump switch
+
+`Closed` is a pump phase and a service condition at once, and it is never a fault. The station's pump switch sends `CloseForSales`; an idle pump moves to `Closed` now, a pump mid-delivery finishes the delivery and then closes, and a faulted pump remembers the close and shows it once the part is fixed. While closed, `Conditions()` yields `PUMP.OPR.CLOSED` first, so every arm is refused with that code, the reader and the counter both say "out of service: pump switch", and the condition is saved with the others, so a restart of either process brings the pump back closed. `OpenForSales` returns it to `Disarmed`. The two phases together, `Calling` and `Closed`, complete the forecourt standard's nine fuelling-point states; the mapping is in `docs/glossary.md`.
 
 ### Service conditions
 

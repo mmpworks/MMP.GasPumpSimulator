@@ -98,7 +98,14 @@ public sealed class Dispenser
         {
             case PumpMessage.Arm arm:
                 var (ok, reason, armed) = Pump.Arm(arm.SaleId, arm.Token, arm.Grade);
-                if (ok) { Log.Write("pump", "armed {Ceiling} max {MaxVolume} ({ClampNote})", ("Ceiling", armed!.Ceiling), ("MaxVolume", armed.MaxVolume), ("ClampNote", armed.ClampNote)); events.Add(new SaleEvent.PumpArmed(arm.SaleId, armed.Ceiling, armed.MaxVolume)); }
+                if (ok)
+                {
+                    Log.Write("pump", "armed {Ceiling} max {MaxVolume} ({ClampNote})", ("Ceiling", armed!.Ceiling), ("MaxVolume", armed.MaxVolume), ("ClampNote", armed.ClampNote));
+                    events.Add(new SaleEvent.PumpArmed(arm.SaleId, armed.Ceiling, armed.MaxVolume));
+                    // A pump that was calling already has the nozzle out, and maybe the spout in. The new sale needs to hear both.
+                    if (Pump.NozzleLifted) events.Add(new SaleEvent.NozzleLifted(arm.SaleId));
+                    if (Pump.SpoutInserted) events.Add(new SaleEvent.SpoutInserted(arm.SaleId));
+                }
                 else { Log.Warn("pump", "REFUSED arm for {SaleId}: {Reason}", ("SaleId", arm.SaleId), ("Reason", reason)); events.Add(new SaleEvent.PumpRefused(arm.SaleId, reason)); }
                 break;
 
@@ -135,9 +142,20 @@ public sealed class Dispenser
 
             case PumpMessage.Hang:
                 var armedBefore = Pump.Armed is not null;
+                var wasCalling = Pump.Phase == PumpPhase.Calling;
                 var ended = Pump.HangNozzle();
-                // After a pour this ends the delivery. Before a pour the sale machine only notes it.
-                if (ended || armedBefore) events.Add(new SaleEvent.NozzleHung(saleId));
+                // After a pour this ends the delivery. Before a pour, or while the pump was only calling, the sale machine notes it.
+                if (ended || armedBefore || wasCalling) events.Add(new SaleEvent.NozzleHung(saleId));
+                break;
+
+            case PumpMessage.CloseForSales close:
+                Pump.CloseForSales(close.By);
+                Log.Write("pump", "{Code} closed for sales by {By}; {Phase}", ("Code", DiagnosticCodes.PumpClosed.Code), ("By", close.By), ("Phase", Pump.Phase));
+                break;
+
+            case PumpMessage.OpenForSales open:
+                Pump.OpenForSales(open.By);
+                Log.Write("pump", "{Code} opened for sales by {By}", ("Code", DiagnosticCodes.PumpClosed.Code), ("By", open.By));
                 break;
 
             case PumpMessage.Close close:
@@ -236,6 +254,7 @@ public sealed class Dispenser
             if (code == DiagnosticCodes.PumpHoseBreakaway.Code) Hydraulics.BreakawaySeparated = true;
             else if (code == DiagnosticCodes.PumpSupplyNoFlow.Code) Hydraulics.SupplyAvailable = false;
             else if (code == DiagnosticCodes.PumpMeterNoPulse.Code) Meter.PulserDead = true;
+            else if (code == DiagnosticCodes.PumpClosed.Code) Pump.CloseForSales("restored from the saved state");
             else foreach (var stage in Pump.Stages) if (stage.TryRestoreCondition(code)) break;
         }
     }

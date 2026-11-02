@@ -7,7 +7,7 @@ namespace GasPump.Core;
 /// sale starts clean. Every other action names a repair, and until it happens
 /// the pump is out of service.
 /// </summary>
-public enum ServiceAction { NextArm, AttendantReset, SupplyRestored, PulserRepaired, LinkRestored, CashierReset }
+public enum ServiceAction { NextArm, AttendantReset, SupplyRestored, PulserRepaired, LinkRestored, CashierReset, OperatorOpen }
 
 /// <summary>The one sentence per service action. The driver's notice and the ledger's refusal line read from the same table.</summary>
 public static class ServiceActions
@@ -19,6 +19,7 @@ public static class ServiceActions
         ServiceAction.PulserRepaired => "The meter must be repaired before the next sale.",
         ServiceAction.LinkRestored => "The station is waiting for this pump to reconnect.",
         ServiceAction.CashierReset => "The cashier must reset the station.",
+        ServiceAction.OperatorOpen => "The operator closed this pump for sales. The cashier can open it again.",
         _ => "The next sale starts clean.",
     };
 }
@@ -89,6 +90,10 @@ public static class DiagnosticCodes
     public static readonly DiagnosticCode PumpHoseBreakaway = new("PUMP.HOSE.BREAKAWAY", "hose breakaway coupling",
         "coupling separated, both halves sealed: drive-off or hose strike; attendant reset required",
         ServiceAction.AttendantReset);
+    /// <summary>A state, never a fault. The operator took the pump out of sales; every part works. Matches the forecourt standard's Closed state.</summary>
+    public static readonly DiagnosticCode PumpClosed = new("PUMP.OPR.CLOSED", "pump switch",
+        "closed for sales by the operator: every part works, every arm is refused until the operator opens it",
+        ServiceAction.OperatorOpen);
     public static readonly DiagnosticCode StationEStop = new("STATION.ESTOP", "station emergency stop",
         "emergency shutoff pressed: power removed from every dispenser and every submersible pump; cashier reset required",
         ServiceAction.CashierReset);
@@ -102,7 +107,7 @@ public static class DiagnosticCodes
     public static IReadOnlyList<DiagnosticCode> All { get; } =
     [
         PumpSupplyNoFlow, PumpMeterNoPulse, PumpMeterOverPulse, PumpMeterStray, PumpCeilingOverrun, PumpMaxTime,
-        PumpHoseBreakaway, StationEStop, TankFuelOut, LinkDispenserLost,
+        PumpHoseBreakaway, PumpClosed, StationEStop, TankFuelOut, LinkDispenserLost,
     ];
 
     public static DiagnosticCode? Find(string code) => All.FirstOrDefault(c => c.Code == code);

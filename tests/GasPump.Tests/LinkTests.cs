@@ -220,6 +220,30 @@ public sealed class LinkTests : IDisposable
     }
 
     /// <summary>The port the last dispenser held can sit in TIME_WAIT for a moment after it closed. Retry the bind briefly.</summary>
+    [Fact]
+    public void A_closed_pump_stays_closed_across_a_dispenser_restart_because_the_island_saved_it()
+    {
+        var dispenser = NewDispenser();
+        var port = dispenser.Port;
+        using var station = NewStation(port, "STN-1");
+        WaitFor(() => station.Link.Connected && station.View.Phase != "Offline", TimeSpan.FromSeconds(5), () => "station never connected\n" + Tail(station));
+
+        station.ClosePump("operator");
+        WaitFor(() => station.View.Phase == "Closed", TimeSpan.FromSeconds(5), () => "never closed\n" + Tail(station));
+        Assert.False(station.TryPresentCard("Good").Ok);
+
+        dispenser.Dispose();                                     // the island reboots
+        using var back = NewDispenserOnSamePort(port);
+        WaitFor(() => station.Link.Connected && station.View.Phase == "Closed", TimeSpan.FromSeconds(8), () => $"closed state lost on restart: {station.View.Phase} {station.View.Service}\n" + Tail(station));
+        Assert.True(station.View.Service.Holds(DiagnosticCodes.PumpClosed.Code));
+        Assert.False(station.TryPresentCard("Good").Ok);
+
+        station.OpenPump("cashier");
+        WaitFor(() => station.View.Service.InService, TimeSpan.FromSeconds(5), () => "never opened\n" + Tail(station));
+        Assert.True(TryPresent(station, "Good").Ok);
+        WaitFor(() => station.Snapshot().State == SaleState.ReadyToPump, TimeSpan.FromSeconds(5), () => "never armed after opening\n" + Tail(station));
+    }
+
     private DispenserServer NewDispenserOnSamePort(int port)
     {
         var sw = Stopwatch.StartNew();
