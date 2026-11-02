@@ -3,18 +3,18 @@ using MMP.AsyncProxy;
 namespace GasPump.Dispatch;
 
 /// <summary>
-/// The third answer, and the point of the exercise: the 2008 machine without
-/// the 2008 threads. Each worker is an iterator-driven state machine from
-/// MMP.AsyncProxy. Its loop yields a future for the next message, the future
-/// completes when a message is posted, and the loop resumes on a pool thread
-/// to run the handler. A worker with nothing to do holds no thread, exactly
-/// as the Channel strategy does, but every piece here would compile for
-/// .NET 3.5: futures, promises, and a C# 2 iterator standing in for async.
+/// The third strategy: the 2008 machine without the 2008 threads. Each worker
+/// is an iterator-driven state machine from MMP.AsyncProxy. Its loop yields a
+/// future for the next message. The future completes when a message is posted,
+/// and the loop resumes on a pool thread to run the handler. A worker with
+/// nothing to do holds no thread, the same as in the Channel strategy. Every
+/// piece here would compile for .NET 3.5: futures, promises, and a C# 2
+/// iterator standing in for async.
 ///
-/// Same three rules as the interface. One message at a time per worker,
-/// because the loop is sequential. Timers post, they never run code. Workers
-/// share nothing. Time still comes from the TimeProvider so a test can drive
-/// it from a fake clock; only the waiting changed.
+/// The three rules from the interface apply. A worker handles one message at a
+/// time, because the loop is sequential. Timers post and never run code.
+/// Workers share nothing. Time still comes from the TimeProvider, so a test can
+/// drive it from a fake clock. Only the waiting changed.
 /// </summary>
 public sealed class AsyncProxyDispatch(TimeProvider clock) : IDispatchStrategy
 {
@@ -75,9 +75,9 @@ public sealed class AsyncProxyDispatch(TimeProvider clock) : IDispatchStrategy
     /// <summary>
     /// A bounded queue whose consumer waits on a promise instead of a thread.
     /// When the worker asks for the next item and the queue is empty, it gets
-    /// a pending future; the next Post completes that future with the item
-    /// and the worker's loop resumes on the pool. Count is posted-and-not-yet-
-    /// handled, which includes the item a handler holds right now.
+    /// a pending future. The next Post completes that future with the item,
+    /// and the worker's loop resumes on the pool. Count is the number of items
+    /// posted and not yet handled, which includes the item a handler holds now.
     /// </summary>
     private sealed class Mailbox<T>(string name, int capacity) : IMailbox<T>, IDisposable
     {
@@ -92,7 +92,7 @@ public sealed class AsyncProxyDispatch(TimeProvider clock) : IDispatchStrategy
 
         public void Post(T item)
         {
-            // Bounded: a full box makes the producer wait, as the other two strategies do.
+            // Bounded: a full box makes the producer wait. The other two strategies do the same.
             while (!TryPost(item))
             {
                 if (_closed) return;
@@ -111,7 +111,7 @@ public sealed class AsyncProxyDispatch(TimeProvider clock) : IDispatchStrategy
                 else _items.Enqueue(item);
                 Interlocked.Increment(ref _pending);
             }
-            // Outside the lock. The promise runs continuations on the pool, so this returns at once.
+            // Outside the lock. The promise runs continuations on the pool, so this returns right away.
             wake?.TrySetResult(item);
             return true;
         }
@@ -157,8 +157,8 @@ public sealed class AsyncProxyDispatch(TimeProvider clock) : IDispatchStrategy
     }
 
     /// <summary>
-    /// One worker is one iterator. "yield return next" is the await. The
-    /// loop ends when the mailbox is closed and its pending future cancels.
+    /// One worker is one iterator, and "yield return next" is the await. The
+    /// loop ends when the mailbox closes and its pending future cancels.
     /// </summary>
     private sealed class Worker<T> : IWorkerHandle
     {
@@ -179,13 +179,13 @@ public sealed class AsyncProxyDispatch(TimeProvider clock) : IDispatchStrategy
             while (!_stopping)
             {
                 var next = box.DequeueAsync();
-                // Observe, never let a cancelled dequeue fault the loop: that is how the mailbox says "closed".
+                // Observe the future so a cancelled dequeue can't fault the loop. A cancel is how the mailbox says "closed".
                 yield return Futures.Observe(next);
                 if (next.IsCanceled || next.IsFaulted || _stopping) yield break;
 
                 Interlocked.Increment(ref owner._busyHandlers);
                 try { handle(next.Result); }
-                catch (Exception) { /* a handler that throws must not kill the worker; the sale machine logs faults itself */ }
+                catch (Exception) { /* a handler that throws can't kill the worker; the sale machine logs faults itself */ }
                 finally
                 {
                     box.Handled();
@@ -202,7 +202,7 @@ public sealed class AsyncProxyDispatch(TimeProvider clock) : IDispatchStrategy
             if (Interlocked.Exchange(ref _disposed, 1) == 1) return;
             _stopping = true;
             _box.Dispose();
-            // The loop's pending future cancels on close; give the machine a moment to notice.
+            // The loop's pending future cancels on close. Wait up to two seconds for the machine to notice.
             var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(2);
             while (!_loop.IsCompleted && DateTime.UtcNow < deadline) Thread.Yield();
         }

@@ -68,7 +68,7 @@ public sealed class EventLedger(TimeProvider clock)
 /// <summary>
 /// The sealed counter on the side of the pump. It only goes up. Handbook 44
 /// requires one on every dispenser so the books can be checked against the
-/// meter. There is no Reset method, and that is the feature.
+/// meter. There is no Reset method on purpose.
 /// </summary>
 public sealed class Totalizer
 {
@@ -82,7 +82,8 @@ public sealed class Totalizer
 
     /// <summary>
     /// Seed the counter from the journal at start. Allowed once, and only
-    /// upward from zero: a totalizer that could be set lower is no totalizer.
+    /// upward from zero, because a counter that can be set lower can't be
+    /// used to check the books.
     /// </summary>
     public void Restore(Volume journaled)
     {

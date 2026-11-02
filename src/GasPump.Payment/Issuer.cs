@@ -44,7 +44,7 @@ public sealed record Settlement(string SaleId, Money Final, IReadOnlyList<Charge
 public enum AccountStatus { Active, Frozen, LostOrStolen }
 
 /// <summary>
-/// A bank in a dictionary. Every account has a balance, a status, and a
+/// An in-memory bank. Every account has a balance, a status, and a
 /// velocity window. Holds come off the balance at authorization and settle to
 /// the real amount at completion, which is the part that confuses drivers who
 /// see $75 on their statement for a $30 fill.
@@ -73,7 +73,7 @@ public sealed class IssuerSimulator : IIssuer
     private readonly HashSet<string> _voided = new();
     private readonly TimeSpan _velocityWindow = TimeSpan.FromMinutes(10);
 
-    /// <summary>Holds the issuer still has open, by sale id. The books a driver would dispute.</summary>
+    /// <summary>Holds the issuer still has open, by sale id. These are the holds a driver could dispute.</summary>
     public IReadOnlyCollection<string> OpenHolds { get { lock (_gate) return _holds.Keys.ToArray(); } }
 
     public bool Unavailable { get; set; }
@@ -125,7 +125,7 @@ public sealed class IssuerSimulator : IIssuer
             if (acct.Available <= Money.Zero)
                 return IssuerDecision.Decline(DeclineReason.InsufficientFunds, "insufficient funds");
 
-            // Fuel is MCC 5542. Partial approval is the rule, not the exception.
+            // Fuel is MCC 5542, and partial approval is standard for it.
             var granted = Money.Min(hold, acct.Available);
             acct.Available -= granted;
             _holds[saleId] = new Hold(card.Pan, granted);

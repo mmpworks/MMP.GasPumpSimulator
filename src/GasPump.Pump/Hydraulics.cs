@@ -56,7 +56,7 @@ public sealed class Meter
     /// <summary>When true, fuel that moves is not counted. The volume goes to UnmeteredVolume for the fault record.</summary>
     public bool PulserDead { get; set; }
 
-    /// <summary>Fuel that moved while the pulser was dead this sale. Never billed; always in the fault entry.</summary>
+    /// <summary>Fuel that moved while the pulser was dead this sale. It is never billed, and the fault entry records it.</summary>
     public Volume UnmeteredVolume { get; private set; }
 
     public void Register(Volume delivered)

@@ -93,9 +93,9 @@ public class PumpTests
     }
 
     /// <summary>
-    /// A stage that takes the hose in slugs, as an additive injector would: after
-    /// the first three seconds of fuel, 16 oz of its product, then 16 oz of fuel,
-    /// back and forth until its total is delivered.
+    /// A stage that takes the hose in slugs, as an additive injector would. After
+    /// the first three seconds of fuel it delivers 16 oz of its product, then lets
+    /// 16 oz of fuel through, and repeats until its total is delivered.
     /// </summary>
     private sealed class SlugDiverter(Volume total, Volume slug) : IDeliveryStage
     {

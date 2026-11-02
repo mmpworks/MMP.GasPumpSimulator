@@ -7,8 +7,8 @@ using Xunit;
 namespace GasPump.Tests;
 
 /// <summary>
-/// The whole thing, end to end, under every dispatch strategy. One theory,
-/// two rows today, a third when AsyncProxy lands.
+/// The whole system, end to end, under every dispatch strategy. It's one theory
+/// with two rows today. A third row comes when AsyncProxy lands.
 /// </summary>
 public class SimulationTests
 {

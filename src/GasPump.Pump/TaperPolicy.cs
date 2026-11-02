@@ -9,7 +9,8 @@ namespace GasPump.Pump;
 /// cents still move. The controller does the final stop on the cent.
 ///
 /// With a $30 ceiling: full to $24, tapering from $24 to $30, creeping at 8
-/// percent for the last few cents. Change the two numbers to change the feel.
+/// percent for the last few cents. The two numbers set where the taper starts
+/// and how far open the valve stays at the end.
 /// </summary>
 public sealed record TaperPolicy(double TaperStartFraction, double MinimumOpening)
 {

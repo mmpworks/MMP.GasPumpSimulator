@@ -2,7 +2,7 @@
 
 One code per thing that can fail, named by the part. The same code appears in three places for the same event: the Herald debug log (as the `Code` property), the ledger entry (in brackets at the front of the detail), and the custody file (because the ledger and the log categories that carry codes are routed into it). A reader of any one of the three can name the part without the prose.
 
-Form: `SUBSYSTEM.PART.FAULT`, or `SUBSYSTEM.FAULT` when the subsystem is the part. Uppercase, dots, no spaces. The codes are this simulator's own. Vendor forecourt codes are private to each vendor and are not reproduced here.
+Form: `SUBSYSTEM.PART.FAULT`, or `SUBSYSTEM.FAULT` when the subsystem is the part. Uppercase, dots, no spaces. The codes are this simulator's own. Vendor forecourt codes are private to each vendor and aren't reproduced here.
 
 | Code | Part | Meaning | Raised by | Cleared by | What the pump does | What the driver hears |
 |---|---|---|---|---|---|---|

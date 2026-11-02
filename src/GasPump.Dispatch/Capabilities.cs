@@ -4,9 +4,9 @@ namespace GasPump.Dispatch;
 
 /// <summary>
 /// A listener on the station's telemetry: every sale event the sale worker
-/// handled, and every view the dispenser sent. A capability reads; it never
-/// writes to the sale, the pump, or the bank. It has no return value and no
-/// way to post a message back, which is what makes it safe to bolt on.
+/// handled, and every view the dispenser sent. A capability only reads. It
+/// can't write to the sale, the pump, or the bank. It has no return value and
+/// no way to post a message back, which is why it is safe to bolt on.
 ///
 /// A video that plays when fueling starts, a loyalty prompt, a forecourt
 /// display, a metrics exporter: each is one of these.
@@ -26,11 +26,11 @@ public interface IStationCapability
 /// Runs each registered capability on its own worker behind its own bounded
 /// mailbox, fed by <see cref="Publish(SaleEvent)"/> and <see cref="Publish(DispenserView)"/>.
 ///
-/// Isolation, in three rules. A full mailbox drops the message and counts it,
-/// so a slow capability never blocks the sale worker. A capability that
-/// throws is switched off for the rest of the run and the log says so, so a
-/// broken capability never takes the sale down with it. A capability never
-/// receives a handle to anything it could change.
+/// Isolation comes from three rules. A full mailbox drops the message and
+/// counts it, so a slow capability can't block the sale worker. A capability
+/// that throws is switched off for the rest of the run and the log says so, so
+/// a broken capability can't take the sale down with it. A capability receives
+/// no handle to anything it could change.
 /// </summary>
 public sealed class CapabilityHost(IDispatchStrategy dispatch, IEventLog log)
 {
@@ -78,7 +78,7 @@ public sealed class CapabilityHost(IDispatchStrategy dispatch, IEventLog log)
         {
             if (slot.Disabled) continue;
             if (slot.Inbox.TryPost(message)) continue;
-            // Never wait on a capability. The sale worker has a driver standing at the hose.
+            // Never wait on a capability. The sale worker is serving a driver at the hose.
             var dropped = Interlocked.Increment(ref slot.Dropped);
             if (dropped == 1) log.Warn("capability", "{Name} mailbox full, dropping telemetry", ("Name", slot.Capability.Name));
         }

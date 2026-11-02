@@ -14,8 +14,8 @@ namespace GasPump.Payment;
 /// owns this panel still cannot exceed $500 or 50 gallons.
 ///
 /// Changes need the admin PIN. Three wrong PINs lock the panel for a while.
-/// Every attempt is reported through <see cref="Changed"/> so the ledger
-/// has the whole story.
+/// Every attempt is reported through <see cref="Changed"/>, so the ledger
+/// records each one.
 /// </summary>
 public sealed class SiteLimits
 {
@@ -94,7 +94,7 @@ public sealed class SiteLimits
         return (ok, detail);
     }
 
-    /// <summary>For the journal. A reboot must not reset a lockout, or three wrong PINs and a power cycle would be the attack.</summary>
+    /// <summary>For the journal. A reboot must not reset a lockout. If it did, three wrong PINs and a power cycle would get around it.</summary>
     public void Restore(Money creditHold, Money debitHold, int failedPins, DateTimeOffset? lockedUntil)
     {
         lock (_gate)

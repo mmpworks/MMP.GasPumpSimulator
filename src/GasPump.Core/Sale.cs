@@ -18,8 +18,8 @@ public enum SaleState
 
 /// <summary>
 /// Where the driver's money is. The sale state says what the pump is doing;
-/// the hold status says what the bank has. The two move separately, and the
-/// gap between them is where every "I was charged and got no gas" story lives.
+/// the hold status says what the bank has. The two move separately, and a gap
+/// between them is what produces an "I was charged and got no gas" complaint.
 /// </summary>
 public enum HoldStatus
 {
@@ -85,7 +85,7 @@ public enum DriverAction
     SeeAttendant,
 }
 
-/// <summary>What the pump screen says. Headline, one line of detail, one next step.</summary>
+/// <summary>What the pump screen shows: a headline, one line of detail, and one next step.</summary>
 public sealed record DriverNotice(string Headline, string Detail, DriverAction Action);
 
 /// <summary>Everything that can happen to a sale. Device threads, timers, and the host all post one of these. The JSON attributes let the same record cross a socket between the dispenser and the station.</summary>
@@ -160,7 +160,7 @@ public abstract record SaleEvent(string SaleId)
 /// <summary>What the state machine asks the outside world to do. It never does any of it itself.</summary>
 public abstract record SaleCommand(string SaleId)
 {
-    /// <summary>Ask the bank for a hold. How much is the site's call by tender, never the sale machine's.</summary>
+    /// <summary>Ask the bank for a hold. The site sets the amount by tender. The sale machine doesn't.</summary>
     public sealed record RequestAuthorization(string SaleId, string CardName, Grade Grade, Tender Tender) : SaleCommand(SaleId);
     /// <summary>Ask the payment side for a token worth the cash taken.</summary>
     public sealed record RequestCashAuthorization(string SaleId, Money Amount) : SaleCommand(SaleId);
@@ -202,7 +202,7 @@ public sealed record SaleSnapshot(
     Money ChangeDue,
     /// <summary>When the armed timer fires, on the simulation clock. Null when no timer is armed.</summary>
     DateTimeOffset? DeadlineAt,
-    /// <summary>Money itemized. Empty before any fuel moves. The sum is Money.</summary>
+    /// <summary>The money itemized. Empty before any fuel moves. The lines sum to Money.</summary>
     IReadOnlyList<ChargeLine>? Lines = null)
 {
     public IReadOnlyList<ChargeLine> Charges => Lines ?? [];

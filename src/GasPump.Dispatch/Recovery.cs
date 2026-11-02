@@ -23,7 +23,7 @@ public sealed record RecoveryOutcome(
     Grade Grade,
     Volume Volume,
     Money Money,
-    /// <summary>How much more fuel may have left the hose after the last snapshot: one snapshot period at the last flow rate. An estimate, never a count.</summary>
+    /// <summary>How much more fuel may have left the hose after the last snapshot: one snapshot period at the last flow rate. This is an estimate.</summary>
     Volume UnrecordedUpTo,
     TimeSpan SnapshotAge,
     string Note,
@@ -55,7 +55,7 @@ public static class RecoveryPlan
         var age = now - snapshot.SavedAt;
         if (age < TimeSpan.Zero) age = TimeSpan.Zero;
         var flow = new FlowRate(s.FlowMilliGallonsPerSecond);
-        // An E-stop wrote its own final snapshot on the way down, so nothing flowed after it. A crash did not.
+        // An E-stop writes its own final snapshot as it shuts down, so nothing flows after it. A crash writes none.
         var estop = snapshot.StopReason == "ESTOP";
         var unrecorded = estop ? Volume.Zero : flow.Over(snapshotPeriod);
         var how = estop ? $"restarted after the station E-stop ({DiagnosticCodes.StationEStop.Code})" : $"pump restarted {age.TotalSeconds:0.0} s after the last record";
@@ -77,7 +77,7 @@ public static class RecoveryPlan
             case SaleState.Completing:
                 return new(RecoveryKind.CompletionResent, snapshot.RunId, s.SaleId, tender, grade, volume, money, Volume.Zero, age,
                     $"{how} while settling {money}; completion sent again", lines);
-            // The sale had ended but the bank still held the money: the compensation never left. Finish it.
+            // The sale had ended but the bank still holds the money, because the compensation never went out. Send it now.
             case SaleState.Faulted or SaleState.Cancelled or SaleState.Declined when hold is HoldStatus.Requested or HoldStatus.Held && volume > Volume.Zero:
                 return new(RecoveryKind.CompletionResent, snapshot.RunId, s.SaleId, tender, grade, volume, money, Volume.Zero, age,
                     $"{how} after the sale ended {state} with {money} still held for {volume} delivered; completion sent", lines);

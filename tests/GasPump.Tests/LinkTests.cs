@@ -10,10 +10,11 @@ using Xunit;
 namespace GasPump.Tests;
 
 /// <summary>
-/// The seam as a socket. A DispenserServer on an ephemeral loopback port and
-/// a station Simulation that reaches it over TCP. Real clock on both sides,
-/// because two processes do not share a fake one; the flow is fast and the
-/// hold is small so a sale lasts about a second.
+/// Tests the station-to-dispenser seam over a real socket. A DispenserServer
+/// listens on an ephemeral loopback port, and a station Simulation reaches it
+/// over TCP. Both sides use the real clock, because two processes can't share
+/// a fake one. The flow is fast and the hold is small, so a sale lasts about
+/// a second.
 /// </summary>
 public sealed class LinkTests : IDisposable
 {
@@ -49,7 +50,7 @@ public sealed class LinkTests : IDisposable
         }
     }
 
-    /// <summary>The sink holds its file open for append; a reader must say it is fine with that.</summary>
+    /// <summary>The sink keeps its file open for append, so a reader has to open it with sharing allowed.</summary>
     private static string[] ReadShared(string path)
     {
         using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
@@ -120,7 +121,7 @@ public sealed class LinkTests : IDisposable
         station.StartFueling();
         WaitFor(() => station.Snapshot().Volume > Volume.Zero && station.Snapshot().Money > new Money(50), TimeSpan.FromSeconds(5), () => "no fuel recorded\n" + Tail(station));
 
-        dispenser.Dispose();                                   // the plug, pulled: no record, no close-out
+        dispenser.Dispose();                                   // power cut: no record and no close-out
         WaitFor(() => station.Snapshot().State == SaleState.Faulted, TimeSpan.FromSeconds(5), () => "station did not fault\n" + Tail(station));
         var s = station.Snapshot();
         Assert.Equal("LINK.DISPENSER.LOST", s.FaultCode);

@@ -1,6 +1,6 @@
 namespace GasPump.Core;
 
-/// <summary>Whole cents. Never a double. Rule 4 from the research note.</summary>
+/// <summary>Money in whole cents. A double never holds money (rule 4 from the research note).</summary>
 public readonly record struct Money(long Cents) : IComparable<Money>
 {
     public static readonly Money Zero = new(0);
@@ -46,12 +46,10 @@ public readonly record struct FlowRate(long MilliGallonsPerSecond)
 public enum Grade { Regular = 87, Plus = 89, Premium = 93 }
 
 /// <summary>
-/// What the pump asks when it prices a slice: how much is this volume of this
-/// grade, and how much volume fits under this money. The posted price board is
-/// one answer. A schedule that wraps it (an additive surcharge, a loyalty
-/// discount) is another, and the controller cannot tell them apart. Both
-/// methods must agree with each other: MaxVolumeFor(g, m) is the largest v with
-/// CentsFor(g, v) at or under m.
+/// The pump calls this to price each slice of fuel. The posted price board is one
+/// schedule. A wrapper that adds a fee or a discount is another, and the controller
+/// can't tell them apart. The two methods have to agree: MaxVolumeFor(g, m) returns
+/// the largest v where CentsFor(g, v) is at or under m.
 /// </summary>
 public interface IPriceSchedule
 {

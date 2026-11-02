@@ -171,9 +171,9 @@ export const api = {
   estop: (pressedBy: string) => post('/api/station/estop', { pressedBy }),
   estopReset: async () => (await (await fetch(`${HOST}/api/station/reset`, { method: 'POST' })).json()) as { estopActive: boolean; recovery: Recovery; runId: string },
   verifyStationCopy: async () => (await (await fetch(`${HOST}/api/station/custody/verify`, { method: 'POST' })).json()) as { ok: boolean; failureAtSeq: number | null; reason: string | null; lines: number },
-  /** The station's plug. The dispenser process keeps running and is told Stop when the new station connects. */
+  /** Cuts power to the station. The dispenser process keeps running and is told Stop when the new station connects. */
   powerLoss: async () => (await (await fetch(`${HOST}/api/host/powerloss`, { method: 'POST' })).json()) as { recovery: Recovery; runId: string },
-  /** The dispenser's plug. The station sees the link drop and faults the sale with LINK.DISPENSER.LOST. */
+  /** Cuts power to the dispenser. The station sees the link drop and faults the sale with LINK.DISPENSER.LOST. */
   dispenserPowerLoss: () => post('/api/dispenser/powerloss'),
   dispenserPowerOn: () => post('/api/dispenser/poweron'),
   verifyLedger: async () => (await fetch(`${HOST}/api/ledger`)).json() as Promise<{ verify: number; totalizer: number }>,

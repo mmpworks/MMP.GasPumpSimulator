@@ -49,7 +49,7 @@ public sealed class DispenserProcess(int port, string pumpId, string logDir, str
         }
     }
 
-    /// <summary>The dispenser's plug, pulled. No record, no close-out: the process dies where it stands.</summary>
+    /// <summary>Pulls the dispenser's plug. The process dies where it stands, with no record and no close-out.</summary>
     public void Kill()
     {
         lock (_gate)

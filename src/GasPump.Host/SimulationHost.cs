@@ -5,10 +5,10 @@ namespace GasPump.Host;
 /// <summary>
 /// Owns the current station Simulation and can replace it. PowerLoss drops
 /// the current one the way a crash would, with no close-out and no final
-/// snapshot, then builds a fresh one on the same journal directory; a
+/// snapshot, then builds a fresh one on the same journal directory. A
 /// dispenser in another process keeps running through it and is told Stop
 /// when the new station connects. EmergencyStop writes the record, saves a
-/// final snapshot, drops the power on both sides, and waits: the station
+/// final snapshot, drops the power on both sides, and waits. The station
 /// stays dark until a cashier resets it, which restores the dispenser's power
 /// first. Subscribers (the WebSocket hub) rebind through <see cref="Swapped"/>.
 /// </summary>
@@ -36,7 +36,7 @@ public sealed class SimulationHost : IDisposable
 
     public event Action<Simulation>? Swapped;
 
-    /// <summary>The station's plug. The dispenser, if it is another process, does not notice until the new station connects.</summary>
+    /// <summary>Pulls the station's plug. A dispenser in another process doesn't notice until the new station connects.</summary>
     public void PowerLoss()
     {
         Simulation fresh;

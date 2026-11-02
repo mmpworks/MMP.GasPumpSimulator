@@ -1,6 +1,6 @@
 # Threat model
 
-Two trust boundaries, two jobs. The reader protects the card. The controller protects the fuel. This simulator builds the second one and names the first.
+There are two trust boundaries. The reader protects the card, and the controller protects the fuel. This simulator builds the second and names the first.
 
 ## Assets
 

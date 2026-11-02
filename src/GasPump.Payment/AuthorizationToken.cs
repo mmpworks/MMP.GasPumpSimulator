@@ -6,7 +6,7 @@ namespace GasPump.Payment;
 
 /// <summary>
 /// What the payment side hands the pump: "this sale, this pump, this much,
-/// this long, once". The pump trusts the signature, never the sender. In the
+/// this long, once". The pump checks the signature and ignores who sent it. In the
 /// real world the key would be per device and the counter would live in the
 /// pump; here one shared key shows the shape.
 /// </summary>

@@ -1,7 +1,7 @@
 // The dispenser as its own process. It owns the valve, the meter, the hard limits, the
 // sealed counter, its own ledger, and its own TesseraSeal chain. It listens for one
-// station on a loopback port and never trusts a message that is not a signed token,
-// except Stop. When the station cuts the power it ends.
+// station on a loopback port. Arm needs a valid signed token. When the station cuts
+// the power it ends.
 //
 //   GasPump.Dispenser --port 5178 --pump PUMP-07 --strategy threaded --log-dir <dir>
 //

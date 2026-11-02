@@ -11,7 +11,7 @@ namespace GasPump.Payment;
 public enum NetworkMode { Up, Down, Timeout, Flapping, Late }
 
 /// <summary>
-/// One object the UI can poke to make the wire misbehave. Latency applies in
+/// One object the UI uses to make the wire fail on demand. Latency applies in
 /// every mode. Flapping fails a given fraction of calls at random.
 /// </summary>
 public sealed class NetworkFaultPolicy
@@ -89,7 +89,7 @@ public sealed class NetworkSimulator(NetworkFaultPolicy policy, TimeProvider clo
 
             case NetworkMode.Late:
             {
-                // The bank hears us at Latency and acts. The answer crawls back over LateResponse. The caller's
+                // The bank hears us at Latency and acts. The answer comes back after LateResponse. The caller's
                 // own timer will have fired long before, so this answer lands on a sale that already ended.
                 var reach = policy.Latency;
                 var late = policy.LateResponse;

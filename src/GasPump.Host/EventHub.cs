@@ -7,8 +7,8 @@ namespace GasPump.Host;
 
 /// <summary>
 /// Fans simulation events out to every connected socket. Each socket gets its
-/// own bounded queue; a slow client drops its oldest messages rather than
-/// slowing the simulation. The pump never waits on a browser. When the host
+/// own bounded queue, and a slow client drops its oldest messages so it can't
+/// slow the simulation. The pump never waits on a browser. When the host
 /// swaps the simulation (power loss), the hub rebinds and pushes a full state.
 /// Every log line and ledger entry carries its origin, dispenser or station,
 /// so the UI can keep the two sides apart.

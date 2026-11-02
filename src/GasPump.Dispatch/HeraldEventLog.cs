@@ -82,7 +82,7 @@ public sealed class HeraldEventLog : IEventLog, IDisposable
             _ => LogSeverity.Info,
         };
         var props = e.Properties.Count == 0 ? null : e.Properties.Select(p => new KeyValuePair<string, object?>(p.Name, p.Value)).ToArray();
-        // The simulation clock stamps the line, so a test on a fake clock reads simulated time, as it did before Herald.
+        // The simulation clock stamps the line, so a test on a fake clock reads simulated time.
         var line = new LogLine(_clock.GetUtcNow(), e.Category.Value, e.Message, severity, props);
         lock (_gate) _lines.Add(line);
         Written?.Invoke(line);
