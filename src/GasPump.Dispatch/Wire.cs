@@ -52,7 +52,7 @@ public sealed record WireAnswer(string CorrelationId, AnswerCode Code, string? D
 public sealed record WireHeartbeat(string RunId, string Status, long LastSeqSent, long LastSeqReceived);
 
 /// <summary>Send me frames from this sequence number on (gap fill), or your payable transactions.</summary>
-public sealed record WireRead(string What, long? FromSeq = null)
+public sealed record WireRead(string What, long? FromSeq = null, long? ToSeq = null)
 {
     public const string Frames = "frames", Transactions = "transactions";
 }
@@ -126,26 +126,56 @@ public sealed class WireSequencer(WireNode me, int ring = 512)
     public WireNode Me => me;
     public long LastSeq { get { lock (_gate) return _seq; } }
 
-    /// <summary>Wrap a body in the next envelope and remember it.</summary>
+    /// <summary>
+    /// Wrap a body in the next envelope and remember it. A heartbeat takes no
+    /// number and is never kept: it carries the sender's last number instead,
+    /// so the receiver can see a gap at the tail with nothing after it.
+    /// </summary>
     public WireFrame Next(WireKind kind, WireNode dest, LinkFrame body, DateTimeOffset now, string? correlationId = null, TimeSpan? ttl = null)
     {
         lock (_gate)
         {
-            var f = new WireFrame(WireFrame.CurrentVersion, ++_seq, me, dest, kind, now, body, correlationId, ttl);
-            // Heartbeats are not worth replaying; everything else is.
-            if (kind != WireKind.Heartbeat)
+            if (kind == WireKind.Heartbeat)
             {
-                _ring.Enqueue(f);
-                while (_ring.Count > ring) _ring.Dequeue();
+                var hb = body.Hb is { } h ? body with { Hb = h with { LastSeqSent = _seq } } : body;
+                return new WireFrame(WireFrame.CurrentVersion, 0, me, dest, kind, now, hb, correlationId, ttl);
             }
+            var f = new WireFrame(WireFrame.CurrentVersion, ++_seq, me, dest, kind, now, body, correlationId, ttl);
+            _ring.Enqueue(f);
+            while (_ring.Count > ring) _ring.Dequeue();
             return f;
         }
     }
 
-    /// <summary>Every remembered frame with a sequence number at or past the one asked for, in order. Empty when the gap is older than the ring.</summary>
-    public IReadOnlyList<WireFrame> Replay(long fromSeq)
+    /// <summary>
+    /// Build the next frame and hand it to the writer under one lock, so the
+    /// wire order is the sequence order and a heartbeat's last-number claim is
+    /// true. A frame the writer could not send (no peer on the line) gives its
+    /// number back, so the peer that connects later sees no gap for frames
+    /// that were never on the wire. Returns what the writer returned.
+    /// </summary>
+    public bool Send(WireKind kind, WireNode dest, LinkFrame body, DateTimeOffset now, Func<WireFrame, bool> write, string? correlationId = null, TimeSpan? ttl = null)
     {
-        lock (_gate) return _ring.Where(f => f.Seq >= fromSeq).ToList();
+        lock (_gate)
+        {
+            var f = Next(kind, dest, body, now, correlationId, ttl);
+            if (write(f)) return true;
+            if (kind != WireKind.Heartbeat)
+            {
+                _seq--;
+                // The unsent frame is the newest in the ring; drop it by rebuilding without it.
+                var kept = _ring.Where(x => x.Seq != f.Seq).ToList();
+                _ring.Clear();
+                foreach (var k in kept) _ring.Enqueue(k);
+            }
+            return false;
+        }
+    }
+
+    /// <summary>Every remembered frame with a sequence number in the range asked for, in order. Empty when the gap is older than the ring.</summary>
+    public IReadOnlyList<WireFrame> Replay(long fromSeq, long? toSeq = null)
+    {
+        lock (_gate) return _ring.Where(f => f.Seq >= fromSeq && (toSeq is null || f.Seq <= toSeq)).ToList();
     }
 
     /// <summary>True when the oldest remembered frame is at or before the one asked for, so a replay from there is complete.</summary>
@@ -155,7 +185,8 @@ public sealed class WireSequencer(WireNode me, int ring = 512)
     }
 }
 
-public enum Accept { Ok, Duplicate, Gap }
+/// <summary>Ok is in order. Filled is a frame that arrived late to fill a reported gap: real, but out of order. Gap is the first frame after missing ones.</summary>
+public enum Accept { Ok, Duplicate, Gap, Filled }
 
 /// <summary>
 /// One receiver's side of the sequence rule, per peer. Tells the caller
@@ -181,8 +212,25 @@ public sealed class WireReceiver
     {
         lock (_gate)
         {
-            if (f.Kind == WireKind.Heartbeat) return (Accept.Ok, 0, 0);
-            if (f.Seq <= _last && !_seen.Remove(f.Seq)) { Duplicates++; return (Accept.Duplicate, 0, 0); }
+            if (f.Kind == WireKind.Heartbeat)
+            {
+                // No number of its own. Its claim of the sender's last number shows frames lost with nothing after them.
+                if (f.Body.Hb is { } hb && hb.LastSeqSent > _last)
+                {
+                    Gaps++;
+                    var (gf, gt) = (_last + 1, hb.LastSeqSent);
+                    for (var s = gf; s <= gt; s++) _seen.Add(s);
+                    _last = hb.LastSeqSent;
+                    return (Accept.Gap, gf, gt);
+                }
+                return (Accept.Ok, 0, 0);
+            }
+            if (f.Seq <= _last)
+            {
+                if (_seen.Remove(f.Seq)) return (Accept.Filled, 0, 0);
+                Duplicates++;
+                return (Accept.Duplicate, 0, 0);
+            }
             if (f.Seq > _last + 1)
             {
                 Gaps++;

@@ -55,19 +55,52 @@ public class WireEnvelopeTests
         for (var i = 1; i <= 5; i++) seq.Next(WireKind.Event, WireNode.Station, Body($"S{i}"), T0);
         Assert.Equal(5, seq.LastSeq);
         Assert.Equal([3L, 4L, 5L], seq.Replay(3).Select(f => f.Seq));
+        Assert.Equal([3L, 4L], seq.Replay(3, 4).Select(f => f.Seq));
         Assert.True(seq.CanReplayFrom(3));
         Assert.False(seq.CanReplayFrom(2));                      // older than the ring
         Assert.Empty(seq.Replay(6));
     }
 
     [Fact]
-    public void Heartbeats_take_a_number_but_are_never_kept_for_replay()
+    public void A_frame_nobody_could_send_gives_its_number_back_so_a_later_peer_sees_no_gap()
+    {
+        var seq = new WireSequencer(WireNode.Pump(7));
+        Assert.True(seq.Send(WireKind.Event, WireNode.Station, Body("S1"), T0, _ => true));
+        Assert.False(seq.Send(WireKind.Event, WireNode.Station, Body("S2"), T0, _ => false));   // no station on the line
+        Assert.False(seq.Send(WireKind.Event, WireNode.Station, Body("S3"), T0, _ => false));
+        Assert.Equal(1, seq.LastSeq);
+        Assert.Equal([1L], seq.Replay(1).Select(f => f.Seq));
+        WireFrame? sent = null;
+        Assert.True(seq.Send(WireKind.Event, WireNode.Station, Body("S4"), T0, f => { sent = f; return true; }));
+        Assert.Equal(2, sent!.Seq);
+        Assert.Equal(Accept.Ok, new WireReceiver().Check(seq.Replay(1)[0]).Verdict);
+    }
+
+    [Fact]
+    public void Heartbeats_take_no_number_carry_the_senders_last_one_and_are_never_kept_for_replay()
     {
         var seq = new WireSequencer(WireNode.Pump(7));
         seq.Next(WireKind.Event, WireNode.Station, Body("S1"), T0);
-        seq.Next(WireKind.Heartbeat, WireNode.Broadcast, new LinkFrame(LinkFrame.TagHeartbeat, Hb: new WireHeartbeat("R", "Idle", 1, 0)), T0);
-        Assert.Equal(2, seq.LastSeq);
+        var hb = seq.Next(WireKind.Heartbeat, WireNode.Broadcast, new LinkFrame(LinkFrame.TagHeartbeat, Hb: new WireHeartbeat("R", "Idle", 99, 0)), T0);
+        Assert.Equal(0, hb.Seq);
+        Assert.Equal(1, hb.Body.Hb!.LastSeqSent);                    // the sender's true last number, whatever the caller wrote
+        Assert.Equal(1, seq.LastSeq);
         Assert.Equal([1L], seq.Replay(1).Select(f => f.Seq));
+    }
+
+    [Fact]
+    public void A_heartbeat_reveals_frames_lost_at_the_tail_and_a_heartbeat_with_nothing_new_is_quiet()
+    {
+        var send = new WireSequencer(WireNode.Pump(7));
+        var recv = new WireReceiver();
+        recv.Check(send.Next(WireKind.Event, WireNode.Station, Body("S1"), T0));
+        var lost = send.Next(WireKind.Event, WireNode.Station, Body("S2"), T0);   // never arrives
+        var quiet = send.Next(WireKind.Heartbeat, WireNode.Broadcast, new LinkFrame(LinkFrame.TagHeartbeat, Hb: new WireHeartbeat("R", "Idle", 0, 0)), T0);
+        var (verdict, from, to) = recv.Check(quiet);
+        Assert.Equal(Accept.Gap, verdict);
+        Assert.Equal((2L, 2L), (from, to));
+        Assert.Equal(Accept.Filled, recv.Check(lost).Verdict);
+        Assert.Equal(Accept.Ok, recv.Check(quiet).Verdict);
     }
 
     [Fact]
@@ -87,9 +120,9 @@ public class WireEnvelopeTests
         Assert.Equal(1, recv.Gaps);
         Assert.Equal([3L, 4L], recv.Outstanding.OrderBy(x => x));
 
-        // The replay fills the gap: 3 and 4 are accepted once each, then refused as duplicates.
-        Assert.Equal(Accept.Ok, recv.Check(frames[2]).Verdict);
-        Assert.Equal(Accept.Ok, recv.Check(frames[3]).Verdict);
+        // The replay fills the gap: 3 and 4 are accepted once each as fills, then refused as duplicates.
+        Assert.Equal(Accept.Filled, recv.Check(frames[2]).Verdict);
+        Assert.Equal(Accept.Filled, recv.Check(frames[3]).Verdict);
         Assert.Empty(recv.Outstanding);
         Assert.Equal(Accept.Duplicate, recv.Check(frames[2]).Verdict);
         Assert.Equal(Accept.Duplicate, recv.Check(frames[4]).Verdict);

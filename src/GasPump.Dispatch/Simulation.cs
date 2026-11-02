@@ -26,8 +26,14 @@ public sealed record SimulationOptions(
     /// <summary>Extra Herald sinks for the debug log (a file, the console). The UI bridge and the custody bridge are always wired.</summary>
     Action<MMP.Herald.Quick.QuickLogBuilder>? LogSinks = null,
     /// <summary>Where the dispenser is. Null builds it in this process behind a mailbox. A host and port reach a <see cref="DispenserServer"/> over TCP.</summary>
-    DispenserLinkOptions? Dispenser = null)
+    DispenserLinkOptions? Dispenser = null,
+    /// <summary>How long a command to the pump may go unanswered before the station treats the dispenser as silent. Also the command's time to live on the wire.</summary>
+    TimeSpan? CommandTimeout = null,
+    /// <summary>After a restart over a socket, how long to wait for the dispenser's own transaction before closing out from the journal's numbers.</summary>
+    TimeSpan? CloseoutWait = null)
 {
+    public TimeSpan CommandDeadline => CommandTimeout ?? TimeSpan.FromSeconds(3);
+    public TimeSpan CloseoutGrace => CloseoutWait ?? TimeSpan.FromSeconds(5);
     public static SimulationOptions Default => new(
         PumpId: "PUMP-07",
         HoldAmount: Money.FromDollars(75),
@@ -172,6 +178,10 @@ public sealed class Simulation : IDisposable
         }
         _link.Event += e => _saleBox.Post(e);
         _link.ViewChanged += v => { OnServiceView(v.Service); DispenserViewChanged?.Invoke(v); };
+        _link.Answered += OnAnswered;
+        _link.PeerAlive += OnPeerAlive;
+        _link.TransactionsReported += OnTransactionsReported;
+        _link.LateEvent += OnLateEvent;
 
         // Restore from the journal before any worker runs, then decide what to do about the sale that was open.
         var snapshot = _options.Journal is { } jo ? StateJournal.Load(jo.StatePath) : null;
@@ -257,7 +267,9 @@ public sealed class Simulation : IDisposable
         if (up)
         {
             Ledger.Append("link.up", $"dispenser {_link.RemoteRunId} pid {_link.RemotePid}");
-            _link.Post(new PumpMessage.Stop("station connected"), CurrentSaleId);
+            Command(new PumpMessage.Stop("station connected"), CurrentSaleId);
+            // What the island still holds for us: deliveries whose money this station never settled.
+            _link.RequestTransactions();
             return;
         }
         var s = Snapshot();
@@ -265,6 +277,161 @@ public sealed class Simulation : IDisposable
         Log.Error("station", "{Code} dispenser link lost during {State}", ("Code", code.Code), ("State", s.State));
         if (s.State is SaleState.Authorizing or SaleState.ReadyToPump or SaleState.Fueling)
             _saleBox.Post(new SaleEvent.Fault(s.SaleId, "dispenser link lost", code.Code));
+    }
+
+    // ----- Commands and their answers
+
+    private readonly Dictionary<string, (PumpMessage M, string SaleId, ITimer Timer)> _commands = new();
+    private readonly HashSet<string> _earlyAnswers = [];
+
+    /// <summary>
+    /// Send a command the station needs an answer to, and start the clock on it.
+    /// A command that is refused comes back as a <see cref="SaleEvent.PumpRefused"/>
+    /// too, so here the answer is bookkeeping. An answer that never comes, or a
+    /// Stale answer, is the dispenser failing to do what the sale needs, and the
+    /// sale is faulted for it when it was waiting on this command.
+    /// </summary>
+    private void Command(PumpMessage m, string saleId)
+    {
+        var ttl = _options.CommandDeadline;
+        lock (_commands)
+        {
+            var corr = _link.Command(m, saleId, ttl);
+            // The in-process link can answer before this line runs; that answer is waiting in _earlyAnswers.
+            if (_earlyAnswers.Remove(corr)) return;
+            var timer = _clock.CreateTimer(_ => Unanswered(corr), null, ttl, Timeout.InfiniteTimeSpan);
+            _commands[corr] = (m, saleId, timer);
+        }
+    }
+
+    private void OnAnswered(WireAnswer a)
+    {
+        (PumpMessage M, string SaleId, ITimer Timer) cmd;
+        lock (_commands)
+        {
+            if (!_commands.Remove(a.CorrelationId, out cmd)) { _earlyAnswers.Add(a.CorrelationId); return; }
+        }
+        cmd.Timer.Dispose();
+        Ledger.Append("cmd.answer", $"{cmd.M.GetType().Name} {cmd.SaleId} {a.Code}{(a.Detail is { } d ? $" {d}" : "")}");
+        if (a.Code == AnswerCode.Stale) FaultIfWaitingOn(cmd.M, cmd.SaleId, $"{cmd.M.GetType().Name} refused as stale by the dispenser");
+    }
+
+    private void Unanswered(string corr)
+    {
+        (PumpMessage M, string SaleId, ITimer Timer) cmd;
+        lock (_commands) { if (!_commands.Remove(corr, out cmd)) return; }
+        cmd.Timer.Dispose();
+        Ledger.Append("cmd.unanswered", $"{cmd.M.GetType().Name} {cmd.SaleId} no answer in {_options.CommandDeadline.TotalSeconds:0.#} s");
+        Log.Error("station", "{Code} {Message} for {SaleId} unanswered after {Deadline}", ("Code", DiagnosticCodes.LinkDispenserSilent.Code), ("Message", cmd.M.GetType().Name), ("SaleId", cmd.SaleId), ("Deadline", _options.CommandDeadline));
+        FaultIfWaitingOn(cmd.M, cmd.SaleId, $"{cmd.M.GetType().Name} unanswered by the dispenser");
+    }
+
+    /// <summary>Arm and Close are the two commands a sale cannot go on without. Anything else failing is logged and the sale is left alone.</summary>
+    private void FaultIfWaitingOn(PumpMessage m, string saleId, string reason)
+    {
+        if (m is not (PumpMessage.Arm or PumpMessage.Close)) return;
+        var s = Snapshot();
+        if (s.SaleId != saleId || s.State is not (SaleState.Authorizing or SaleState.ReadyToPump or SaleState.Fueling)) return;
+        _saleBox.Post(new SaleEvent.Fault(saleId, reason, DiagnosticCodes.LinkDispenserSilent.Code));
+    }
+
+    /// <summary>
+    /// A frame that filled a gap after the station had moved on. It never
+    /// touches the sale, which has already decided without it. The one thing
+    /// still owed is the island's transaction, if the frame names one.
+    /// </summary>
+    private void OnLateEvent(SaleEvent e)
+    {
+        Ledger.Append("link.late", $"{e.GetType().Name} for {e.SaleId} arrived out of order, recorded only");
+        var tx = e switch
+        {
+            SaleEvent.NozzleHung h => h.TxSeq,
+            SaleEvent.CeilingReached c => c.TxSeq,
+            SaleEvent.Fault f => f.TxSeq,
+            _ => null,
+        };
+        if (tx is { } t) ClearOrphanTransaction(e.SaleId, t, "named by a late frame");
+    }
+
+    /// <summary>The heartbeat watchdog. The socket is open and the device stopped talking, which is a fault of its own.</summary>
+    private void OnPeerAlive(bool alive)
+    {
+        if (_frozen) return;
+        if (alive) { Ledger.Append("link.alive", "dispenser heartbeats resumed"); return; }
+        var s = Snapshot();
+        Ledger.Append("link.silent", DiagnosticCodes.LinkDispenserSilent.Format($"sale {s.SaleId} {s.State} {s.Volume} {s.Money}"));
+        Log.Error("station", "{Code} dispenser silent during {State}", ("Code", DiagnosticCodes.LinkDispenserSilent.Code), ("State", s.State));
+        if (s.State is SaleState.Authorizing or SaleState.ReadyToPump or SaleState.Fueling)
+            _saleBox.Post(new SaleEvent.Fault(s.SaleId, "dispenser silent", DiagnosticCodes.LinkDispenserSilent.Code));
+    }
+
+    // ----- The island's transactions, reconciled against what this station knows
+
+    private RecoveryOutcome? _awaitingCloseout;
+    private ITimer? _closeoutTimer;
+
+    /// <summary>
+    /// The dispenser told us which deliveries it still holds. Each one is either
+    /// the sale this station restarted in the middle of (settle from the
+    /// dispenser's numbers, which are the true ones), the sale in progress now
+    /// (the normal flow clears it), or an orphan this station has no record of
+    /// (put the money on the ledger for the attendant and release the pump).
+    /// </summary>
+    private void OnTransactionsReported(IReadOnlyList<PumpTransaction> reported)
+    {
+        var open = reported.Where(t => t.State != TransactionState.Cleared).ToList();
+        if (open.Count == 0) return;
+        Ledger.Append("tx.reported", string.Join("; ", open.Select(t => $"#{t.TxSeq} {t.SaleId} {t.Volume} {t.Money} {t.State}")));
+        foreach (var tx in open)
+        {
+            RecoveryOutcome? awaiting;
+            string liveSale;
+            SaleState liveState;
+            long? liveTx;
+            lock (_gate)
+            {
+                awaiting = _awaitingCloseout;
+                liveSale = _sale.SaleId;
+                liveState = _sale.State;
+                liveTx = _sale.TxSeq;
+                if (awaiting?.SaleId == tx.SaleId) _awaitingCloseout = null;
+            }
+            if (awaiting?.SaleId == tx.SaleId)
+            {
+                _closeoutTimer?.Dispose();
+                Ledger.Append("recovery.reconciled", $"{tx.SaleId} #{tx.TxSeq} dispenser delivered {tx.Volume} {tx.Money}; journal had {awaiting.Volume} {awaiting.Money}");
+                Log.Warn("recovery", "settling {SaleId} from the dispenser's transaction: {Volume} {Money} (journal had {JournalVolume} {JournalMoney})", ("SaleId", tx.SaleId), ("Volume", tx.Volume), ("Money", tx.Money), ("JournalVolume", awaiting.Volume), ("JournalMoney", awaiting.Money), ("DeliveryConfidence", "dispenser"));
+                _paymentBox.Post(new PaymentMessage.Complete(tx.SaleId, tx.Money, tx.Lines));
+                ClearOrphanTransaction(tx.SaleId, tx.TxSeq, "settled from the dispenser's numbers after a station restart");
+                continue;
+            }
+            if (tx.SaleId == liveSale)
+            {
+                // The sale in progress clears its own transaction when the money lands.
+                if (liveTx == tx.TxSeq || liveState is SaleState.Fueling or SaleState.Completing) continue;
+                // This station already finished that sale, so the clear was lost on the way. Send it again.
+                ClearOrphanTransaction(tx.SaleId, tx.TxSeq, $"sale already {liveState} on this station, clear sent again");
+                continue;
+            }
+            if (Gateway.Pending.Any(p => p.SaleId == tx.SaleId))
+            {
+                ClearOrphanTransaction(tx.SaleId, tx.TxSeq, "money for it is queued on this station");
+                continue;
+            }
+            Ledger.Append("tx.orphan", $"#{tx.TxSeq} {tx.SaleId} {tx.Grade} {tx.Volume} {tx.Money} ended {tx.EndedAt:HH:mm:ss} {tx.EndReason}: no station record, attendant to settle");
+            Log.Error("recovery", "ORPHAN transaction #{TxSeq} for {SaleId}: {Volume} {Money} delivered, no record of the sale on this station", ("TxSeq", tx.TxSeq), ("SaleId", tx.SaleId), ("Volume", tx.Volume), ("Money", tx.Money));
+            ClearOrphanTransaction(tx.SaleId, tx.TxSeq, "orphan, money on the ledger for the attendant");
+        }
+    }
+
+    /// <summary>The grace period ran out with no word from the dispenser. Close out from what the journal recorded, as before.</summary>
+    private void CloseOutFromJournal()
+    {
+        RecoveryOutcome? r;
+        lock (_gate) { r = _awaitingCloseout; _awaitingCloseout = null; }
+        if (r is null) return;
+        Ledger.Append("recovery.closeout.journal", $"{r.SaleId} no transaction from the dispenser in {_options.CloseoutGrace.TotalSeconds:0.#} s, settling {r.Money} from the journal");
+        _paymentBox.Post(new PaymentMessage.Complete(r.SaleId!, r.Money, r.Lines));
     }
 
     /// <summary>
@@ -353,6 +520,15 @@ public sealed class Simulation : IDisposable
             case RecoveryKind.ClosedOut:
                 Ledger.Append("recovery.closeout", $"{r.SaleId} {r.Tender} {r.Grade} {r.Volume} {r.Money} DELIVERY LIKELY UNDER-RECORDED by up to {r.UnrecordedUpTo}");
                 Log.Error("recovery", "{Note}", ("Note", r.Note), ("SaleId", r.SaleId), ("Tender", r.Tender), ("Grade", r.Grade), ("Volume", r.Volume), ("Money", r.Money), ("UnrecordedUpTo", r.UnrecordedUpTo), ("DeliveryConfidence", "under-recorded"));
+                if (_options.Dispenser is not null)
+                {
+                    // The dispenser in the other process still holds the true numbers. Ask, and settle from those when they come.
+                    lock (_gate) _awaitingCloseout = r;
+                    _closeoutTimer = _clock.CreateTimer(_ => CloseOutFromJournal(), null, _options.CloseoutGrace, Timeout.InfiniteTimeSpan);
+                    Ledger.Append("recovery.await", $"{r.SaleId} waiting up to {_options.CloseoutGrace.TotalSeconds:0.#} s for the dispenser's transaction");
+                    if (_link.Connected) _link.RequestTransactions();
+                    break;
+                }
                 _paymentBox.Post(new PaymentMessage.Complete(r.SaleId!, r.Money, r.Lines));
                 break;
             case RecoveryKind.Reversed:
@@ -695,9 +871,9 @@ public sealed class Simulation : IDisposable
     public void ResetBreakaway() => ToPump(new PumpMessage.ResetBreakaway());
 
     /// <summary>The operator takes this pump out of sales. It keeps working, refuses every card, and finishes any delivery in progress first.</summary>
-    public void ClosePump(string by = "operator") => ToPump(new PumpMessage.CloseForSales(by));
+    public void ClosePump(string by = "operator") => Command(new PumpMessage.CloseForSales(by), CurrentSaleId);
     /// <summary>The operator puts the pump back into sales.</summary>
-    public void OpenPump(string by = "operator") => ToPump(new PumpMessage.OpenForSales(by));
+    public void OpenPump(string by = "operator") => Command(new PumpMessage.OpenForSales(by), CurrentSaleId);
 
     /// <summary>
     /// The station emergency stop. It models the power going away under the
@@ -832,8 +1008,8 @@ public sealed class Simulation : IDisposable
     {
         Ledger.Append("tx.clear", $"{saleId} #{txSeq} {why}");
         Log.Write("sale", "clearing transaction #{TxSeq} for earlier sale {SaleId}: {Why}", ("TxSeq", txSeq), ("SaleId", saleId), ("Why", why));
-        _link.Post(new PumpMessage.Lock(txSeq, "station"), saleId);
-        _link.Post(new PumpMessage.Clear(txSeq, "station"), saleId);
+        Command(new PumpMessage.Lock(txSeq, "station"), saleId);
+        Command(new PumpMessage.Clear(txSeq, "station"), saleId);
     }
 
     private void Execute(SaleCommand c)
@@ -858,10 +1034,10 @@ public sealed class Simulation : IDisposable
                 _paymentBox.Post(new PaymentMessage.CashAuthorize(rc.SaleId, rc.Amount));
                 break;
             case SaleCommand.ArmPump ap:
-                _link.Post(new PumpMessage.Arm(ap.SaleId, ap.Token, ap.Grade), ap.SaleId);
+                Command(new PumpMessage.Arm(ap.SaleId, ap.Token, ap.Grade), ap.SaleId);
                 break;
             case SaleCommand.CloseValve cv:
-                _link.Post(new PumpMessage.Close(cv.SaleId, "sale closed"), cv.SaleId);
+                Command(new PumpMessage.Close(cv.SaleId, "sale closed"), cv.SaleId);
                 break;
             // Money owed to the bank is written to the compensation log here, on the deciding thread, before the
             // payment worker ever sees the message. A crash between this line and the bank's answer is recoverable.
@@ -876,8 +1052,8 @@ public sealed class Simulation : IDisposable
             // The money is settled or safely queued. Claim the island's transaction and clear it, so the pump can arm again.
             case SaleCommand.ClearTransaction ct:
                 Ledger.Append("tx.clear", $"{ct.SaleId} #{ct.TxSeq}");
-                _link.Post(new PumpMessage.Lock(ct.TxSeq, "station"), ct.SaleId);
-                _link.Post(new PumpMessage.Clear(ct.TxSeq, "station"), ct.SaleId);
+                Command(new PumpMessage.Lock(ct.TxSeq, "station"), ct.SaleId);
+                Command(new PumpMessage.Clear(ct.TxSeq, "station"), ct.SaleId);
                 break;
             case SaleCommand.ArmTimer at:
                 lock (_gate)

@@ -19,15 +19,22 @@ public sealed record DispenserServerOptions(
     /// <summary>The site custody key. The token key is derived from it under the same label the station uses.</summary>
     byte[] Ikm,
     Action<MMP.Herald.Quick.QuickLogBuilder>? LogSinks = null,
-    string? RunId = null);
+    string? RunId = null,
+    TimeSpan? Heartbeat = null)
+{
+    public TimeSpan HeartbeatPeriod => Heartbeat ?? TimeSpan.FromSeconds(1);
+}
 
 /// <summary>
 /// The dispenser as its own process: a <see cref="Dispenser"/> behind a TCP
 /// listener, with its own ledger, its own Herald log, its own TesseraSeal
-/// chain, and its own ticker. One station at a time. On connect the station
-/// receives the whole chain so far, then every line as it lands. Arm goes
-/// through the authority and needs a valid token. The other station messages,
-/// Stop included, are handled without one.
+/// chain, and its own ticker. One station at a time. Every line out is a
+/// numbered frame; a gap the station reports is filled from the ring; a
+/// command with a correlation id gets an answer; a command past its time to
+/// live is answered Stale and never run. On connect the station receives the
+/// whole chain so far, then every line as it lands. Arm goes through the
+/// authority and needs a valid token. The other station messages, Stop
+/// included, are handled without one.
 /// </summary>
 public sealed class DispenserServer : IDisposable
 {
@@ -38,15 +45,23 @@ public sealed class DispenserServer : IDisposable
     private readonly Thread _accept;
     private readonly CancellationTokenSource _cts = new();
     private readonly Lock _gate = new();
-    private readonly IMailbox<(string? SaleId, PumpMessage M)> _box;
+    private readonly IMailbox<PumpEnvelope> _box;
     private readonly ImmutableAuditFileSink? _custody;
     private readonly CustodyStream? _stream;
     private readonly string? _statePath;
+    private readonly WireNode _me;
+    private readonly WireNode _peer = WireNode.Station;
+    private readonly WireSequencer _seq;
+    private readonly WireReceiver _recv = new();
+    private readonly Liveness _live;
+    private readonly ITimer _pulse;
     private StreamWriter? _client;
     private TcpClient? _tcp;
     private Action<string>? _custodyHandler;
     private string _lastSaleId = "-";
     private DispenserView? _lastView;
+    private bool _stationAlive = true;
+    private volatile bool _heartbeatsPaused;
     private int _torndown;
 
     public DispenserServer(DispenserServerOptions options, TimeProvider clock, IDispatchStrategy dispatch)
@@ -54,6 +69,9 @@ public sealed class DispenserServer : IDisposable
         _options = options;
         _clock = clock;
         _dispatch = dispatch;
+        _me = PumpNodes.Of(options.Dispenser.PumpId);
+        _seq = new WireSequencer(_me);
+        _live = new Liveness(options.HeartbeatPeriod);
         RunId = options.RunId ?? $"DSP-{clock.GetUtcNow():yyyyMMdd-HHmmss}-{Guid.NewGuid().ToString("N")[..6]}";
 
         if (options.Directory is { } dir)
@@ -73,10 +91,10 @@ public sealed class DispenserServer : IDisposable
         Ledger.Appended += e =>
         {
             Log.Write("ledger", "#{Seq} {Kind} {Detail}", ("Seq", e.Seq), ("Kind", e.Kind), ("Detail", e.Detail), ("Hash", e.Hash), ("Prev", e.PrevHash));
-            Send(new LinkFrame(LinkFrame.TagLedger, L: e));
+            Send(new LinkFrame(LinkFrame.TagLedger, L: e), WireKind.Event);
             SaveState();
         };
-        Log.Written += l => { if (l.Source != "ledger") Send(new LinkFrame(LinkFrame.TagLog, Log: WireLog.From(l))); };
+        Log.Written += l => { if (l.Source != "ledger") Send(new LinkFrame(LinkFrame.TagLog, Log: WireLog.From(l)), WireKind.Event); };
         if (CustodyPath is not null)
         {
             _stream = new CustodyStream(CustodyPath);
@@ -84,17 +102,18 @@ public sealed class DispenserServer : IDisposable
             Ledger.Appended += _ => _stream.Pump();
         }
 
-        _box = dispatch.CreateMailbox<(string?, PumpMessage)>("pump", 1024);
+        _box = dispatch.CreateMailbox<PumpEnvelope>("pump", 1024);
         dispatch.StartWorker("pump", _box, Handle);
-        dispatch.StartTicker("pump-tick", options.Dispenser.TickPeriod, _box, () => ((string?)null, (PumpMessage)new PumpMessage.Tick(options.Dispenser.TickPeriod)));
+        dispatch.StartTicker("pump-tick", options.Dispenser.TickPeriod, _box, () => new PumpEnvelope(null, new PumpMessage.Tick(options.Dispenser.TickPeriod)));
 
         _listener = new TcpListener(IPAddress.Loopback, options.Port);
         _listener.Start();
         Port = ((IPEndPoint)_listener.LocalEndpoint).Port;
         _accept = new Thread(AcceptLoop) { IsBackground = true, Name = "dispenser-accept" };
         _accept.Start();
+        _pulse = clock.CreateTimer(_ => Pulse(), null, options.HeartbeatPeriod, options.HeartbeatPeriod);
 
-        Log.Write("dispenser", "{PumpId} run {RunId} pid {Pid} listening on {Port}, custody {Custody}", ("PumpId", options.Dispenser.PumpId), ("RunId", RunId), ("Pid", Environment.ProcessId), ("Port", Port), ("Custody", CustodyPath));
+        Log.Write("dispenser", "{PumpId} run {RunId} pid {Pid} listening on {Port} as node {Node}, custody {Custody}", ("PumpId", options.Dispenser.PumpId), ("RunId", RunId), ("Pid", Environment.ProcessId), ("Port", Port), ("Node", _me.ToString()), ("Custody", CustodyPath));
         Ledger.Append("dispenser.start", $"{options.Dispenser.PumpId} run {RunId} pid {Environment.ProcessId} totalizer {Dispenser.Totalizer.Total}");
     }
 
@@ -105,26 +124,58 @@ public sealed class DispenserServer : IDisposable
     public EventLedger Ledger { get; }
     public IEventLog Log { get; }
     public bool StationConnected { get { lock (_gate) return _client is not null; } }
+    public long LastSeqSent => _seq.LastSeq;
+    public long LastSeqReceived => _recv.LastSeq;
+    public DateTimeOffset? StationHeartbeatAt => _live.LastBeatAt;
+    public long Answers { get; private set; }
+    public long StaleCommands { get; private set; }
+
+    /// <summary>Test hook: stop sending heartbeats while the socket stays open, so the station's watchdog can be exercised.</summary>
+    public bool HeartbeatsPaused { get => _heartbeatsPaused; set => _heartbeatsPaused = value; }
+
+    /// <summary>Test hook: swallow every command from the station without running or answering it, so the station's command deadline can be exercised.</summary>
+    public bool CommandsDropped { get => _commandsDropped; set => _commandsDropped = value; }
+    private volatile bool _commandsDropped;
 
     /// <summary>The station cut the power. The process that hosts this server should exit.</summary>
     public event Action? PoweredOff;
 
     private static bool IsEvidence(LogEvent e) => e.Category.Value is "ledger" or "attack" or "dispenser";
 
-    private void Handle((string? SaleId, PumpMessage M) env)
+    private void Handle(PumpEnvelope env)
     {
         if (env.SaleId is not null) _lastSaleId = env.SaleId;
         var events = Dispenser.Handle(env.M, env.SaleId ?? _lastSaleId);
         // A part broke or was fixed without a ledger entry (supply, pulser): the state file must still know.
-        if (env.M is PumpMessage.Supply or PumpMessage.PulserDead or PumpMessage.DriveOff or PumpMessage.ResetBreakaway or PumpMessage.CloseForSales or PumpMessage.OpenForSales) SaveState();
-        foreach (var e in events) Send(new LinkFrame(LinkFrame.TagEvent, E: e));
+        if (env.M is PumpMessage.Supply or PumpMessage.PulserDead or PumpMessage.DriveOff or PumpMessage.ResetBreakaway or PumpMessage.CloseForSales or PumpMessage.OpenForSales or PumpMessage.Lock or PumpMessage.Clear) SaveState();
+        foreach (var e in events) Send(new LinkFrame(LinkFrame.TagEvent, E: e), WireKind.Event);
+        if (env.CorrelationId is { } corr)
+        {
+            var answer = LocalDispenserLink.AnswerFor(corr, events);
+            Answers++;
+            Send(new LinkFrame(LinkFrame.TagAnswer, A: answer), WireKind.Answer, corr);
+        }
         var view = Dispenser.View(RunId, Environment.ProcessId, CustodyPath);
         // Every non-tick message and every tick that changed something. An idle tick sends nothing.
         if (env.M is not PumpMessage.Tick || events.Count > 0 || view != _lastView)
         {
             _lastView = view;
-            Send(new LinkFrame(LinkFrame.TagView, V: view));
+            Send(new LinkFrame(LinkFrame.TagView, V: view), WireKind.Event);
         }
+    }
+
+    /// <summary>Once a period: our heartbeat out (unless a test paused it), and a note when the station goes quiet or comes back.</summary>
+    private void Pulse()
+    {
+        if (!StationConnected) return;
+        if (!_heartbeatsPaused)
+            Send(new LinkFrame(LinkFrame.TagHeartbeat, Hb: new WireHeartbeat(RunId, Dispenser.Pump.Phase.ToString(), _seq.LastSeq, _recv.LastSeq)), WireKind.Heartbeat);
+        var alive = _live.IsAlive(_clock.GetUtcNow());
+        bool changed;
+        lock (_gate) { changed = alive != _stationAlive; _stationAlive = alive; }
+        if (!changed) return;
+        if (alive) Log.Write("dispenser", "station heartbeats are back");
+        else Log.Warn("dispenser", "station silent: no heartbeat for {Window}; the pump keeps its own limits", ("Window", _live.Window));
     }
 
     private void AcceptLoop()
@@ -144,10 +195,8 @@ public sealed class DispenserServer : IDisposable
                 string? line;
                 while ((line = reader.ReadLine()) is not null)
                 {
-                    LinkFrame? f;
-                    try { f = LinkJson.Decode(line); }
-                    catch (JsonException ex) { Log.Warn("dispenser", "bad frame from station: {Message}", ("Message", ex.Message)); continue; }
-                    if (f is null) continue;
+                    var (f, fault, detail) = FrameCodec.Decode(line, _me);
+                    if (f is null) { Log.Warn("dispenser", "frame from station refused: {Fault} {Detail}", ("Fault", fault), ("Detail", detail)); continue; }
                     if (!Receive(f)) break;
                 }
             }
@@ -164,42 +213,87 @@ public sealed class DispenserServer : IDisposable
     }
 
     /// <summary>Returns false when the station told us the power is off.</summary>
-    private bool Receive(LinkFrame f)
+    private bool Receive(WireFrame f)
     {
-        switch (f.T)
+        if (f.Body is { T: LinkFrame.TagHello, Hello: { } h })
         {
-            case LinkFrame.TagHello when f.Hello is { } h:
-                Log.Write("dispenser", "station {Id} pid {Pid} said hello", ("Id", h.Id), ("Pid", h.Pid));
+            // A new station process numbers from one again.
+            _recv.Reset();
+            _recv.Check(f);
+            _live.Reset();
+            lock (_gate) _stationAlive = true;
+            Log.Write("dispenser", "station {Id} pid {Pid} said hello, last seen our frame {LastSeq}", ("Id", h.Id), ("Pid", h.Pid), ("LastSeq", h.LastSeqReceived));
+            return true;
+        }
+
+        var (verdict, from, to) = _recv.Check(f);
+        if (verdict == Accept.Duplicate) return true;
+        if (verdict == Accept.Gap)
+        {
+            Log.Warn("dispenser", "gap in station frames {From}..{To}, asking for them", ("From", from), ("To", to));
+            Send(new LinkFrame(LinkFrame.TagRead, Read: new WireRead(WireRead.Frames, from, to)), WireKind.Read);
+        }
+
+        switch (f.Kind)
+        {
+            case WireKind.Heartbeat when f.Body.Hb is { } hb:
+                _live.Beat(hb, _clock.GetUtcNow());
+                return true;
+            case WireKind.Read when f.Body.Read is { } r:
+                if (r.What == WireRead.Frames && r.FromSeq is { } rf) foreach (var old in _seq.Replay(rf, r.ToSeq)) _ = Write(old);
+                else if (r.What == WireRead.Transactions) Send(new LinkFrame(LinkFrame.TagTransactions, Tx: Dispenser.Pump.Transactions.Open), WireKind.Event);
+                return true;
+        }
+
+        switch (f.Body.T)
+        {
+            case LinkFrame.TagMsg when f.Body.M is { } m:
+                if (_commandsDropped) { Log.Warn("dispenser", "test hook dropped {Message}", ("Message", m.GetType().Name)); return true; }
+                if (f.IsStale(_clock.GetUtcNow()))
+                {
+                    // Too old to act on. Say so if an answer was wanted, and never run it.
+                    StaleCommands++;
+                    Log.Warn("dispenser", "{Message} arrived {Age} after it was sent, past its {Ttl}; refused as stale", ("Message", m.GetType().Name), ("Age", _clock.GetUtcNow() - f.SentAt), ("Ttl", f.Ttl));
+                    if (f.CorrelationId is { } sc) { Answers++; Send(new LinkFrame(LinkFrame.TagAnswer, A: new WireAnswer(sc, AnswerCode.Stale, $"{m.GetType().Name} older than {f.Ttl}")), WireKind.Answer, sc); }
+                    return true;
+                }
+                _box.Post(new PumpEnvelope(f.Body.SaleId, m, f.CorrelationId));
                 break;
-            case LinkFrame.TagMsg when f.M is { } m:
-                _box.Post((f.SaleId, m));
-                break;
-            case LinkFrame.TagPower when f.On == false:
+            case LinkFrame.TagPower when f.Body.On == false:
                 PowerOff();
                 return false;
         }
         return true;
     }
 
+    /// <summary>
+    /// A station is on the line. Sends happen outside <c>_gate</c>: Send takes
+    /// the sequencer's lock and then <c>_gate</c> inside Write, so holding
+    /// <c>_gate</c> here while the heartbeat timer sends would deadlock. Each
+    /// frame is written whole under one lock anyway, so interleaving with a
+    /// live entry is harmless: the station de-duplicates ledger entries by run
+    /// and sequence, and the chain replay has its own lock.
+    /// </summary>
     private void Attach(StreamWriter writer, TcpClient tcp)
     {
         lock (_gate)
         {
             _client = writer;
             _tcp = tcp;
-            Send(new LinkFrame(LinkFrame.TagHello, Hello: new LinkHello("dispenser", _options.Dispenser.PumpId, RunId, Environment.ProcessId, CustodyPath)));
-            // What this run already wrote before the station arrived: the ledger in full (the station de-duplicates by
-            // run and sequence), the last stretch of the log. Then the whole chain so far, then live. SubscribeWithReplay
-            // does the chain's replay and subscription under one lock, so no line is missed or doubled.
-            foreach (var e in Ledger.Snapshot()) Send(new LinkFrame(LinkFrame.TagLedger, L: e));
-            foreach (var l in Log.Snapshot().Where(l => l.Source != "ledger").TakeLast(200)) Send(new LinkFrame(LinkFrame.TagLog, Log: WireLog.From(l)));
-            if (_stream is not null)
-            {
-                _custodyHandler = line => Send(new LinkFrame(LinkFrame.TagCustody, Line: line));
-                _stream.SubscribeWithReplay(_custodyHandler);
-            }
-            Send(new LinkFrame(LinkFrame.TagView, V: Dispenser.View(RunId, Environment.ProcessId, CustodyPath)));
         }
+        Send(new LinkFrame(LinkFrame.TagHello, Hello: new LinkHello("dispenser", _options.Dispenser.PumpId, RunId, Environment.ProcessId, CustodyPath, _recv.LastSeq)), WireKind.Event);
+        // What this run already wrote before the station arrived: the ledger in full, the last stretch of the log, then
+        // the whole chain so far and then live. SubscribeWithReplay does the chain's replay and subscription under one
+        // lock, so no line is missed or doubled.
+        foreach (var e in Ledger.Snapshot()) Send(new LinkFrame(LinkFrame.TagLedger, L: e), WireKind.Event);
+        foreach (var l in Log.Snapshot().Where(l => l.Source != "ledger").TakeLast(200)) Send(new LinkFrame(LinkFrame.TagLog, Log: WireLog.From(l)), WireKind.Event);
+        if (_stream is not null)
+        {
+            Action<string> handler = line => Send(new LinkFrame(LinkFrame.TagCustody, Line: line), WireKind.Event);
+            lock (_gate) _custodyHandler = handler;
+            _stream.SubscribeWithReplay(handler);
+        }
+        Send(new LinkFrame(LinkFrame.TagView, V: Dispenser.View(RunId, Environment.ProcessId, CustodyPath)), WireKind.Event);
     }
 
     private void Detach()
@@ -215,20 +309,27 @@ public sealed class DispenserServer : IDisposable
         }
     }
 
-    private void Send(LinkFrame f)
+    private void Send(LinkFrame body, WireKind kind, string? correlationId = null)
+    {
+        var dest = kind == WireKind.Heartbeat ? WireNode.Broadcast : _peer;
+        _seq.Send(kind, dest, body, _clock.GetUtcNow(), Write, correlationId);
+    }
+
+    /// <summary>True when the frame went out. False gives its number back to the sequencer, so a station that connects later sees no gap.</summary>
+    private bool Write(WireFrame f)
     {
         lock (_gate)
         {
-            if (_client is null) return;
-            try { _client.WriteLine(LinkJson.Encode(f)); _client.Flush(); }
-            catch (IOException) { _client = null; }
-            catch (ObjectDisposedException) { _client = null; }
+            if (_client is null) return false;
+            try { _client.WriteLine(FrameCodec.Encode(f)); _client.Flush(); return true; }
+            catch (IOException) { _client = null; return false; }
+            catch (ObjectDisposedException) { _client = null; return false; }
         }
     }
 
-    // ----- The small state the dispenser owns across its own restarts: the sealed counter and the burned nonces.
+    // ----- The small state the dispenser owns across its own restarts: the sealed counter, the burned nonces, the broken parts, the unpaid deliveries.
 
-    /// <summary>Conditions lists the broken parts. Restarting the software repairs nothing on the island.</summary>
+    /// <summary>Conditions lists the broken parts. Transactions are the deliveries not yet cleared by a station. Restarting the software repairs nothing and forgets no money.</summary>
     private sealed record DispenserState(long TotalizerMilliGallons, List<string> Nonces, List<string>? Conditions = null, long TxSeq = 0, List<PumpTransaction>? Transactions = null);
 
     private void RestoreState()
@@ -240,7 +341,7 @@ public sealed class DispenserServer : IDisposable
             if (s is null) return;
             Dispenser.Totalizer.Restore(new Volume(s.TotalizerMilliGallons));
             Dispenser.Nonces.Import(s.Nonces);
-            if (s.Transactions is { Count: > 0 } tx || s.TxSeq > 0)
+            if (s.Transactions is { Count: > 0 } || s.TxSeq > 0)
             {
                 Dispenser.Pump.Transactions.Restore(s.TxSeq, s.Transactions ?? []);
                 var open = Dispenser.Pump.Transactions.Open;
@@ -279,6 +380,9 @@ public sealed class DispenserServer : IDisposable
         if (Interlocked.Exchange(ref _torndown, 1) == 1) return;
         Log.Error("dispenser", "power removed by the station; pump {Phase} at {Volume} {Money}", ("Phase", Dispenser.Pump.Phase), ("Volume", Dispenser.Pump.Volume), ("Money", Dispenser.Pump.Money));
         Ledger.Append("dispenser.poweroff", $"{_options.Dispenser.PumpId} run {RunId} pump {Dispenser.Pump.Phase} {Dispenser.Pump.Volume} {Dispenser.Pump.Money} totalizer {Dispenser.Totalizer.Total}");
+        // The delivery so far goes to the buffer, and the buffer to disk, before the process ends.
+        Dispenser.Pump.PowerLost();
+        SaveState();
         _stream?.Pump();
         Shutdown();
         PoweredOff?.Invoke();
@@ -287,6 +391,7 @@ public sealed class DispenserServer : IDisposable
     private void Shutdown()
     {
         _cts.Cancel();
+        _pulse.Dispose();
         try { _listener.Stop(); } catch (SocketException) { }
         Detach();
         _dispatch.Dispose();

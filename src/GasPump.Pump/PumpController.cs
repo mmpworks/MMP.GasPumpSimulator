@@ -541,6 +541,22 @@ public sealed class PumpController(
         Phase = RestingPhase;
     }
 
+    /// <summary>
+    /// The power is going. The valve is already shut by the loss itself; what
+    /// matters is that the delivery so far is written to the transaction buffer
+    /// before the lights go out, the way a dispenser's battery-backed memory
+    /// keeps the running sale. No fault is recorded: the island did nothing wrong.
+    /// </summary>
+    public void PowerLost()
+    {
+        if (Phase is not (PumpPhase.Dispensing or PumpPhase.Paused or PumpPhase.Armed)) return;
+        hydraulics.Close();
+        ledger.Append("valve.close", $"{_armed?.SaleId} power lost {Volume} {Money} totalizer {totalizer.Total}");
+        RecordTransaction("power lost");
+        ClearSale();
+        Phase = RestingPhase;
+    }
+
     /// <summary>The stage holding the hose right now, or null while fuel flows.</summary>
     public IDeliveryStage? HoseOwner => _hoseOwner;
 

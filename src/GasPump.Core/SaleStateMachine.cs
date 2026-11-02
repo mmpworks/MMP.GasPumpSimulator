@@ -189,6 +189,15 @@ public sealed class SaleStateMachine
                 commands.Add(new SaleCommand.Log(SaleId, $"nozzle lifted with no authorization ({State}), pump calling"));
                 return commands;
 
+            // The island's own end-of-delivery report, a frame behind a sale this station already settled, names the
+            // transaction still to clear. A hang with no number in these states is the driver putting the nozzle back.
+            case (SaleState.Idle, SaleEvent.NozzleHung { TxSeq: not null } lateIdle):
+                NoteTransaction(lateIdle.TxSeq, commands);
+                NozzleOut = false;
+                SpoutInserted = false;
+                commands.Add(new SaleCommand.Log(SaleId, $"delivery end reported in {State}, transaction #{lateIdle.TxSeq}"));
+                return commands;
+
             case (SaleState.Idle, SaleEvent.NozzleHung):
             case (SaleState.CardRead, SaleEvent.NozzleHung):
             case (SaleState.Authorizing, SaleEvent.NozzleHung):

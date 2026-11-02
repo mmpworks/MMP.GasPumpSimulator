@@ -8,6 +8,14 @@ import { state } from '../sim'
 const d = computed(() => state.value?.dispenser)
 const up = computed(() => !!d.value?.connected)
 const kind = computed(() => d.value?.link ?? 'socket')
+// Heartbeat age in whole seconds, from the station's clock in the same state push. Null before the first beat.
+const beatAge = computed(() => {
+  const at = d.value?.heartbeatAt; const now = state.value?.now
+  if (!at || !now) return null
+  return Math.max(0, Math.round((new Date(now).getTime() - new Date(at).getTime()) / 1000))
+})
+const silent = computed(() => up.value && d.value?.peerAlive === false)
+const openTx = computed(() => state.value?.pump.openTransactions?.length ?? 0)
 </script>
 
 <template>
@@ -32,12 +40,27 @@ const kind = computed(() => d.value?.link ?? 'socket')
       <b>{{ d?.custodyLines ?? 0 }}</b>
       <span>chain</span>
     </div>
+    <div v-if="kind === 'socket'" class="counter" :title="`sequence numbers: ${d?.lastSeqSent ?? 0} sent, ${d?.lastSeqReceived ?? 0} received; ${d?.gaps ?? 0} gaps asked for, ${d?.duplicates ?? 0} duplicates dropped`" data-testid="link-seq">
+      <v-icon size="16">mdi-counter</v-icon>
+      <b>{{ d?.lastSeqReceived ?? 0 }}</b>
+      <span>seq{{ (d?.gaps ?? 0) > 0 ? ` · ${d?.gaps} gap` : '' }}</span>
+    </div>
+    <div v-if="kind === 'socket'" class="counter" :class="{ silent }" :title="silent ? 'the socket is open and the dispenser stopped talking' : `last heartbeat from the dispenser, status ${d?.peerStatus ?? '-'}`" data-testid="link-heartbeat">
+      <v-icon size="16" :color="silent ? 'error' : undefined">{{ silent ? 'mdi-heart-broken' : 'mdi-heart-pulse' }}</v-icon>
+      <b>{{ beatAge === null ? '-' : `${beatAge}s` }}</b>
+      <span>{{ silent ? 'SILENT' : 'beat' }}</span>
+    </div>
+    <div v-if="openTx > 0" class="counter" title="deliveries the island still holds until the station settles them" data-testid="link-open-tx">
+      <v-icon size="16" color="warning">mdi-receipt-text-clock</v-icon>
+      <b>{{ openTx }}</b>
+      <span>payable</span>
+    </div>
     <div class="wire" :class="{ live: up }"></div>
     <div class="link-foot">
       <template v-if="kind === 'socket'">
         <div>JSON lines</div>
         <div>one per frame</div>
-        <div class="mt-2">{{ up ? 'both processes up' : 'dispenser unreachable' }}</div>
+        <div class="mt-2">{{ silent ? 'dispenser silent' : up ? 'both processes up' : 'dispenser unreachable' }}</div>
       </template>
       <template v-else>
         <div>same process</div>

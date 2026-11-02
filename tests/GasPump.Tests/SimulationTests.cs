@@ -804,6 +804,48 @@ public class SimulationTests
     // ----- Service conditions: a fault that needs a repair holds the pump out of service until the repair, then clears.
 
     /// <summary>Card, approval, grade, lift, insert, squeeze, and a few seconds of fuel.</summary>
+    [Theory]
+    [MemberData(nameof(SimHarness.Strategies), MemberType = typeof(SimHarness))]
+    public void A_settled_sale_leaves_the_island_holding_nothing_and_every_command_was_answered(string strategy)
+    {
+        using var h = new SimHarness(strategy, ThirtyDollarHold);
+        FuelForAWhile(h);
+        h.Sim.HangNozzle();
+        h.AdvanceUntil(() => h.State.State == SaleState.Idle && h.State.Hold == HoldStatus.Settled, TimeSpan.FromSeconds(10));
+        h.Settle();
+
+        Assert.Empty(h.Sim.Pump.Transactions.Open);
+        Assert.Empty(h.Sim.View.OpenTransactions ?? []);
+        var kinds = h.Sim.Ledger.Snapshot().Select(e => e.Kind).ToList();
+        // The island's record, in order: written at the hang-up, claimed and released by the station once the bank answered.
+        Assert.True(kinds.IndexOf("tx.payable") < kinds.IndexOf("tx.clear"), string.Join(",", kinds));
+        Assert.True(kinds.IndexOf("tx.clear") < kinds.IndexOf("tx.locked"), string.Join(",", kinds));
+        Assert.True(kinds.IndexOf("tx.locked") < kinds.IndexOf("tx.cleared"), string.Join(",", kinds));
+        var answers = h.Sim.Ledger.Snapshot().Where(e => e.Kind == "cmd.answer").Select(e => e.Detail).ToList();
+        Assert.Contains(answers, d => d.StartsWith("Arm ") && d.EndsWith(" Done"));
+        Assert.Contains(answers, d => d.StartsWith("Lock ") && d.EndsWith(" Done"));
+        Assert.Contains(answers, d => d.StartsWith("Clear ") && d.EndsWith(" Done"));
+        Assert.DoesNotContain(kinds, k => k == "cmd.unanswered");
+
+        // The next driver is not held up by the last one's paperwork.
+        Assert.True(h.TryPresent("Good").Ok);
+        h.AdvanceUntilState(SaleState.ReadyToPump, TimeSpan.FromSeconds(5));
+    }
+
+    [Theory]
+    [MemberData(nameof(SimHarness.Strategies), MemberType = typeof(SimHarness))]
+    public void A_delivery_whose_money_is_queued_by_a_dead_host_still_releases_the_island(string strategy)
+    {
+        using var h = new SimHarness(strategy, ThirtyDollarHold);
+        FuelForAWhile(h);
+        h.Sim.Network.Mode = NetworkMode.Down;                   // the completion cannot reach the bank
+        h.Sim.HangNozzle();
+        h.AdvanceUntilState(SaleState.StoreAndForward, TimeSpan.FromSeconds(30));
+        h.Settle();
+        Assert.Empty(h.Sim.Pump.Transactions.Open);               // queued on the station is safe enough for the island
+        Assert.Contains(h.Sim.Ledger.Snapshot(), e => e.Kind == "tx.cleared");
+    }
+
     private static void FuelForAWhile(SimHarness h, double seconds = 2)
     {
         h.Present("Good");

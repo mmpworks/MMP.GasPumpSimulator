@@ -26,8 +26,13 @@ export interface Station {
 export interface DispenserLink {
   link: 'socket' | 'in-process'; connected: boolean; pid: number | null; runId: string | null; custodyPath: string | null
   framesSent: number; framesReceived: number; custodyLines: number; port: number | null
+  /** The envelope's view of the wire: sequence numbers each way, gaps asked for, duplicates dropped, the peer's last heartbeat. */
+  lastSeqSent: number; lastSeqReceived: number; gaps: number; duplicates: number
+  heartbeatAt: string | null; peerStatus: string | null; peerAlive: boolean
   processRunning: boolean; external: boolean; lastExit: string | null
 }
+/** A delivery the island still holds for the station: Payable until the station locks it, Cleared once the money landed. */
+export interface OpenTransaction { txSeq: number; saleId: string; grade: string; gallons: number; cents: number; state: 'Payable' | 'Locked' | 'Cleared'; lockedBy: string | null; endReason: string }
 export interface Site { creditHoldCents: number; debitHoldCents: number; failedPins: number; lockedUntil: string | null; maxPinFailures: number }
 export interface Recovery {
   kind: 'CleanStart' | 'ClosedOut' | 'Reversed' | 'CompletionResent'; previousRunId: string; saleId: string | null; tender: string; grade: string
@@ -41,6 +46,7 @@ export interface Pump {
   supplyAvailable: boolean; breakawayOpen: boolean; pulserDead: boolean; ledgerIntact: boolean; runId: string; pid: number
   /** Empty codes means in service. Each code names the part that holds the pump out of service until its repair. */
   inService: boolean; serviceCodes: string[]; serviceParts: string[]
+  openTransactions: OpenTransaction[]
 }
 export interface State {
   strategy: string; pumpId: string; sale: Sale
