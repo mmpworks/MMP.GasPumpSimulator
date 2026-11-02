@@ -75,8 +75,8 @@ public class RecoveryTests : IDisposable
 
         var snapshot = StateJournal.Load(Path.Combine(_dir, "state.json"));
         Assert.NotNull(snapshot);
-        Assert.Equal("Fueling", snapshot!.Sale.State);
-        Assert.Equal("Plus", snapshot.Sale.Grade);
+        Assert.Equal("Fueling", snapshot!.Point(1)!.Sale.State);
+        Assert.Equal("Plus", snapshot.Point(1)!.Sale.Grade);
 
         using (var h2 = new SimHarness(strategy, Options("RUN-2")))
         {
@@ -92,7 +92,7 @@ public class RecoveryTests : IDisposable
             Assert.Equal(SaleState.Idle, h2.State.State);
             Assert.Equal(totalizer, h2.Sim.Totalizer.Total);
             // The bank's hold was restored from the journal and settled to the recorded money, no more.
-            Assert.Equal(before - h2.Sim.Issuer.AvailableBalance(card.Pan), snapshot.Sale.MoneyCents == recordedMoney.Cents ? recordedMoney : new Money(snapshot.Sale.MoneyCents));
+            Assert.Equal(before - h2.Sim.Issuer.AvailableBalance(card.Pan), snapshot.Point(1)!.Sale.MoneyCents == recordedMoney.Cents ? recordedMoney : new Money(snapshot.Point(1)!.Sale.MoneyCents));
             Assert.Empty(h2.Sim.Issuer.OpenHolds);
             var kinds = h2.Sim.Ledger.Snapshot().Select(e => e.Kind).ToList();
             Assert.Contains("recovery.restart", kinds);
@@ -402,25 +402,28 @@ public class RecoveryTests : IDisposable
     {
         var now = SimHarness.Start.AddSeconds(3);
         static JournalSnapshot Snap(string state, long volume, long money, long flow, string tender = "Credit", string hold = "Held") => new(
-            1, SimHarness.Start, "RUN-0", "PUMP-07", 3,
-            new JournalSale("S0003", state, tender, "Regular", true, "Good", 3000, volume, money, flow, hold, tender == "Cash" ? 2000 : 0),
-            "Dispensing", "Regular", [], new() { ["S0003"] = tender }, new(), new(), 3000, 5000, 0, null, 0, [], new([], [], []));
+            JournalSnapshot.CurrentVersion, SimHarness.Start, "RUN-0",
+            [new JournalPoint(1, "PUMP-01", 3, new JournalSale("P1-S0003", state, tender, "Regular", true, "Good", 3000, volume, money, flow, hold, tender == "Cash" ? 2000 : 0), "Dispensing", "Regular", 0, [])],
+            [], new() { ["P1-S0003"] = tender }, new(), new(), 3000, 5000, 0, null, new([], [], []));
+        static RecoveryOutcome Plan(JournalSnapshot? s, DateTimeOffset now) => RecoveryPlan.Build(s, 1, now, TimeSpan.FromSeconds(1));
 
         // A sale that ended with the bank still holding the money: the compensation is finished on the restart.
-        Assert.Equal(RecoveryKind.Reversed, RecoveryPlan.Build(Snap("Faulted", 0, 0, 0), now, TimeSpan.FromSeconds(1)).Kind);
-        Assert.Equal(RecoveryKind.Reversed, RecoveryPlan.Build(Snap("Cancelled", 0, 0, 0, hold: "Requested"), now, TimeSpan.FromSeconds(1)).Kind);
-        Assert.Equal(RecoveryKind.CompletionResent, RecoveryPlan.Build(Snap("Faulted", 1_500, 525, 0), now, TimeSpan.FromSeconds(1)).Kind);
-        Assert.Equal(RecoveryKind.CleanStart, RecoveryPlan.Build(Snap("Faulted", 0, 0, 0, hold: "Released"), now, TimeSpan.FromSeconds(1)).Kind);
-        Assert.Equal(RecoveryKind.CleanStart, RecoveryPlan.Build(Snap("StoreAndForward", 1_500, 525, 0, hold: "SettlePending"), now, TimeSpan.FromSeconds(1)).Kind);
+        Assert.Equal(RecoveryKind.Reversed, Plan(Snap("Faulted", 0, 0, 0), now).Kind);
+        Assert.Equal(RecoveryKind.Reversed, Plan(Snap("Cancelled", 0, 0, 0, hold: "Requested"), now).Kind);
+        Assert.Equal(RecoveryKind.CompletionResent, Plan(Snap("Faulted", 1_500, 525, 0), now).Kind);
+        Assert.Equal(RecoveryKind.CleanStart, Plan(Snap("Faulted", 0, 0, 0, hold: "Released"), now).Kind);
+        Assert.Equal(RecoveryKind.CleanStart, Plan(Snap("StoreAndForward", 1_500, 525, 0, hold: "SettlePending"), now).Kind);
 
-        Assert.Equal(RecoveryKind.CleanStart, RecoveryPlan.Build(null, now, TimeSpan.FromSeconds(1)).Kind);
-        Assert.Equal(RecoveryKind.CleanStart, RecoveryPlan.Build(Snap("Idle", 0, 0, 0), now, TimeSpan.FromSeconds(1)).Kind);
-        Assert.Equal(RecoveryKind.Reversed, RecoveryPlan.Build(Snap("ReadyToPump", 0, 0, 0), now, TimeSpan.FromSeconds(1)).Kind);
-        Assert.Equal(RecoveryKind.Reversed, RecoveryPlan.Build(Snap("Fueling", 0, 0, 167), now, TimeSpan.FromSeconds(1)).Kind);
-        var closed = RecoveryPlan.Build(Snap("Fueling", 1_500, 525, 167), now, TimeSpan.FromSeconds(1));
+        Assert.Equal(RecoveryKind.CleanStart, Plan(null, now).Kind);
+        // A journal from a station with fewer pumps: the new pump has nothing to close.
+        Assert.Equal(RecoveryKind.CleanStart, RecoveryPlan.Build(Snap("Fueling", 1_500, 525, 167), 2, now, TimeSpan.FromSeconds(1)).Kind);
+        Assert.Equal(RecoveryKind.CleanStart, Plan(Snap("Idle", 0, 0, 0), now).Kind);
+        Assert.Equal(RecoveryKind.Reversed, Plan(Snap("ReadyToPump", 0, 0, 0), now).Kind);
+        Assert.Equal(RecoveryKind.Reversed, Plan(Snap("Fueling", 0, 0, 167), now).Kind);
+        var closed = Plan(Snap("Fueling", 1_500, 525, 167), now);
         Assert.Equal(RecoveryKind.ClosedOut, closed.Kind);
         Assert.Equal(new Volume(167), closed.UnrecordedUpTo);     // one second at 10 gpm
         Assert.Equal(TimeSpan.FromSeconds(3), closed.SnapshotAge);
-        Assert.Equal(RecoveryKind.CompletionResent, RecoveryPlan.Build(Snap("Completing", 1_500, 525, 0), now, TimeSpan.FromSeconds(1)).Kind);
+        Assert.Equal(RecoveryKind.CompletionResent, Plan(Snap("Completing", 1_500, 525, 0), now).Kind);
     }
 }

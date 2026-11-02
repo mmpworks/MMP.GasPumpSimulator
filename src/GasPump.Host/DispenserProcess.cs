@@ -10,11 +10,14 @@ namespace GasPump.Host;
 /// listens on the port (a dispenser started by hand, for a demo on two
 /// terminals), the station connects to that and owns nothing.
 /// </summary>
-public sealed class DispenserProcess(int port, string pumpId, string logDir, string strategy) : IDisposable
+public sealed class DispenserProcess(int number, int port, string pumpId, string logDir, string strategy) : IDisposable
 {
     private readonly Lock _gate = new();
     private Process? _process;
 
+    /// <summary>The pump this process is, 1-based.</summary>
+    public int Number => number;
+    public string PumpId => pumpId;
     public int Port => port;
     public bool External { get; private set; }
     public int? Pid { get { lock (_gate) return _process is { HasExited: false } p ? p.Id : null; } }

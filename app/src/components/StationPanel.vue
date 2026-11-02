@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
-import { api, state, dollars } from '../sim'
+import { api, state, dollars, pumpState } from '../sim'
 import NetworkPanel from './NetworkPanel.vue'
 import AdminPanel from './AdminPanel.vue'
 
@@ -13,11 +13,11 @@ watch(tab, t => { try { localStorage.setItem('gaspump.station-tab', t) } catch {
 const bankHint = computed(() => state.value?.network.mode ?? '')
 const adminLocked = computed(() => !!state.value?.site.lockedUntil)
 const estop = computed(() => !!state.value?.station.estopActive)
-const recovery = computed(() => state.value?.recovery && state.value.recovery.kind !== 'CleanStart' ? state.value.recovery : null)
-const d = computed(() => state.value?.dispenser)
-const pumpClosed = computed(() => state.value?.pump.phase === 'Closed' || !!state.value?.pump.serviceParts.includes('pump switch'))
-const pumpCalling = computed(() => state.value?.pump.phase === 'Calling')
-const totals = computed(() => state.value?.totals ?? null)
+const recovery = computed(() => pumpState.value?.recovery && pumpState.value!.recovery.kind !== 'CleanStart' ? pumpState.value!.recovery : null)
+const d = computed(() => pumpState.value?.dispenser)
+const pumpClosed = computed(() => pumpState.value?.pump.phase === 'Closed' || !!pumpState.value?.pump.serviceParts.includes('pump switch'))
+const pumpCalling = computed(() => pumpState.value?.pump.phase === 'Calling')
+const totals = computed(() => pumpState.value?.totals ?? null)
 </script>
 
 <template>

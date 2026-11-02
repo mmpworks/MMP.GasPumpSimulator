@@ -14,12 +14,15 @@ namespace GasPump.Dispatch;
 public sealed partial class CustodyCopy
 {
     private readonly string _directory;
+    private readonly string _prefix;
     private readonly Lock _gate = new();
     private long _lastSeq = -1;
 
-    public CustodyCopy(string directory)
+    /// <param name="label">Names the copy's file beside the run id (<c>station-copy-P1-RUN.ndjson</c>), so two pumps' copies never share a file. Null keeps the one-pump name.</param>
+    public CustodyCopy(string directory, string? label = null)
     {
         _directory = directory;
+        _prefix = label is null ? "" : label + "-";
     }
 
     public string? Path { get; private set; }
@@ -53,7 +56,7 @@ public sealed partial class CustodyCopy
     private void OpenRun(string runId)
     {
         RunId = runId;
-        Path = System.IO.Path.Combine(_directory, $"station-copy-{runId}.ndjson");
+        Path = System.IO.Path.Combine(_directory, $"station-copy-{_prefix}{runId}.ndjson");
         _lastSeq = -1;
         Lines = 0;
         if (!File.Exists(Path)) return;

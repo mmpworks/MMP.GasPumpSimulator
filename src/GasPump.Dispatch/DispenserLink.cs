@@ -111,7 +111,8 @@ public sealed class LocalDispenserLink : IDispenserLink
     private readonly TimeProvider _clock;
     private long _sent, _received;
 
-    public LocalDispenserLink(Dispenser dispenser, IDispatchStrategy dispatch, TimeSpan tickPeriod, Func<string> currentSaleId, CustodyStream? custody, string runId, string? custodyPath, TimeProvider? clock = null)
+    /// <param name="number">The pump number, which names this pump's worker and ticker so two in-process pumps can be told apart in a trace.</param>
+    public LocalDispenserLink(Dispenser dispenser, IDispatchStrategy dispatch, TimeSpan tickPeriod, Func<string> currentSaleId, CustodyStream? custody, string runId, string? custodyPath, int number = 1, TimeProvider? clock = null)
     {
         _dispenser = dispenser;
         _currentSaleId = currentSaleId;
@@ -119,9 +120,9 @@ public sealed class LocalDispenserLink : IDispenserLink
         _runId = runId;
         _custodyPath = custodyPath;
         _clock = clock ?? TimeProvider.System;
-        _box = dispatch.CreateMailbox<PumpEnvelope>("pump", 1024);
-        dispatch.StartWorker("pump", _box, Handle);
-        dispatch.StartTicker("pump-tick", tickPeriod, _box, () => new PumpEnvelope(null, new PumpMessage.Tick(tickPeriod)));
+        _box = dispatch.CreateMailbox<PumpEnvelope>($"pump-{number}", 1024);
+        dispatch.StartWorker($"pump-{number}", _box, Handle);
+        dispatch.StartTicker($"pump-tick-{number}", tickPeriod, _box, () => new PumpEnvelope(null, new PumpMessage.Tick(tickPeriod)));
     }
 
     public string Kind => "in-process";
@@ -310,6 +311,8 @@ public sealed class SocketDispenserLink : IDispenserLink
     public long FramesSent => Volatile.Read(ref _sent);
     public long FramesReceived => Volatile.Read(ref _received);
     public long FramesDropped => Volatile.Read(ref _dropped);
+    /// <summary>Connections dropped because the listener said it was another pump.</summary>
+    public long WrongIdentityRefusals { get; private set; }
     public int Backlog => 0;
     public DispenserView View { get { lock (_gate) return _view; } }
     public long CustodyLines { get { lock (_gate) return _custody.Count; } }
@@ -456,6 +459,15 @@ public sealed class SocketDispenserLink : IDispenserLink
         // A hello from a new dispenser run restarts its numbering; check that before the sequence rule runs.
         if (f.Body is { T: LinkFrame.TagHello, Hello: { } h })
         {
+            // The listener on this port must be the pump this link is for. A stale island from an older build, or another pump's,
+            // would refuse every frame we send as WrongDest while we showed its view as ours. Say so and drop the line.
+            if (h.Id != _pumpId)
+            {
+                _log.Error("link", "{Code} the dispenser at {Host}:{Port} says it is {Said}, this link is for {Wanted}; dropping the connection", ("Code", "LINK.DISPENSER.WRONGID"), ("Host", _host), ("Port", _port), ("Said", h.Id), ("Wanted", _pumpId));
+                WrongIdentityRefusals++;
+                lock (_gate) _client?.Dispose();
+                return;
+            }
             bool newRun;
             lock (_gate)
             {

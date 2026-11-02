@@ -8,10 +8,10 @@ namespace GasPump.Host;
 /// <summary>
 /// Fans simulation events out to every connected socket. Each socket gets its
 /// own bounded queue, and a slow client drops its oldest messages so it can't
-/// slow the simulation. The pump never waits on a browser. When the host
+/// slow the simulation. The pumps never wait on a browser. When the host
 /// swaps the simulation (power loss), the hub rebinds and pushes a full state.
 /// Every log line and ledger entry carries its origin, dispenser or station,
-/// so the UI can keep the two sides apart.
+/// and the pump it is about, so the UI can keep the sides and the tabs apart.
 /// </summary>
 public sealed class EventHub
 {
@@ -19,7 +19,7 @@ public sealed class EventHub
     private readonly Lock _gate = new();
     private readonly List<Channel<object>> _clients = [];
     private StationServer? _station;
-    private DispenserProcess? _process;
+    private IReadOnlyList<DispenserProcess> _processes = [];
     private StationIdentity _identity = StationIdentity.Default;
 
     public EventHub(SimulationHost host)
@@ -37,27 +37,34 @@ public sealed class EventHub
         };
     }
 
-    /// <summary>The station server and the dispenser process, once built, so the state push can carry their counters.</summary>
-    public void Attach(StationServer station, DispenserProcess? process, StationIdentity identity) { _station = station; _process = process; _identity = identity; }
+    /// <summary>The station server and the dispenser processes, once built, so the state push can carry their counters.</summary>
+    public void Attach(StationServer station, IReadOnlyList<DispenserProcess> processes, StationIdentity identity) { _station = station; _processes = processes; _identity = identity; }
 
-    private object StateFor(Simulation sim) => Contracts.State(sim, _host, _station, _process, _identity);
+    private object StateFor(Simulation sim) => Contracts.State(sim, _host, _station, _processes, _identity);
 
     private void Bind(Simulation sim)
     {
         sim.SaleChanged += s => Broadcast(Contracts.Sale(s));
-        sim.Log.Written += l => Broadcast(Contracts.Log(l, Origins.OfLog(l)));
-        sim.Ledger.Appended += e => Broadcast(Contracts.Ledger(e, Origins.OfLedger(e.Kind)));
-        sim.DispenserLog += l => Broadcast(Contracts.Log(l, Origins.Dispenser));
-        sim.DispenserLedger += e => { if (e.Seq == 1) Broadcast(new { type = "dispenser-run", runId = sim.Link.RemoteRunId }); Broadcast(Contracts.Ledger(e, Origins.Dispenser)); };
-        sim.DispenserViewChanged += v => Broadcast(Contracts.Pump(v));
+        sim.Log.Written += l => Broadcast(Contracts.Log(l, Origins.OfLog(l), Origins.PumpOfLog(l)));
+        sim.Ledger.Appended += e => Broadcast(Contracts.Ledger(e, Origins.OfLedger(e.Kind), Origins.PumpOfLedger(e.Detail)));
+        foreach (var point in sim.Points)
+        {
+            var n = point.Number;
+            point.DispenserLog += l => Broadcast(Contracts.Log(l, Origins.Dispenser, n));
+            point.DispenserLedger += e => { if (e.Seq == 1) Broadcast(new { type = "dispenser-run", pump = n, runId = point.Link.RemoteRunId }); Broadcast(Contracts.Ledger(e, Origins.Dispenser, n)); };
+            point.DispenserViewChanged += v => Broadcast(Contracts.Pump(v, n));
+        }
     }
 
     private static void Replay(Simulation sim, Action<object> send, int take = int.MaxValue)
     {
-        foreach (var l in sim.Log.Snapshot().TakeLast(take)) send(Contracts.Log(l, Origins.OfLog(l)));
-        foreach (var l in sim.DispenserLogSnapshot().TakeLast(take)) send(Contracts.Log(l, Origins.Dispenser));
-        foreach (var e in sim.Ledger.Snapshot().TakeLast(take)) send(Contracts.Ledger(e, Origins.OfLedger(e.Kind)));
-        foreach (var e in sim.DispenserLedgerSnapshot().TakeLast(take)) send(Contracts.Ledger(e, Origins.Dispenser));
+        foreach (var l in sim.Log.Snapshot().TakeLast(take)) send(Contracts.Log(l, Origins.OfLog(l), Origins.PumpOfLog(l)));
+        foreach (var e in sim.Ledger.Snapshot().TakeLast(take)) send(Contracts.Ledger(e, Origins.OfLedger(e.Kind), Origins.PumpOfLedger(e.Detail)));
+        foreach (var point in sim.Points)
+        {
+            foreach (var l in point.DispenserLogSnapshot().TakeLast(take)) send(Contracts.Log(l, Origins.Dispenser, point.Number));
+            foreach (var e in point.DispenserLedgerSnapshot().TakeLast(take)) send(Contracts.Ledger(e, Origins.Dispenser, point.Number));
+        }
     }
 
     private void Broadcast(object message)

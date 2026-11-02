@@ -88,7 +88,7 @@ public class KeypadTests
     public async Task A_wrong_zip_is_an_address_check_decline_and_holds_nothing()
     {
         var (gw, clock, issuer) = Gateway();
-        var task = gw.PreAuthorizeAsync("S1", TestCards.Get("Good"), Tender.Credit, "99999", CancellationToken.None);
+        var task = gw.PreAuthorizeAsync("S1", "PUMP-07", TestCards.Get("Good"), Tender.Credit, "99999", CancellationToken.None);
         clock.Advance(TimeSpan.FromMilliseconds(250));
         var r = await task;
         Assert.False(r.Approved);
@@ -100,7 +100,7 @@ public class KeypadTests
     public async Task A_wrong_pin_is_a_pin_decline_and_holds_nothing()
     {
         var (gw, clock, issuer) = Gateway();
-        var task = gw.PreAuthorizeAsync("S1", TestCards.Get("DebitGoodPin"), Tender.Debit, "0000", CancellationToken.None);
+        var task = gw.PreAuthorizeAsync("S1", "PUMP-07", TestCards.Get("DebitGoodPin"), Tender.Debit, "0000", CancellationToken.None);
         clock.Advance(TimeSpan.FromMilliseconds(250));
         var r = await task;
         Assert.False(r.Approved);
@@ -124,7 +124,7 @@ public class KeypadTests
         var clock = new Microsoft.Extensions.Time.Testing.FakeTimeProvider(SimHarness.Start);
         var issuer = IssuerSimulator.WithTestCards();
         var wire = new NetworkSimulator(new NetworkFaultPolicy(), clock);
-        var gw = new PaymentGateway(issuer, wire, new HmacAuthorizationSigner(new byte[32]), clock, "PUMP-07");
+        var gw = new PaymentGateway(issuer, wire, new HmacAuthorizationSigner(new byte[32]), clock);
         return (gw, clock, issuer);
     }
 

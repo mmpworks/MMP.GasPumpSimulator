@@ -44,7 +44,6 @@ public sealed class PaymentGateway
     private readonly INetwork _network;
     private readonly IAuthorizationSigner _signer;
     private readonly TimeProvider _clock;
-    private readonly string _pumpId;
     private readonly PaymentGatewayOptions _options;
     private readonly Lock _gate = new();
     private readonly List<PendingAdvice> _pending = [];
@@ -55,7 +54,6 @@ public sealed class PaymentGateway
         INetwork network,
         IAuthorizationSigner signer,
         TimeProvider clock,
-        string pumpId,
         PaymentGatewayOptions? options = null,
         SiteLimits? site = null,
         CashDrawer? drawer = null)
@@ -64,7 +62,6 @@ public sealed class PaymentGateway
         _network = network;
         _signer = signer;
         _clock = clock;
-        _pumpId = pumpId;
         _options = options ?? PaymentGatewayOptions.Default;
         Site = site ?? new SiteLimits(clock, Money.FromDollars(75), Money.FromDollars(50));
         Drawer = drawer ?? new CashDrawer();
@@ -128,8 +125,9 @@ public sealed class PaymentGateway
     /// line: a $50 debit ceiling against a $900 balance holds $50, and against
     /// an $18.50 balance it holds $18.50.
     /// </summary>
+    /// <param name="pumpId">The pump the sale is on. The token is signed for it, and only that pump's authority accepts the token.</param>
     /// <param name="keypad">What the driver typed at the keypad: the PIN for debit, the billing ZIP for credit. It rides to the bank on the card data and is checked there.</param>
-    public async Task<PreAuthResult> PreAuthorizeAsync(string saleId, CardData card, Tender tender, string? keypad, CancellationToken ct)
+    public async Task<PreAuthResult> PreAuthorizeAsync(string saleId, string pumpId, CardData card, Tender tender, string? keypad, CancellationToken ct)
     {
         if (tender == Tender.Cash) throw new ArgumentException("cash does not pre-authorize; use CashAuthorize", nameof(tender));
         lock (_gate) _tenders[saleId] = tender;
@@ -156,19 +154,19 @@ public sealed class PaymentGateway
 
         // The admin may have lowered the ceiling while the call was out. The lesser of the two always wins.
         var ceiling = Money.Min(decision.ApprovedAmount, Site.HoldFor(tender));
-        var token = _signer.Issue(saleId, _pumpId, ceiling, _options.MaxVolumePerSale, now, _options.TokenLifetime);
+        var token = _signer.Issue(saleId, pumpId, ceiling, _options.MaxVolumePerSale, now, _options.TokenLifetime);
         var code = decision.IsPartial(requested) ? "PartialApproval" : "Approved";
         return new PreAuthResult(true, ceiling, token.Serialize(), code, $"{decision.Message}, {tender} ceiling {ceiling}", NetworkFailure: false);
     }
 
     /// <summary>Cash path. No bank. The cashier's amount is the ceiling, to the cent, and the pump's hard limits still clamp it.</summary>
-    public PreAuthResult CashAuthorize(string saleId, Money amount)
+    public PreAuthResult CashAuthorize(string saleId, string pumpId, Money amount)
     {
         lock (_gate) _tenders[saleId] = Tender.Cash;
         if (amount <= Money.Zero)
             return new PreAuthResult(false, Money.Zero, null, "NoCash", "no cash taken", NetworkFailure: false);
         Drawer.Take(saleId, amount);
-        var token = _signer.Issue(saleId, _pumpId, amount, _options.MaxVolumePerSale, _clock.GetUtcNow(), _options.TokenLifetime);
+        var token = _signer.Issue(saleId, pumpId, amount, _options.MaxVolumePerSale, _clock.GetUtcNow(), _options.TokenLifetime);
         return new PreAuthResult(true, amount, token.Serialize(), "CashPrepaid", $"cash {amount} taken at the cashier", NetworkFailure: false);
     }
 
@@ -185,10 +183,11 @@ public sealed class PaymentGateway
         // Intent first, then one send path for everything owed, oldest first. If an older advice fails, this one waits behind it.
         var advice = new PendingAdvice(saleId, PendingKind.Completion, final, lines);
         Intend(advice);
-        var sent = await DrainPendingAsync(ct);
-        return sent.Any(advice.SameAs)
-            ? new CompletionResult(true, false, $"completion {final} sent")
-            : new CompletionResult(false, true, $"host {LastOutcome}, completion {final} queued");
+        await DrainPendingAsync(ct);
+        // Sent means the bank has it, whichever drain carried it: with two pumps, the other pump's drain may have sent this advice first.
+        return StillPending(advice)
+            ? new CompletionResult(false, true, $"host {LastOutcome}, completion {final} queued")
+            : new CompletionResult(true, false, $"completion {final} sent");
     }
 
     /// <summary>
@@ -205,37 +204,58 @@ public sealed class PaymentGateway
         }
         var advice = new PendingAdvice(saleId, PendingKind.Reversal, Money.Zero);
         Intend(advice);
-        var sent = await DrainPendingAsync(ct);
-        return sent.Any(advice.SameAs)
-            ? new ReversalResult(true, false, "hold reversed")
-            : new ReversalResult(false, true, $"host {LastOutcome}, reversal queued");
+        await DrainPendingAsync(ct);
+        return StillPending(advice)
+            ? new ReversalResult(false, true, $"host {LastOutcome}, reversal queued")
+            : new ReversalResult(true, false, "hold reversed");
     }
+
+    private bool StillPending(PendingAdvice advice) { lock (_gate) return _pending.Any(advice.SameAs); }
 
     /// <summary>The outcome of the last attempt on the wire, for the message a queued advice carries.</summary>
     private NetworkOutcome LastOutcome { get { lock (_gate) return _lastOutcome; } }
     private NetworkOutcome _lastOutcome = NetworkOutcome.Delivered;
 
-    /// <summary>Try every queued advice, oldest first. Stop at the first failure and keep the rest. Returns what was delivered.</summary>
+    /// <summary>One drain at a time. Two pumps completing at once under a non-blocking strategy would otherwise both send the head advice.</summary>
+    private readonly SemaphoreSlim _drainGate = new(1, 1);
+    private int _drainWaiters;
+
+    /// <summary>Calls parked behind another drain. A harness counts these as waiting on the clock, because the drain they wait for is.</summary>
+    public int DrainWaiters => Volatile.Read(ref _drainWaiters);
+
+    /// <summary>
+    /// Try every queued advice, oldest first. Stop at the first failure and
+    /// keep the rest. Returns what this drain delivered. Single-flight: a
+    /// second caller waits for the first drain to finish, then drains what is
+    /// left, so no advice goes to the bank twice from two drains.
+    /// </summary>
     public async Task<IReadOnlyList<PendingAdvice>> DrainPendingAsync(CancellationToken ct)
     {
         var sent = new List<PendingAdvice>();
-        while (true)
+        Interlocked.Increment(ref _drainWaiters);
+        try { await _drainGate.WaitAsync(ct); }
+        finally { Interlocked.Decrement(ref _drainWaiters); }
+        try
         {
-            PendingAdvice next;
-            lock (_gate)
+            while (true)
             {
-                if (_pending.Count == 0) return sent;
-                next = _pending[0];
+                PendingAdvice next;
+                lock (_gate)
+                {
+                    if (_pending.Count == 0) return sent;
+                    next = _pending[0];
+                }
+                var result = next.Kind == PendingKind.Completion
+                    ? await _network.SendAsync(() => { _issuer.Complete(next.SaleId, next.Final, next.Lines ?? []); return true; }, _options.HostTimeout, ct)
+                    : await _network.SendAsync(() => { _issuer.Reverse(next.SaleId); return true; }, _options.HostTimeout, ct);
+                lock (_gate) _lastOutcome = result.Outcome;
+                if (!result.Delivered) return sent;
+                lock (_gate) _pending.Remove(next);
+                sent.Add(next);
+                PendingChanged?.Invoke();
             }
-            var result = next.Kind == PendingKind.Completion
-                ? await _network.SendAsync(() => { _issuer.Complete(next.SaleId, next.Final, next.Lines ?? []); return true; }, _options.HostTimeout, ct)
-                : await _network.SendAsync(() => { _issuer.Reverse(next.SaleId); return true; }, _options.HostTimeout, ct);
-            lock (_gate) _lastOutcome = result.Outcome;
-            if (!result.Delivered) return sent;
-            lock (_gate) _pending.Remove(next);
-            sent.Add(next);
-            PendingChanged?.Invoke();
         }
+        finally { _drainGate.Release(); }
     }
 
     /// <summary>One advice per sale and kind. A retry that fails again must never double the queue. Returns true when it was new.</summary>

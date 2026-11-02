@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { api, cards, state } from '../sim'
+import { api, cards, state, pumpState } from '../sim'
 
 // Controls for what a hand can do at the pump and what can go wrong on the island. The card reader
 // (insert or tap) is here too. Everything else becomes a PumpMessage down the link.
-const sale = computed(() => state.value?.sale)
+const sale = computed(() => pumpState.value?.sale)
 const readerCard = ref('Good')
 const readerTender = ref<'Credit' | 'Debit'>('Credit')
 const readerNote = ref<string | null>(null)
@@ -34,8 +34,8 @@ const whyNoSqueeze = computed(() => {
   if (!spoutIn.value) return 'insert the spout first'
   return ''
 })
-const pump = computed(() => state.value?.pump)
-const d = computed(() => state.value?.dispenser)
+const pump = computed(() => pumpState.value?.pump)
+const d = computed(() => pumpState.value?.dispenser)
 const s = computed(() => sale.value?.state)
 const offline = computed(() => !d.value?.connected)
 const armed = computed(() => s.value === 'ReadyToPump' || s.value === 'Fueling')
@@ -81,7 +81,7 @@ const estop = computed(() => !!state.value?.station.estopActive)
       <div class="row-wrap">
         <v-btn v-for="g in grades" :key="g" :disabled="!canGrade" :color="pump?.selectedGrade === g ? 'primary' : undefined"
                :variant="pump?.selectedGrade === g ? 'flat' : 'outlined'" @click="selectedGrade(g)">
-          {{ g }} <span class="ml-1" :class="pump?.selectedGrade === g ? '' : 'muted'">{{ state?.prices[g] }}</span>
+          {{ g }} <span class="ml-1" :class="pump?.selectedGrade === g ? '' : 'muted'">{{ pumpState?.prices[g] }}</span>
         </v-btn>
       </div>
 
@@ -105,8 +105,8 @@ const estop = computed(() => !!state.value?.station.estopActive)
 
       <div class="step">Forecourt faults</div>
       <div class="row-wrap mb-1">
-        <v-btn v-if="pump?.supplyAvailable !== false" color="warning" size="small" prepend-icon="mdi-gas-station-off" :disabled="estop || offline" @click="api.fault('tankout')">Tank runs dry</v-btn>
-        <v-btn v-else color="success" size="small" prepend-icon="mdi-gas-station" :disabled="offline" @click="api.fault('tankback')">Tank refilled</v-btn>
+        <v-btn v-if="pump?.supplyAvailable !== false" color="warning" size="small" prepend-icon="mdi-gas-station-off" :disabled="estop || offline" @click="api.tank('tankout')">Tank runs dry</v-btn>
+        <v-btn v-else color="success" size="small" prepend-icon="mdi-gas-station" :disabled="offline" @click="api.tank('tankback')">Tank refilled</v-btn>
         <v-btn v-if="!pump?.pulserDead" color="warning" size="small" prepend-icon="mdi-counter" :disabled="estop || offline" @click="api.fault('pulserdead')">Kill the pulser</v-btn>
         <v-btn v-else color="success" size="small" prepend-icon="mdi-counter" :disabled="offline" @click="api.fault('pulserfix')">Fix the pulser</v-btn>
         <v-btn v-if="!pump?.breakawayOpen" color="warning" size="small" prepend-icon="mdi-car-off" :disabled="estop || offline" @click="api.fault('driveoff')">Drive-off (breakaway)</v-btn>

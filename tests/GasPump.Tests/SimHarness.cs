@@ -37,24 +37,35 @@ public sealed class SimHarness : IDisposable
 
     public static IEnumerable<object[]> Strategies => [["threaded"], ["channel"], ["asyncproxy"]];
 
+    /// <summary>Pump 1's sale. The one-pump tests read this; the two-pump tests read <see cref="Point"/>.</summary>
     public SaleSnapshot State => Sim.Snapshot();
 
-    /// <summary>The whole reader step as a driver does it: card in, then the keypad. Credit types the test ZIP, debit the test PIN.</summary>
-    public string Present(string card, Grade? grade = null, Tender tender = Tender.Credit, CardSource source = CardSource.PumpInsert, string? code = null)
+    /// <summary>Fuelling point <paramref name="number"/> of the station, 1-based.</summary>
+    public FuellingPoint Point(int number) => Sim.Point(number);
+
+    /// <summary>The whole reader step as a driver does it, at pump 1: card in, then the keypad. Credit types the test ZIP, debit the test PIN.</summary>
+    public string Present(string card, Grade? grade = null, Tender tender = Tender.Credit, CardSource source = CardSource.PumpInsert, string? code = null) =>
+        Present(1, card, grade, tender, source, code);
+
+    /// <summary>The reader step at pump <paramref name="pump"/>.</summary>
+    public string Present(int pump, string card, Grade? grade = null, Tender tender = Tender.Credit, CardSource source = CardSource.PumpInsert, string? code = null)
     {
-        var id = Sim.PresentCard(card, grade, tender, source);
+        var id = Point(pump).PresentCard(card, grade, tender, source);
         Settle();
-        Sim.EnterCode(code ?? CodeFor(tender));
+        Point(pump).EnterCode(code ?? CodeFor(tender));
         return id;
     }
 
-    /// <summary>Same as <see cref="Present"/>, but reports a refused reader instead of logging it.</summary>
-    public (bool Ok, string SaleId, string Reason) TryPresent(string card, Grade? grade = null, Tender tender = Tender.Credit, CardSource source = CardSource.PumpInsert, string? code = null)
+    /// <summary>Same as <see cref="Present(string, Grade?, Tender, CardSource, string?)"/>, but reports a refused reader instead of logging it.</summary>
+    public (bool Ok, string SaleId, string Reason) TryPresent(string card, Grade? grade = null, Tender tender = Tender.Credit, CardSource source = CardSource.PumpInsert, string? code = null) =>
+        TryPresent(1, card, grade, tender, source, code);
+
+    public (bool Ok, string SaleId, string Reason) TryPresent(int pump, string card, Grade? grade = null, Tender tender = Tender.Credit, CardSource source = CardSource.PumpInsert, string? code = null)
     {
-        var r = Sim.TryPresentCard(card, grade, tender, source);
+        var r = Point(pump).TryPresentCard(card, grade, tender, source);
         if (!r.Ok) return r;
         Settle();
-        Sim.EnterCode(code ?? CodeFor(tender));
+        Point(pump).EnterCode(code ?? CodeFor(tender));
         return r;
     }
 
@@ -121,8 +132,13 @@ public sealed class SimHarness : IDisposable
         string.Join("\n", Sim.Log.Snapshot().TakeLast(n).Select(l => $"  {l.At:HH:mm:ss.fff} [{l.Source}] {l.Message}"))
         + $"\n  quiet={Sim.IsQuiet} idle={Sim.IsIdle} pump={Sim.Pump.Phase} {Sim.Counters} clock={Clock.GetUtcNow():HH:mm:ss.fff}";
 
+    /// <summary>Advance until pump 1's sale is in <paramref name="state"/>.</summary>
     public TimeSpan AdvanceUntilState(SaleState state, TimeSpan? budget = null) =>
         AdvanceUntil(() => State.State == state, budget ?? TimeSpan.FromMinutes(15));
+
+    /// <summary>Advance until pump <paramref name="pump"/>'s sale is in <paramref name="state"/>.</summary>
+    public TimeSpan AdvanceUntilState(int pump, SaleState state, TimeSpan? budget = null) =>
+        AdvanceUntil(() => Point(pump).Snapshot().State == state, budget ?? TimeSpan.FromMinutes(15));
 
     public void Dispose() => Sim.Dispose();
 }

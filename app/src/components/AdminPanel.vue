@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
-import { api, state, dollars, nowMs, mmss } from '../sim'
+import { api, state, dollars, nowMs, mmss, pumpState } from '../sim'
 
 const pin = ref('')
 const credit = ref(75)
@@ -10,8 +10,8 @@ const site = computed(() => state.value?.site)
 // The price fields hold dollars with three decimals ($3.499); the wire carries mills (3499).
 const GRADES = ['Regular', 'Plus', 'Premium'] as const
 const priceFields = ref<Record<string, number>>({ Regular: 3.499, Plus: 3.799, Premium: 4.099 })
-const pumpPrices = computed(() => state.value?.prices ?? {})
-const pricesInSync = computed(() => state.value?.pricesInSync ?? true)
+const pumpPrices = computed(() => pumpState.value?.prices ?? {})
+const pricesInSync = computed(() => pumpState.value?.pricesInSync ?? true)
 let pricesSeeded = false
 watch(() => state.value?.priceBoard, b => {
   if (!b || pricesSeeded) return
@@ -74,7 +74,7 @@ async function apply(tender: 'Credit' | 'Debit', dollarsWanted: number) {
       </div>
     </div>
     <div class="row-wrap mb-3">
-      <v-btn color="error" prepend-icon="mdi-dots-horizontal" @click="api.attack('pinbrute')">Attack: brute-force the PIN</v-btn>
+      <v-btn color="error" prepend-icon="mdi-dots-horizontal" @click="api.attackAdminPin()">Attack: brute-force the PIN</v-btn>
       <v-btn color="error" prepend-icon="mdi-arrow-up-bold" :disabled="lockLeft !== null" @click="apply('Debit', 5000)">Attack: debit ceiling $5000 with this PIN</v-btn>
     </div>
     <v-alert v-if="result" :type="result.ok ? 'success' : 'error'" class="mb-3">{{ result.text }}</v-alert>

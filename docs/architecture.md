@@ -289,10 +289,45 @@ Three beliefs set the boundaries, and the three workers already sit on them:
 
 What moves across the first seam is only messages: `PumpMessage` down, `SaleEvent` up. Nothing in the sale worker reads pump state, and nothing in the pump worker reads sale state. Since slice 2e that seam is a socket by default.
 
-## Two processes
+## One controller, two fuelling points
+
+A real site has one forecourt controller and many fuelling positions, each with its own address. Since 2026-11-02 (decision 65, `docs/prd-two-pumps.md`) the station drives two.
+
+```mermaid
+flowchart LR
+    subgraph Station["GasPump.Host.exe: the forecourt controller"]
+        direction TB
+        P1["FuellingPoint 1<br/>sale P1-S000k · sale worker sale-1 · link"]
+        P2["FuellingPoint 2<br/>sale P2-S000k · sale worker sale-2 · link"]
+        PAY["payment worker<br/>PaymentGateway · one compensation log"]
+        SITE["the site: issuer, network, site limits, drawer,<br/>price board, admin, journal, ledger, chain, E-stop"]
+        P1 -->|PaymentMessage| PAY
+        P2 -->|PaymentMessage| PAY
+        PAY -->|SaleEvent, routed by P1- / P2-| P1
+        PAY -->|SaleEvent| P2
+    end
+    D1["GasPump.Dispenser.exe<br/>PUMP-01 · node 2.1 · :5178"]
+    D2["GasPump.Dispenser.exe<br/>PUMP-02 · node 2.2 · :5179"]
+    P1 <-->|TCP| D1
+    P2 <-->|TCP| D2
+```
+
+| Owned by each fuelling point | Owned by the station, shared by every point |
+|---|---|
+| The sale on its screen and its `SaleStateMachine`, the sale's timers, its sale worker and mailbox (`sale-n`), its `IDispenserLink` and the island behind it, the command table and its deadlines, the island's open transactions and the close-out wait, its service status, the mirrors of its dispenser's log and ledger, what the last restart did about its sale | The payment worker and the `PaymentGateway` with its one store-and-forward queue, the bank and the network, `SiteLimits`, the `CashDrawer`, the price board, the journal, the ledger, the custody chain, the capabilities, the E-stop, the admin panel |
+
+Three rules make the split hold:
+
+1. **The sale id names the pump.** `P1-S0001` is pump 1's first sale. It rides on every `SaleEvent`, `PaymentMessage`, ledger line, journal record, issuer hold, and gateway advice, so the payment worker routes each answer back to the right point by the prefix (`SaleIds.PumpOf`) with no new field anywhere. Two pumps can never mint the same id. A token is signed for the pump its sale is on, and the other pump's authority refuses it with `WrongPump`.
+2. **One record per pump, one book per site.** Each point's log lines carry a `Pump` property; each ledger line a point writes opens with its sale id or its pump id, and the UI reads the pump off that (`Origins.PumpOfLedger`). Lines about the site (admin, network, E-stop) belong to every tab.
+3. **The strategy rules are unchanged.** Each sale worker handles one message at a time; timers post; the shared pieces (gateway, ledger, journal) were already written for the payment worker's thread and are locked. What the second pump adds is the contention worth seeing: under `ThreadedDispatch` the one payment worker blocks on pump 1's bank call and pump 2's authorization waits in the box behind it; under the channel and AsyncProxy strategies the calls overlap. `TwoPumpTests.Pump_2_waits_behind_pump_1s_slow_bank_call_only_under_the_threaded_strategy` states both.
+
+The journal (`JournalSnapshot` version 2) holds a `JournalPoint` per pump beside the site's fields, and `RecoveryPlan.Build` runs per point, so a station restart or an E-stop reset closes both sales out, each from its own island's transaction buffer. A version 1 file is passed over with a warning. `Simulation` keeps its one-pump methods as forwards to pump 1 (`Simulation.First`) for the tests and scripts written before there were two; new code addresses `Simulation.Point(n)`. The host puts everything about one pump under `/api/pump/{n}/...` and reports `pumps[]` in the state; the UI is a tab per pump, each the two-column layout below, with the station's shared panels on every tab and the other pump's state on its tab chip.
+
+## Two processes per pump
 
 ```
-GasPump.Host.exe  (the station)                     GasPump.Dispenser.exe  (the island)
+GasPump.Host.exe  (the station)                     GasPump.Dispenser.exe  (the island, one per pump)
   sale worker, payment worker                         pump worker, ticker
   SaleStateMachine, PaymentGateway, Issuer            PumpController, Hydraulics, Meter
   SiteLimits, CashDrawer, journal (state.json)        PumpAuthority, NonceStore, Totalizer
@@ -324,7 +359,7 @@ A command the sale needs (`Arm`, `Close`, `Lock`, `Clear`, the connect-time `Sto
 
 A delivery that ends with fuel moved is written on the island before anything else happens: `PumpTransaction` (number, sale, grade, volume, money, charge lines, when, why) in the pump's `TransactionBuffer`, state `Payable`. The event that ends the sale (`NozzleHung`, `CeilingReached`, `Fault`) carries the number. While a transaction is open the pump refuses to arm with `PUMP.TX.PAYABLE`, so a delivery can never be paid twice or lost between the hang-up and the settlement. Once the money is settled, or safely queued on the station, or found not to be owed, the sale emits `ClearTransaction`; the station sends `Lock` (this controller claims it) and `Clear` (forget it, arm again). A second controller is told who holds the lock.
 
-The buffer is in the dispenser's state file beside the totalizer, the nonces, the broken parts, and the price board, and a power cut writes the running delivery to it before the process ends (`PumpController.PowerLost`). On every connect the station asks `read transactions` and reconciles what comes back: the sale this station restarted in the middle of is settled from the island's numbers, which are the true ones (`recovery.reconciled`), and the journal's under-recorded guess is used only when the island says nothing for `CloseoutWait` (5 s); a sale this station already finished gets its lost clear sent again; a delivery this station has no record of goes to the ledger as `tx.orphan` with its money, for the attendant, and the pump is released. In-process the buffer lives and dies with the one process, so the station journal still carries the close-out.
+The buffer is in the dispenser's state file beside the totalizer, the nonces, the broken parts, and the price board, and a power cut writes the running delivery to it before the process ends (`PumpController.PowerLost`). On every connect the station asks `read transactions` and reconciles what comes back: the sale this station restarted in the middle of is settled from the island's numbers, which are the true ones (`recovery.reconciled`), and the journal's under-recorded guess is used only when the island says nothing for `CloseoutWait` (10 s, so the slower of two islands restarting after an E-stop is still heard); a sale this station already finished gets its lost clear sent again; a delivery this station has no record of goes to the ledger as `tx.orphan` with its money, for the attendant, and the pump is released. In-process the buffer lives and dies with the one process, so the station journal still carries the close-out.
 
 ### Prices as a write, totals as a read
 

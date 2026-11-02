@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { dispenser, face, HOST, open, resetWorld, startFueling, state, station, tapCardAtPump } from './helpers'
+import { dispenser, face, open, pumpApi, resetWorld, startFueling, state, station, tapCardAtPump } from "./helpers"
 
 // Steve's defect: after a drive-off he pressed the attendant's reset, hung the nozzle, and the face still said
 // "Hose breakaway". A fault is a latched service condition now; the repair clears it on both sides of the seam.
@@ -89,12 +89,12 @@ test.describe('faults and their repairs', () => {
   test('a dispenser that dies mid-fuel and comes back clears the link fault once the hold settles', async ({ page, request }) => {
     await tapCardAtPump(page, 'Good')
     await startFueling(page)
-    await request.post(`${HOST}/api/dispenser/powerloss`)
+    await request.post(pumpApi(1, "/dispenser/powerloss"))
     await expect(face(page)).toContainText('Pump offline')
     await expect(dispenser(page)).toContainText('LINK.DISPENSER.LOST')
     await expect.poll(async () => (await state(request)).sale.hold).toBe('Settled')
 
-    await request.post(`${HOST}/api/dispenser/poweron`)
+    await request.post(pumpApi(1, "/dispenser/poweron"))
     await expect(face(page)).toContainText('Pump back in service', { timeout: 30_000 })
     await expect.poll(async () => (await state(request)).dispenser.connected).toBe(true)
     await tapCardAtPump(page, 'Good')
