@@ -81,7 +81,7 @@ export const PIN = '1234'
 export async function tapCardAtPump(page: Page, card = 'Good', tender: 'Credit' | 'Debit' = 'Credit', code = tender === 'Debit' ? PIN : ZIP) {
   const d = dispenser(page)
   await pickCard(page, d, card)
-  await d.getByRole('button', { name: tender, exact: true }).click()
+  await expect(d.getByTestId('reader-kind')).toHaveText(tender)
   await d.getByRole('button', { name: 'Tap' }).click()
   await enterCode(page, code)
   await expect(face(page)).toContainText('Approved for up to')

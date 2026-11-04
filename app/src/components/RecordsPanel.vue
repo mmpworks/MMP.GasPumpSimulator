@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue'
-import { api, log, ledger, state, basename, type Origin, pumpState, activePump } from '../sim'
+import { api, log, ledger, state, logFile, type Origin, pumpState, activePump } from '../sim'
+import FilePath from './FilePath.vue'
 
 // One side's records: its log, its ledger, its chain. The station host stamps an origin on every record.
 // Over the socket the origin is the process that sent the record. In-process, it is read off the record.
@@ -30,6 +31,7 @@ const kindClass = (k: string) => k.includes('refused') || k.includes('fault') ||
 // Chain: each side has its own file. The station also holds a copy of the dispenser's, received over the link.
 const ledgerIntact = computed(() => isDispenser.value ? pumpState.value?.pump.ledgerIntact : state.value?.ledgerOk)
 const chainPath = computed(() => isDispenser.value ? pumpState.value?.dispenser.custodyPath : state.value?.station.custodyPath)
+const logPath = computed(() => isDispenser.value ? pumpState.value?.dispenser.logPath : logFile.value?.path)
 const custody = ref<{ files: string[] } | null>(null)
 async function loadCustody() { try { custody.value = await api.custodyInfo() } catch { /* host not up yet */ } }
 onMounted(loadCustody)
@@ -54,7 +56,7 @@ async function verifyCopy() {
 </script>
 
 <template>
-  <v-card class="pane-card fixed">
+  <v-card class="pane-card fixed records-panel">
     <v-tabs v-model="tab" density="compact" :color="isDispenser ? 'warning' : 'info'" grow>
       <v-tab value="log" prepend-icon="mdi-text-long" class="text-none">Log <span class="muted ml-2">{{ myLog.length }}</span></v-tab>
       <v-tab value="ledger" prepend-icon="mdi-link-variant" class="text-none">Ledger <v-chip class="ml-2" size="x-small" :color="ledgerIntact === false ? 'error' : 'success'" variant="flat">{{ ledgerIntact === false ? 'BROKEN' : 'intact' }}</v-chip></v-tab>
@@ -63,6 +65,7 @@ async function verifyCopy() {
     <v-divider />
     <v-card-text>
       <div v-show="tab === 'log'" class="ledger-root">
+        <FilePath label="log file" :path="logPath" :data-testid="`path-log-${origin}`" />
         <v-text-field v-model="filter" :placeholder="isDispenser ? 'filter: pump, attack, dispenser, text' : 'filter: sale, payment, admin, station, link, text'" prepend-inner-icon="mdi-magnify" clearable density="compact" class="mb-1 flex-grow-0" />
         <div class="mono-list">
           <div v-for="(l, i) in shownLog" :key="shownLog.length - i" class="line" :class="'sev-' + l.severity" :title="propsOf(l.props)">
@@ -73,7 +76,8 @@ async function verifyCopy() {
         </div>
       </div>
       <div v-show="tab === 'ledger'" class="ledger-root">
-        <div class="muted mb-1">{{ isDispenser ? 'written by the dispenser: valve, nozzle, grade, arm, faults, totalizer' : 'written by the station: sale open and close, payment, admin, recovery, E-stop, link' }} · hash-chained, every entry carries the hash of the one before</div>
+        <div class="muted mb-1">{{ isDispenser ? 'written by the dispenser: valve, nozzle, grade, arm, faults, totalizer' : 'written by the station: sale open and close, payment, admin, recovery, E-stop, link' }} · hash-chained, every entry carries the hash of the one before. Each entry is also written to this file:</div>
+        <FilePath label="chain file" :path="chainPath" :data-testid="`path-ledger-${origin}`" />
         <div class="mono-list">
           <div v-for="e in myLedger" :key="e.seq" class="line ledger">
             <span class="src">#{{ e.seq }}</span>
@@ -82,8 +86,9 @@ async function verifyCopy() {
         </div>
       </div>
       <div v-show="tab === 'chain'">
+        <FilePath label="chain file" :path="chainPath" :data-testid="`path-chain-${origin}`" />
+        <FilePath v-if="!isDispenser" :label="`copy of pump ${activePump}'s chain`" :path="pumpState?.copy.path" data-testid="path-copy-station" />
         <div class="kv mb-2">
-          <b>file</b><span :title="chainPath ?? ''">{{ basename(chainPath) || '-' }}</span>
           <b>lines</b><span>{{ isDispenser ? (pumpState?.dispenser.custodyLines ?? 0) + ' published to the station' : '' }}<template v-if="!isDispenser">this run's own chain</template></span>
           <b>sealed by</b><span>TesseraSeal HMAC chain (Herald.Compliance ImmutableAuditFileSink), site key <code>custody.ikm</code></span>
         </div>
@@ -98,7 +103,7 @@ async function verifyCopy() {
           <div class="row-wrap mb-2">
             <v-btn size="small" prepend-icon="mdi-server-network" @click="verifyCopy">Verify copy of dispenser chain</v-btn>
             <v-chip v-if="copyVerdict" size="small" :color="copyVerdict.color">{{ copyVerdict.text }}</v-chip>
-            <span v-else class="muted">{{ pumpState?.copy.linesReceived ?? 0 }} lines received for pump {{ activePump }} · {{ basename(pumpState?.copy.path) || '-' }} · every pump also on ws://localhost:{{ state?.station.port ?? 5177 }}/ws/custody</span>
+            <span v-else class="muted">{{ pumpState?.copy.linesReceived ?? 0 }} lines received for pump {{ activePump }} · every pump also on ws://localhost:{{ state?.station.port ?? 5177 }}/ws/custody</span>
           </div>
         </template>
         <div v-if="custody" class="muted">{{ custody.files.length }} chain file{{ custody.files.length === 1 ? '' : 's' }} on disk from both sides</div>

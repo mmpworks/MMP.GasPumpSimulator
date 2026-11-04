@@ -6,7 +6,8 @@ import { api, cards, state, pumpState } from '../sim'
 // (insert or tap) is here too. Everything else becomes a PumpMessage down the link.
 const sale = computed(() => pumpState.value?.sale)
 const readerCard = ref('Good')
-const readerTender = ref<'Credit' | 'Debit'>('Credit')
+// The card decides credit or debit. The reader only reports it.
+const readerKind = computed<'Credit' | 'Debit'>(() => (cards.value.find(c => c.name === readerCard.value)?.kind === 'Debit' ? 'Debit' : 'Credit'))
 const readerNote = ref<string | null>(null)
 // The keypad shows while the sale waits for a PIN (debit) or a billing ZIP (credit). The test bank knows ZIP 12345 and PIN 1234.
 const keypad = ref('')
@@ -20,7 +21,7 @@ async function sendCode() {
 }
 const cardItems = computed(() => cards.value.map(c => ({ title: `${c.name} · ${c.kind} ····${c.last4}`, value: c.name })))
 async function readCard(source: 'PumpInsert' | 'PumpTap') {
-  const r = await api.presentCard(readerCard.value, readerTender.value, source)
+  const r = await api.presentCard(readerCard.value, readerKind.value, source)
   readerNote.value = r.ok ? null : r.error ?? 'refused'
   if (r.ok) setTimeout(() => (readerNote.value = null), 0)
 }
@@ -61,10 +62,7 @@ const estop = computed(() => !!state.value?.station.estopActive)
       <div class="step">Card reader <v-chip v-if="sale && sale.state !== 'Idle' && sale.source !== 'Station'" size="small" color="info">{{ sale.source === 'PumpTap' ? 'tapped here' : 'inserted here' }}</v-chip></div>
       <div class="row-wrap mb-1">
         <v-select v-model="readerCard" :items="cardItems" label="card" density="compact" style="min-width: 220px; max-width: 300px" />
-        <v-btn-toggle v-model="readerTender" mandatory density="compact" variant="outlined">
-          <v-btn value="Credit" size="small">Credit</v-btn>
-          <v-btn value="Debit" size="small">Debit</v-btn>
-        </v-btn-toggle>
+        <v-chip class="reader-kind" data-testid="reader-kind" :color="readerKind === 'Debit' ? 'warning' : 'info'" variant="flat" size="small" title="Set by the card in the reader">{{ readerKind }}</v-chip>
         <v-btn color="primary" variant="flat" size="small" prepend-icon="mdi-credit-card-outline" :disabled="offline || estop" @click="readCard('PumpInsert')">Insert</v-btn>
         <v-btn color="primary" variant="flat" size="small" prepend-icon="mdi-contactless-payment" :disabled="offline || estop" @click="readCard('PumpTap')">Tap</v-btn>
         <span v-if="readerNote" class="text-error reader-note" style="font-size: 12px">{{ readerNote }}</span>

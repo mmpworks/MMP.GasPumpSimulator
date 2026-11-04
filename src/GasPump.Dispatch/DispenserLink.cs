@@ -35,6 +35,8 @@ public interface IDispenserLink : IDisposable
     int? RemotePid { get; }
     string? RemoteRunId { get; }
     string? RemoteCustodyPath { get; }
+    /// <summary>The full path of the dispenser's own log file. Null in-process, where the station's log holds its lines.</summary>
+    string? RemoteLogPath { get; }
     long FramesSent { get; }
     long FramesReceived { get; }
     /// <summary>Messages posted and not yet handled by the pump worker. Zero over a socket, where the backlog is the other process's.</summary>
@@ -130,6 +132,7 @@ public sealed class LocalDispenserLink : IDispenserLink
     public int? RemotePid => Environment.ProcessId;
     public string? RemoteRunId => _runId;
     public string? RemoteCustodyPath => _custodyPath;
+    public string? RemoteLogPath => null;
     public long FramesSent => Volatile.Read(ref _sent);
     public long FramesReceived => Volatile.Read(ref _received);
     public int Backlog => _box.Count;
@@ -230,7 +233,7 @@ public sealed record LinkFrame(
 }
 
 /// <summary>The first frame each way. LastSeqReceived tells the other side where to replay from; 0 on a fresh station.</summary>
-public sealed record LinkHello(string Role, string Id, string RunId, int Pid, string? CustodyPath, long LastSeqReceived = 0);
+public sealed record LinkHello(string Role, string Id, string RunId, int Pid, string? CustodyPath, long LastSeqReceived = 0, string? LogPath = null);
 
 /// <summary>A log line flattened for the wire: properties as strings.</summary>
 public sealed record WireLog(DateTimeOffset At, string Source, string Message, LogSeverity Severity, Dictionary<string, string?> Props)
@@ -308,6 +311,7 @@ public sealed class SocketDispenserLink : IDispenserLink
     public int? RemotePid { get { lock (_gate) return _hello?.Pid; } }
     public string? RemoteRunId { get { lock (_gate) return _hello?.RunId; } }
     public string? RemoteCustodyPath { get { lock (_gate) return _hello?.CustodyPath; } }
+    public string? RemoteLogPath { get { lock (_gate) return _hello?.LogPath; } }
     public long FramesSent => Volatile.Read(ref _sent);
     public long FramesReceived => Volatile.Read(ref _received);
     public long FramesDropped => Volatile.Read(ref _dropped);

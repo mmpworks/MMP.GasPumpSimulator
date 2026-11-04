@@ -47,7 +47,8 @@ IDispatchStrategy dispatch = strategyName switch
 var options = new DispenserServerOptions(
     new DispenserOptions(pumpId, HardLimits.Default, Pricing.Default, TaperPolicy.Default, FlowRate.GallonsPerMinute(10), TimeSpan.FromMilliseconds(100)),
     port, logDir, ikm,
-    LogSinks: b => b.WithFileSink(heraldLogPath).WithConsoleSink());
+    LogSinks: b => b.WithFileSink(heraldLogPath).WithConsoleSink(),
+    LogPath: heraldLogPath);
 
 using var exit = new ManualResetEventSlim();
 using var server = new DispenserServer(options, clock, dispatch);

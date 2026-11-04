@@ -28,7 +28,7 @@ export interface Station {
   estopActive: boolean; estopAt: string | null
 }
 export interface DispenserLink {
-  link: 'socket' | 'in-process'; connected: boolean; pid: number | null; runId: string | null; custodyPath: string | null
+  link: 'socket' | 'in-process'; connected: boolean; pid: number | null; runId: string | null; custodyPath: string | null; logPath: string | null
   framesSent: number; framesReceived: number; custodyLines: number; port: number | null
   /** The envelope's view of the wire: sequence numbers each way, gaps asked for, duplicates dropped, the peer's last heartbeat. */
   lastSeqSent: number; lastSeqReceived: number; gaps: number; duplicates: number
