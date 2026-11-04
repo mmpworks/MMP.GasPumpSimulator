@@ -1,8 +1,8 @@
 using GasPump.Core;
+using GasPump.Custody;
 using GasPump.Payment;
 using GasPump.Pump;
 using GasPump.Security;
-using MMP.Herald.Compliance.Audit;
 using MMP.Herald.Events;
 
 namespace GasPump.Dispatch;
@@ -106,7 +106,7 @@ public sealed class Simulation : IDisposable
         {
             Directory.CreateDirectory(j.Directory);
             RunId = j.RunId ?? $"RUN-{clock.GetUtcNow():yyyyMMdd-HHmmss}-{Guid.NewGuid().ToString("N")[..6]}";
-            _custody = new ImmutableAuditFileSink(j.CustodyPath(RunId), j.TenantId, RunId, j.Ikm);
+            _custody = CustodyFile.Open(j.CustodyPath(RunId), j.TenantId, RunId, j.Ikm);
             CustodyPath = j.CustodyPath(RunId);
         }
         else RunId = "RUN-unjournaled";
@@ -199,7 +199,7 @@ public sealed class Simulation : IDisposable
         }
     }
 
-    private readonly ImmutableAuditFileSink? _custody;
+    private readonly ICustodySink? _custody;
     private ITimer? _journalTimer;
     private readonly Lock _journalGate = new();
 
@@ -348,7 +348,7 @@ public sealed class Simulation : IDisposable
         {
             using (var src = new FileStream(CustodyPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
             using (var dst = File.Create(copy)) src.CopyTo(dst);
-            var ok = ImmutableAuditFileSink.VerifyChain(copy, j.Ikm, out var seq, out var reason);
+            var ok = CustodyFile.Verify(copy, j.Ikm, out var seq, out var reason);
             var lines = File.ReadLines(copy).Count();
             return (ok, seq, reason, lines);
         }

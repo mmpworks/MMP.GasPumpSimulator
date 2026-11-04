@@ -4,8 +4,8 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using GasPump.Core;
+using GasPump.Custody;
 using GasPump.Security;
-using MMP.Herald.Compliance.Audit;
 using MMP.Herald.Events;
 
 namespace GasPump.Dispatch;
@@ -46,7 +46,7 @@ public sealed class DispenserServer : IDisposable
     private readonly CancellationTokenSource _cts = new();
     private readonly Lock _gate = new();
     private readonly IMailbox<PumpEnvelope> _box;
-    private readonly ImmutableAuditFileSink? _custody;
+    private readonly ICustodySink? _custody;
     private readonly CustodyStream? _stream;
     private readonly string? _statePath;
     private readonly WireNode _me;
@@ -78,7 +78,7 @@ public sealed class DispenserServer : IDisposable
         {
             System.IO.Directory.CreateDirectory(dir);
             CustodyPath = Path.Combine(dir, $"dispenser-custody-{RunId}.ndjson");
-            _custody = new ImmutableAuditFileSink(CustodyPath, options.Dispenser.PumpId, RunId, options.Ikm);
+            _custody = CustodyFile.Open(CustodyPath, options.Dispenser.PumpId, RunId, options.Ikm);
             _statePath = Path.Combine(dir, $"dispenser-state-{options.Dispenser.PumpId}.json");
         }
 

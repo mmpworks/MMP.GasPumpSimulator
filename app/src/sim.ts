@@ -225,7 +225,7 @@ export const api = {
     URL.revokeObjectURL(a.href)
   },
   custodyInfo: async () => (await fetch(`${HOST}/api/custody`)).json() as Promise<{ runId: string; path: string | null; journalPath: string | null; ikmPath: string; files: string[]; dispensers: { pump: number; path: string | null; runId: string | null }[] }>,
-  verifyCustody: async () => (await (await fetch(`${HOST}/api/custody/verify`, { method: 'POST' })).json()) as { ok: boolean; failureAtSeq: number | null; reason: string | null; lines: number; status: string },
+  verifyCustody: async () => (await (await fetch(`${HOST}/api/custody/verify`, { method: 'POST' })).json()) as { ok: boolean; failureAtSeq: number | null; reason: string | null; lines: number; verdict: string; status: string },
   /** A fault on one island: the pulser or the breakaway. */
   fault: (kind: 'pulserdead' | 'pulserfix' | 'driveoff' | 'breakawayreset', pump?: number) => post(at(`/fault/${kind}`, pump)),
   /** The tank gauge. One tank feeds every pump, so this reaches every island. */
@@ -235,7 +235,7 @@ export const api = {
   openPump: (by = 'operator', pump?: number) => post(at('/switch/open', pump), { by }),
   estop: (pressedBy: string) => post('/api/station/estop', { pressedBy }),
   estopReset: async () => (await (await fetch(`${HOST}/api/station/reset`, { method: 'POST' })).json()) as { estopActive: boolean; recoveries: Recovery[]; runId: string },
-  verifyStationCopy: async (pump?: number) => (await (await fetch(`${HOST}/api/station/custody/verify?pump=${pump ?? activePump.value}`, { method: 'POST' })).json()) as { ok: boolean; failureAtSeq: number | null; reason: string | null; lines: number },
+  verifyStationCopy: async (pump?: number) => (await (await fetch(`${HOST}/api/station/custody/verify?pump=${pump ?? activePump.value}`, { method: 'POST' })).json()) as { ok: boolean; failureAtSeq: number | null; reason: string | null; lines: number; verdict: string },
   /** Cuts power to the station. The dispenser processes keep running and are told Stop when the new station connects. */
   powerLoss: async () => (await (await fetch(`${HOST}/api/host/powerloss`, { method: 'POST' })).json()) as { recoveries: Recovery[]; runId: string },
   /** Cuts power to this pump's dispenser. The station sees the link drop and faults the sale with LINK.DISPENSER.LOST. */

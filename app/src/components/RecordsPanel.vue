@@ -35,15 +35,21 @@ async function loadCustody() { try { custody.value = await api.custodyInfo() } c
 onMounted(loadCustody)
 watch(() => [state.value?.runId, pumpState.value?.dispenser.runId], loadCustody)
 
-const ownVerdict = ref<{ ok: boolean; text: string } | null>(null)
+type Verdict = { color: string; text: string }
+// A build without the chain answers NOT CHECKED, which is neither a pass nor a tamper alarm.
+function verdictOf(r: { ok: boolean; verdict: string; reason: string | null }, passed: string): Verdict {
+  const color = r.ok ? 'success' : r.verdict === 'NOT CHECKED' ? 'warning' : 'error'
+  return { color, text: `Status: ${r.verdict} · ${r.ok ? passed : r.reason}` }
+}
+const ownVerdict = ref<Verdict | null>(null)
 async function verifyOwn() {
   const r = await api.verifyCustody()
-  ownVerdict.value = { ok: r.ok, text: r.ok ? `Status: PASS · ${r.lines} lines` : `Status: FAIL · ${r.reason}` }
+  ownVerdict.value = verdictOf(r, `${r.lines} lines`)
 }
-const copyVerdict = ref<{ ok: boolean; text: string } | null>(null)
+const copyVerdict = ref<Verdict | null>(null)
 async function verifyCopy() {
   const r = await api.verifyStationCopy()
-  copyVerdict.value = { ok: r.ok, text: r.ok ? `Status: PASS · ${r.lines} lines received` : `Status: FAIL · ${r.reason}` }
+  copyVerdict.value = verdictOf(r, `${r.lines} lines received`)
 }
 </script>
 
@@ -87,11 +93,11 @@ async function verifyCopy() {
         <template v-else>
           <div class="row-wrap mb-2">
             <v-btn size="small" prepend-icon="mdi-certificate-outline" @click="verifyOwn">Verify station chain</v-btn>
-            <v-chip v-if="ownVerdict" size="small" :color="ownVerdict.ok ? 'success' : 'error'">{{ ownVerdict.text }}</v-chip>
+            <v-chip v-if="ownVerdict" size="small" :color="ownVerdict.color">{{ ownVerdict.text }}</v-chip>
           </div>
           <div class="row-wrap mb-2">
             <v-btn size="small" prepend-icon="mdi-server-network" @click="verifyCopy">Verify copy of dispenser chain</v-btn>
-            <v-chip v-if="copyVerdict" size="small" :color="copyVerdict.ok ? 'success' : 'error'">{{ copyVerdict.text }}</v-chip>
+            <v-chip v-if="copyVerdict" size="small" :color="copyVerdict.color">{{ copyVerdict.text }}</v-chip>
             <span v-else class="muted">{{ pumpState?.copy.linesReceived ?? 0 }} lines received for pump {{ activePump }} · {{ basename(pumpState?.copy.path) || '-' }} · every pump also on ws://localhost:{{ state?.station.port ?? 5177 }}/ws/custody</span>
           </div>
         </template>

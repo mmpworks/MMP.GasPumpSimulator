@@ -1,5 +1,5 @@
+using GasPump.Custody;
 using GasPump.Dispatch;
-using MMP.Herald.Compliance.Audit;
 
 namespace GasPump.Host;
 
@@ -84,7 +84,7 @@ public sealed class StationServer : IDisposable
     {
         var path = Copy(number).Path;
         if (path is null || !File.Exists(path)) return (false, null, $"no station copy for pump {number} yet", 0);
-        var ok = ImmutableAuditFileSink.VerifyChain(path, _ikm, out var seq, out var reason);
+        var ok = CustodyFile.Verify(path, _ikm, out var seq, out var reason);
         return (ok, seq, reason, File.ReadLines(path).Count());
     }
 

@@ -2,6 +2,7 @@ using System.Net.WebSockets;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using GasPump.Core;
+using GasPump.Custody;
 using GasPump.Dispatch;
 using GasPump.Host;
 using GasPump.Payment;
@@ -113,8 +114,8 @@ app.MapGet("/api/custody", () =>
 app.MapPost("/api/custody/verify", () =>
 {
     var (ok, seq, reason, lines) = Sim().VerifyCustody();
-    Sim().Log.Write("custody", "verify {Status} {Reason} ({Lines} lines)", ("Status", ok ? "PASS" : "FAIL"), ("Reason", reason ?? "chain intact"), ("Lines", lines));
-    return Results.Json(new { ok, failureAtSeq = seq, reason, lines, status = ok ? "Status: PASS" : $"Status: FAIL\nReason: {reason}" }, json);
+    Sim().Log.Write("custody", "verify {Status} {Reason} ({Lines} lines)", ("Status", CustodyFile.Verdict(ok)), ("Reason", reason ?? "chain intact"), ("Lines", lines));
+    return Results.Json(new { ok, failureAtSeq = seq, reason, lines, verdict = CustodyFile.Verdict(ok), status = ok ? "Status: PASS" : $"Status: {CustodyFile.Verdict(ok)}\nReason: {reason}" }, json);
 });
 // Power loss on purpose: no close-out, no final snapshot. The replacement recovers from the last periodic one, pump by pump.
 app.MapPost("/api/host/powerloss", () =>
@@ -137,7 +138,7 @@ app.MapGet("/api/station/custody", () => Results.Json(new
 app.MapPost("/api/station/custody/verify", (int? pump) =>
 {
     var (ok, seq, reason, lines) = station.VerifyCopy(pump ?? 1);
-    return Results.Json(new { pump = pump ?? 1, ok, failureAtSeq = seq, reason, lines, status = ok ? "Status: PASS" : $"Status: FAIL\nReason: {reason}" }, json);
+    return Results.Json(new { pump = pump ?? 1, ok, failureAtSeq = seq, reason, lines, verdict = CustodyFile.Verdict(ok), status = ok ? "Status: PASS" : $"Status: {CustodyFile.Verdict(ok)}\nReason: {reason}" }, json);
 });
 app.MapPost("/api/admin/limits", (AdminRequest r) =>
 {

@@ -1,10 +1,10 @@
 using System.Diagnostics;
 using GasPump.Core;
+using GasPump.Custody;
 using GasPump.Dispatch;
 using GasPump.Payment;
 using GasPump.Pump;
 using GasPump.Security;
-using MMP.Herald.Compliance.Audit;
 using Xunit;
 
 namespace GasPump.Tests;
@@ -140,7 +140,7 @@ public sealed class LinkTests : IDisposable
         }
         File.WriteAllLines(copy, received);
         Assert.Equal(ReadShared(dispenser.CustodyPath!), File.ReadAllLines(copy));
-        Assert.True(ImmutableAuditFileSink.VerifyChain(copy, Ikm, out _, out var reason), reason);
+        if (CustodyFile.ChainAvailable) Assert.True(CustodyFile.Verify(copy, Ikm, out _, out var reason), reason);
         Assert.Contains(received, l => l.Contains("valve.close"));
         Assert.DoesNotContain(received, l => l.Contains("sale.open"));
     }

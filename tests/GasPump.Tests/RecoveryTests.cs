@@ -1,7 +1,7 @@
 using GasPump.Core;
+using GasPump.Custody;
 using GasPump.Dispatch;
 using GasPump.Payment;
-using MMP.Herald.Compliance.Audit;
 using Xunit;
 
 namespace GasPump.Tests;
@@ -192,7 +192,7 @@ public class RecoveryTests : IDisposable
         Assert.Equal("Replayed", reason);
     }
 
-    [Fact]
+    [ChainFact]
     public void Custody_file_verifies_under_TesseraSeal_and_a_tampered_byte_fails_at_the_right_entry()
     {
         string path;
@@ -220,7 +220,7 @@ public class RecoveryTests : IDisposable
         var idx = Array.FindIndex(all, l => l.Contains("sale.open"));
         all[idx] = all[idx].Replace("sale.open", "sale.OPEN");
         File.WriteAllText(path, string.Join('\n', all) + "\n");
-        var tampered = ImmutableAuditFileSink.VerifyChain(path, Ikm, out var failSeq, out var failReason);
+        var tampered = CustodyFile.Verify(path, Ikm, out var failSeq, out var failReason);
         Assert.False(tampered);
         Assert.Equal(idx, failSeq);   // header is line 0, so entry seq == line index
         Assert.Contains("MAC mismatch", failReason);
@@ -228,11 +228,11 @@ public class RecoveryTests : IDisposable
         // Cut the final newline, as a mid-write crash would. The verifier refuses the file outright.
         var bytes = File.ReadAllBytes(path);
         File.WriteAllBytes(path, bytes[..^1]);
-        Assert.False(ImmutableAuditFileSink.VerifyChain(path, Ikm, out _, out var midLine));
+        Assert.False(CustodyFile.Verify(path, Ikm, out _, out var midLine));
         Assert.Contains("mid-line", midLine);
     }
 
-    [Fact]
+    [ChainFact]
     public void Each_run_is_its_own_chain_and_both_verify()
     {
         using (var h = new SimHarness("channel", Options("RUN-1")))
@@ -245,7 +245,7 @@ public class RecoveryTests : IDisposable
         using var h2 = new SimHarness("channel", Options("RUN-2"));
         h2.Advance(TimeSpan.FromSeconds(1));
         // Run 1's file is closed; run 2's is live, so it goes through the copy-and-verify path.
-        Assert.True(ImmutableAuditFileSink.VerifyChain(Path.Combine(_dir, "custody-RUN-1.ndjson"), Ikm, out _, out var r1), r1);
+        Assert.True(CustodyFile.Verify(Path.Combine(_dir, "custody-RUN-1.ndjson"), Ikm, out _, out var r1), r1);
         var (ok2, _, r2, _) = h2.Sim.VerifyCustody();
         Assert.True(ok2, r2);
         using var live = new FileStream(Path.Combine(_dir, "custody-RUN-2.ndjson"), FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
@@ -309,7 +309,7 @@ public class RecoveryTests : IDisposable
         }
         var original = File.ReadAllLines(Path.Combine(_dir, "custody-RUN-1.ndjson"));
         Assert.Equal(original, File.ReadAllLines(copy));
-        Assert.True(ImmutableAuditFileSink.VerifyChain(copy, Ikm, out _, out var reason), reason);
+        if (CustodyFile.ChainAvailable) Assert.True(CustodyFile.Verify(copy, Ikm, out _, out var reason), reason);
         Assert.Contains(received, l => l.Contains("TANK.FUELOUT"));
     }
 
