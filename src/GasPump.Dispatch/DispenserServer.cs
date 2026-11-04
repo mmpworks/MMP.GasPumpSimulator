@@ -180,6 +180,9 @@ public sealed class DispenserServer : IDisposable
         else Log.Warn("dispenser", "station silent: no heartbeat for {Window}; the pump keeps its own limits", ("Window", _live.Window));
     }
 
+    // This thread serves one station at a time. It waits for a connection, reads
+    // frames until the line drops, cleans up, and waits for the next station. The
+    // pump keeps running under its own limits the whole time.
     private void AcceptLoop()
     {
         while (!_cts.IsCancellationRequested)
@@ -292,6 +295,9 @@ public sealed class DispenserServer : IDisposable
         foreach (var l in Log.Snapshot().Where(l => l.Source != "ledger").TakeLast(200)) Send(new LinkFrame(LinkFrame.TagLog, Log: WireLog.From(l)), WireKind.Event);
         if (_stream is not null)
         {
+            // Send takes two locks in order: the sequencer's, then _gate. Every path must
+            // use that order. If one thread held _gate and waited for the sequencer while
+            // another held the sequencer and waited for _gate, both would wait forever.
             Action<string> handler = line => Send(new LinkFrame(LinkFrame.TagCustody, Line: line), WireKind.Event);
             lock (_gate) _custodyHandler = handler;
             _stream.SubscribeWithReplay(handler);
