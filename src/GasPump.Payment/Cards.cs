@@ -48,7 +48,8 @@ public static class CardValidator
 /// <summary>
 /// The named test cards. The name says what the card will do, so a scenario
 /// reads like a sentence: "present the InsufficientFunds card".
-/// All PANs pass Luhn. None of them sits in a real, usable card range.
+/// Every PAN passes Luhn except BadLuhn, which fails on purpose.
+/// None of them sits in a real, usable card range.
 /// Every credit account has billing ZIP 12345 on file. DebitGoodPin's account
 /// has PIN 1234 on file. DebitBadPin's account has no PIN on file, so no PIN
 /// the driver types can match it.
