@@ -82,7 +82,7 @@ async function apply(tender: 'Credit' | 'Debit', dollarsWanted: number) {
       The site asks the bank to hold at most these amounts. Debit holds are real money out of a checking account until settlement, so stations keep
       them low. A debit sale's ceiling is the lesser of this ceiling and what the bank approves. Cash has no ceiling here: the cash amount is the ceiling.
       Raise the debit ceiling to $5000 and run a debit sale: the bank approves it, the pump clamps it to its own $500 hard limit, and the ledger says so.
-      Three wrong PINs lock this panel for 5 minutes, and every attempt is in the ledger.
+      Three wrong PINs lock this panel for 15 seconds, and every attempt is in the ledger.
       Prices are the station's to post: each change is written to the island as a whole board, the pump answers, and the face shows what the pump bills by.
       A change during a delivery waits for that delivery to end, so the driver pays the price they saw.
     </p>
