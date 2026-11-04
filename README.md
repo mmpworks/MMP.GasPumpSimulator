@@ -14,7 +14,7 @@ A pay-at-the-pump fuel dispenser, simulated. Present a card, get a two-phase aut
 6. **Tender.** Credit, debit, or cash. Credit asks the bank for the site's credit ceiling. Debit asks for the site's debit ceiling and the pump gets the lesser of that and the bank's answer, so a $50 debit ceiling against a $900 balance holds $50 and against $18.50 holds $18.50. Cash goes to the cashier, and the cash amount is the ceiling to the cent: no bank, no hold, change or a refund at the till.
 7. **Administrator.** A back-office panel sets the credit and debit ceilings behind an admin PIN. Three wrong PINs lock it for five minutes. Every attempt is in the ledger. Raise the debit ceiling to $5000 and the bank will approve what the card has, and the pump will still clamp it to its own $500 hard limit, because the site's ceilings are business limits and the pump's are safety limits.
 8. **Power loss.** A state journal is rewritten every second and on every sale change. A restart reads it, closes the sale it finds open for the fuel that was recorded, says in the ledger and the log that delivery is likely under-recorded by up to one second of flow, returns the hold or cash when nothing was pumped, and starts a fresh sale. Site limits, the admin lockout, burned nonces, the store-and-forward queue, the till, and the sealed totalizer all come back. There is no resume: a sale interrupted by a reboot is closed, never continued.
-9. **Two files, two jobs.** The Herald.OSS NDJSON file is for debugging and takes everything. The custody file is for audit: an append-only, HMAC-chained record written by TesseraSeal's `ImmutableAuditFileSink`, one chain per run, carrying the ledger, the sale open and close, the money outcomes, the admin attempts, and the attacks. TesseraSeal's verifier checks it from the Ledger tab, and a single changed byte names the entry that broke.
+9. **Two files, two jobs.** The Herald.OSS NDJSON file is for debugging and takes everything. The custody file is for audit: an append-only, HMAC-chained record written by TesseraSeal's `ImmutableAuditFileSink` (a clone without those sources writes a plain file instead; see "Custody file: two builds"), one chain per run, carrying the ledger, the sale open and close, the money outcomes, the admin attempts, and the attacks. TesseraSeal's verifier checks it from the Ledger tab, and a single changed byte names the entry that broke.
 10. **Forecourt faults with diagnostic codes.** Tank runs dry, pulser dies, drive-off. Each is caught by a disagreement between two facts the controller already has, names its part with a code such as `PUMP.STP.NOFLOW`, settles for the fuel that was metered, and tells the driver the right next step. The same code sits in the log, the ledger, and the custody file. `docs/diagnostics.md` is the table.
 11. **E-stop.** One button, station-wide. The record is written before the power drops, so the cashier's reset closes the open sale with nothing unrecorded.
 12. **Custody stream.** Every custody line goes out byte for byte as it lands. A station server keeps its own copy per run and verifies it with the same verifier. `ws://localhost:5177/ws/custody` is the same stream for anything outside.
@@ -31,7 +31,7 @@ A pay-at-the-pump fuel dispenser, simulated. Present a card, get a two-phase aut
 ## Run it
 
 ```
-dotnet test                       # 425 tests, about 3.5 min: most on a fake clock under all three dispatch strategies, 15 over real TCP sockets
+dotnet test                       # 432 tests, about 3.5 min: most on a fake clock under all three dispatch strategies, 15 over real TCP sockets
 cd app && npm run e2e             # 22 Playwright specs against the three live processes: sales, faults and repairs, the E-stop, prices and totals, two pumps at once, the layout
 dotnet run --project src/GasPump.Host -- --strategy threaded                 # station; spawns a dispenser per pump on ports 5178 and 5179
 dotnet run --project src/GasPump.Host -- --dispenser inproc                  # both pumps inside the station process
@@ -56,7 +56,40 @@ cd app && npx electron .
 
 The host answers `station.name` and `station.theme` in `/api/state`; the renderer sets its title and its colours from them. Two themes ship: `howards` and `samms`. Samms runs from a second clone of this repo with those values: the same two-pump build, across the street from Howard's, on its own ports (dispensers on `5278` and `5279`).
 
-MMP.AsyncProxy is a sibling checkout, referenced by project from `..\MMP.AsyncProxy` until the package publishes. Point elsewhere with `-p:AsyncProxyProjectPath=<path to MMP.AsyncProxy.csproj>`. TesseraSeal's chain code is compiled in from the sibling `..\Herald\Modules\Herald.Compliance\src\Audit` checkout by source link; point elsewhere with `-p:HeraldCompliancePath=<that folder>`.
+MMP.AsyncProxy is a sibling checkout, referenced by project from `..\MMP.AsyncProxy` until the package publishes. Point elsewhere with `-p:AsyncProxyProjectPath=<path to MMP.AsyncProxy.csproj>`. 
+
+### Custody file: two builds
+
+The chain code is TesseraSeal, from Herald.Compliance, which is not open source. This repo holds none of it. The build looks for those sources at `..\Herald\Modules\Herald.Compliance\src\Audit` (point elsewhere with `-p:HeraldCompliancePath=<that folder>`) and picks one of two custody files:
+
+| | With the Herald.Compliance sources | A clone of this repo on its own |
+|---|---|---|
+| Writer | TesseraSeal `ImmutableAuditFileSink` | `PlainCustodySink` |
+| File | HMAC-chained, tamper-evident, per the [chain-of-custody spec](https://github.com/mmpworks/SR-26.2-Model-Risk-Management/blob/main/spec/chain-of-custody-DRAFT-0.3.0.md) | The same events, one JSON object per line, with no MAC. Anyone can edit it and nothing will notice. |
+| Verify buttons | `Status: PASS` or `Status: FAIL` | `Status: NOT CHECKED`, and the reason |
+| Tests | all pass | the chain tests skip by name, and everything else passes |
+
+Everything else runs the same in both builds: the sale, the money, the faults, the attacks, the signed tokens, and the hash-chained ledger in `GasPump.Security`. To build from a clone:
+
+```
+git clone https://github.com/mmpworks/MMP.AsyncProxy
+git clone https://github.com/mmpworks/MMP.GasPumpSimulator
+cd MMP.GasPumpSimulator
+dotnet test
+```
+
+That run, from a fresh clone with no Herald folder beside it:
+
+```
+Passed!  - Failed:     0, Passed:   430, Skipped:     2, Total:   432
+```
+
+The 2 skips are `Custody_file_verifies_under_TesseraSeal_and_a_tampered_byte_fails_at_the_right_entry` and `Each_run_is_its_own_chain_and_both_verify`. The verify endpoint on that build answers:
+
+```
+Status: NOT CHECKED
+Reason: this build has no chain verifier, so the file was not checked.
+```
 
 ### The files on disk
 
@@ -158,7 +191,7 @@ In the left column, while fuel is flowing:
 
 ## The custody file, attacked
 
-Press **Verify custody file** on the Ledger tab: `Status: PASS · 41 lines`. Change one byte of any entry in the file and press it again: `Status: FAIL · payload_hash MAC mismatch at seq 7`. Cut the final newline, as a crash mid-write would, and the verifier refuses the whole file. The test `Custody_file_verifies_under_TesseraSeal_and_a_tampered_byte_fails_at_the_right_entry` does all three.
+This section needs the TesseraSeal build (see "Custody file: two builds"). Press **Verify custody file** on the Ledger tab: `Status: PASS · 41 lines`. Change one byte of any entry in the file and press it again: `Status: FAIL · payload_hash MAC mismatch at seq 7`. Cut the final newline, as a crash mid-write would, and the verifier refuses the whole file. The test `Custody_file_verifies_under_TesseraSeal_and_a_tampered_byte_fails_at_the_right_entry` does all three.
 
 ## The admin panel, attacked
 
@@ -179,7 +212,7 @@ src/GasPump.Core       units, pricing, the sale state machine (a table, no I/O)
 src/GasPump.Payment    cards, issuer, network, gateway, signed token, site limits (admin), cash drawer
 src/GasPump.Security   hard limits, verifier, nonce store, pump authority, ledger, totalizer
 src/GasPump.Pump       hydraulics, meter, taper policy, pump controller
-src/GasPump.Custody    TesseraSeal's chain-of-custody sink and verifier, compiled in from Herald.Compliance by source link
+src/GasPump.Custody    the custody file: TesseraSeal's sink and verifier when the Herald.Compliance sources are present, a plain file otherwise
 src/GasPump.Dispatch   IDispatchStrategy, ThreadedDispatch, ChannelDispatch, AsyncProxyDispatch, Simulation, HeraldEventLog (Herald.OSS), journal and recovery
 src/GasPump.Host       minimal API + WebSocket hub
 app/                   Electron + Vite + Vue 3 + TypeScript

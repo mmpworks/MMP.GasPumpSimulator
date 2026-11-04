@@ -430,6 +430,8 @@ Every step toward "fuel for money" has a step back: a hold is reversed, a comple
 
 Both sinks hang off the same Herald pipeline. The simulator writes one structured event; Herald fans it to the UI bridge, the debug file, and the custody bridge, so the three can never disagree about what happened.
 
+A build without the Herald.Compliance sources replaces the right-hand column with `PlainCustodySink`: the same categories and the same lifetime, one JSON object per line with no MAC and no chain, and every verify answers `NOT CHECKED`. `CustodyFile` is the one seam between the two, and `CustodyFile.ChainAvailable` says which one this build has.
+
 Out of scope: the daily Merkle seal and the HSM signature (primitives 2 and 3 of the spec). A one-pump simulator has primitive 1, the per-event HMAC chain, and the software key file stands in for the custodian.
 
 ## Timers, and what each one protects

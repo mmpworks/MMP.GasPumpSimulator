@@ -1,4 +1,5 @@
 using GasPump.Core;
+using GasPump.Custody;
 using GasPump.Dispatch;
 using Xunit;
 
@@ -105,6 +106,6 @@ public class CustodyCopyTests : IDisposable
         Assert.Equal(after, File.ReadLines(copy.Path!).Count());
         // The copy is byte for byte the dispenser's chain, so the same key verifies it.
         Assert.Equal(ReadShared(h.Sim.CustodyPath!), File.ReadAllLines(copy.Path!));
-        Assert.True(MMP.Herald.Compliance.Audit.ImmutableAuditFileSink.VerifyChain(copy.Path!, ikm, out var seq, out var why), $"copy failed to verify at {seq}: {why}");
+        if (CustodyFile.ChainAvailable) Assert.True(CustodyFile.Verify(copy.Path!, ikm, out var seq, out var why), $"copy failed to verify at {seq}: {why}");
     }
 }

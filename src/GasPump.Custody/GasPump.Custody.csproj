@@ -1,13 +1,17 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <RootNamespace>GasPump.Custody</RootNamespace>
-    <!-- TesseraSeal's chain-of-custody primitive 1 (per-event HMAC chain) and its file sink and verifier, compiled in
-         from the Herald.Compliance source by link. The simulator adds no cryptography of its own. Override the path
-         with -p:HeraldCompliancePath=... when the Herald checkout lives elsewhere. -->
+    <!-- The custody file has two builds. With the Herald.Compliance sources beside this repo, it compiles in TesseraSeal's
+         chain-of-custody primitive 1 (per-event HMAC chain), its file sink, and its verifier by link. Those sources are
+         not open source. Without them it falls back to PlainCustodySink, so a clone of this repo builds and runs on its
+         own. The simulator adds no cryptography of its own in either build. Override the path with
+         -p:HeraldCompliancePath=... when the Herald checkout lives elsewhere. -->
     <HeraldCompliancePath Condition="'$(HeraldCompliancePath)' == ''">$(MSBuildThisFileDirectory)..\..\..\Herald\Modules\Herald.Compliance\src\Audit</HeraldCompliancePath>
     <NoWarn>$(NoWarn);CS1591</NoWarn>
+    <HasTesseraSeal Condition="Exists('$(HeraldCompliancePath)\ImmutableAuditFileSink.cs')">true</HasTesseraSeal>
+    <DefineConstants Condition="'$(HasTesseraSeal)' == 'true'">$(DefineConstants);TESSERASEAL</DefineConstants>
   </PropertyGroup>
-  <ItemGroup>
+  <ItemGroup Condition="'$(HasTesseraSeal)' == 'true'">
     <Compile Include="$(HeraldCompliancePath)\Chain\Constants.cs" Link="TesseraSeal\Chain\Constants.cs" />
     <Compile Include="$(HeraldCompliancePath)\Chain\KeyDerivation.cs" Link="TesseraSeal\Chain\KeyDerivation.cs" />
     <Compile Include="$(HeraldCompliancePath)\Chain\CanonicalJson.cs" Link="TesseraSeal\Chain\CanonicalJson.cs" />
