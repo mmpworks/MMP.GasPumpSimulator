@@ -27,7 +27,7 @@ public sealed class SiteLimits
     private int _failedPins;
     private DateTimeOffset? _lockedUntil;
 
-    public static readonly TimeSpan Lockout = TimeSpan.FromMinutes(5);
+    public static readonly TimeSpan Lockout = TimeSpan.FromSeconds(15);
     public const int MaxPinFailures = 3;
 
     public SiteLimits(TimeProvider clock, Money creditHold, Money debitHold, string adminPin = "1234")
@@ -112,7 +112,7 @@ public sealed class SiteLimits
         if (_failedPins >= MaxPinFailures)
         {
             _lockedUntil = _clock.GetUtcNow() + Lockout;
-            return (false, "admin.locked", $"{_failedPins} wrong PINs, panel locked for {Lockout.TotalMinutes:0} min");
+            return (false, "admin.locked", $"{_failedPins} wrong PINs, panel locked for {Lockout.TotalSeconds:0} s");
         }
         return (false, "admin.refused", $"wrong PIN ({_failedPins} of {MaxPinFailures})");
     }
