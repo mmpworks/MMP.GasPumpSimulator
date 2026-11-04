@@ -81,6 +81,7 @@ public static class Contracts
                 pid = link.RemotePid,
                 runId = link.RemoteRunId,
                 custodyPath = link.RemoteCustodyPath,
+                logPath = link.RemoteLogPath,
                 framesSent = link.FramesSent,
                 framesReceived = link.FramesReceived,
                 custodyLines = link.CustodyLines,

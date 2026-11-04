@@ -20,7 +20,9 @@ public sealed record DispenserServerOptions(
     byte[] Ikm,
     Action<MMP.Herald.Quick.QuickLogBuilder>? LogSinks = null,
     string? RunId = null,
-    TimeSpan? Heartbeat = null)
+    TimeSpan? Heartbeat = null,
+    /// <summary>The full path of the log file LogSinks writes, sent to the station so its window can show it.</summary>
+    string? LogPath = null)
 {
     public TimeSpan HeartbeatPeriod => Heartbeat ?? TimeSpan.FromSeconds(1);
 }
@@ -282,7 +284,7 @@ public sealed class DispenserServer : IDisposable
             _client = writer;
             _tcp = tcp;
         }
-        Send(new LinkFrame(LinkFrame.TagHello, Hello: new LinkHello("dispenser", _options.Dispenser.PumpId, RunId, Environment.ProcessId, CustodyPath, _recv.LastSeq)), WireKind.Event);
+        Send(new LinkFrame(LinkFrame.TagHello, Hello: new LinkHello("dispenser", _options.Dispenser.PumpId, RunId, Environment.ProcessId, CustodyPath, _recv.LastSeq, _options.LogPath)), WireKind.Event);
         // What this run already wrote before the station arrived: the ledger in full, the last stretch of the log, then
         // the whole chain so far and then live. SubscribeWithReplay does the chain's replay and subscription under one
         // lock, so no line is missed or doubled.

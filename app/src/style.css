@@ -16,7 +16,10 @@ body { background: var(--bg); overflow: hidden; }
 /* Workspace: the app bar, then the pane tree filling the rest of the window, never past it. */
 .v-application__wrap { min-height: 100vh; max-height: 100vh; }
 .v-main { height: 100vh; box-sizing: border-box; }
-.workspace { height: 100%; box-sizing: border-box; }
+/* A column: the pump tabs, then the panes in what is left. height: 100% on the panes alone would push them past the window by the tabs' height. */
+.workspace { height: 100%; box-sizing: border-box; display: flex; flex-direction: column; }
+.workspace > .pump-tabs { flex: 0 0 auto; }
+.workspace > .pump-view { flex: 1 1 auto; min-height: 0; height: auto; }
 
 /* Two sides, two colours. --island tints the dispenser; --office tints the back office. The strip between them is the wire. */
 .side { height: 100%; display: flex; flex-direction: column; border-radius: 10px; padding: 6px; box-sizing: border-box; }
@@ -43,7 +46,8 @@ body { background: var(--bg); overflow: hidden; }
 .pane-card { height: 100%; display: flex; flex-direction: column; overflow: hidden; }
 .pane-card > .v-card-title { font-size: 12px; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); padding: 10px 16px 6px; flex: 0 0 auto; }
 .pane-card > .v-card-text { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 8px 16px 14px; }
-.pane-card.fixed > .v-card-text { display: flex; flex-direction: column; overflow: hidden; }
+/* The list scrolls inside itself. When the panel is too short to hold it, the panel scrolls too, so the last line stays reachable. */
+.pane-card.fixed > .v-card-text { display: flex; flex-direction: column; overflow: auto; }
 .pane-card > .v-tabs, .pane-card > .v-divider { flex: 0 0 auto; }
 
 /* splitpanes: the gap is the handle. */
@@ -68,7 +72,7 @@ body { background: var(--bg); overflow: hidden; }
 .trace > i { flex: 1; background: var(--accent); min-width: 1px; opacity: .85; }
 
 /* Monospace lists: log and ledger. */
-.mono-list { font-family: ui-monospace, Consolas, monospace; font-size: 12px; line-height: 1.5; overflow: auto; flex: 1 1 auto; min-height: 0; }
+.mono-list { font-family: ui-monospace, Consolas, monospace; font-size: 12px; line-height: 1.5; overflow: auto; flex: 1 1 auto; min-height: 96px; }
 .mono-list .line { display: grid; grid-template-columns: 88px 62px minmax(0, 1fr); column-gap: 10px; align-items: baseline; white-space: pre-wrap; overflow-wrap: anywhere; border-bottom: 1px solid #1a1f29; padding: 2px 0; }
 .mono-list .line.ledger { grid-template-columns: 40px minmax(0, 1fr); }
 .mono-list .src { color: var(--muted); }
@@ -87,3 +91,11 @@ body { background: var(--bg); overflow: hidden; }
 .step { font-size: 12px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin: 10px 0 6px; display: flex; gap: 8px; align-items: center; }
 .kv { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; font-size: 13px; }
 .kv b { color: var(--muted); font-weight: 500; }
+
+/* A file on disk: the whole path, selected in one click. */
+.file-path { display: flex; flex-wrap: wrap; align-items: center; column-gap: 6px; font-size: 12px; margin-bottom: 4px; flex: 0 0 auto; }
+.file-path-label { flex: 0 0 auto; }
+.file-path code { user-select: all; overflow-wrap: anywhere; min-width: 0; }
+
+/* What kind of card is in the reader. It reports the card; nothing here takes a click. */
+.reader-kind { font-weight: 700; }
