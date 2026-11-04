@@ -245,7 +245,7 @@ public void MoveNext()
     }
     catch (Exception ex) { _steps.Dispose(); _builder.SetException(ex); }
 }</code></pre>
-<p class="where">E:\dev\MMP.AsyncProxy\src\MMP.AsyncProxy\Iterate\IteratorStateMachine{T}.cs</p>
+<p class="where">MMP.AsyncProxy\src\MMP.AsyncProxy\Iterate\IteratorStateMachine{T}.cs</p>
 
 <p>Read it as a clerk working a to-do list. Pull the next item. If it is already done, cross it off and pull the next. If it is not done, write "call me when this finishes" on it and go home. There is no thread standing at the desk while the item is out. When the item finishes, whoever finished it calls the clerk back, and the clerk picks up the list where the bookmark is.</p>
 
@@ -583,14 +583,14 @@ events:  CardPresented &gt; CodeEntered &gt; Approved &gt; PumpArmed &gt; GradeS
 
 <h2 id="read">11. Where to start reading</h2>
 <ol>
-  <li><code>E:\dev\MMP.AsyncProxy\README.md</code>. The same method three ways: with <code>async</code>, as an iterator, and as the hand-written machine the compiler would emit.</li>
-  <li><code>E:\dev\MMP.AsyncProxy\docs\compiler-vs-handwritten.md</code>. The compiler's output beside the hand-written class, row by row.</li>
+  <li><code>MMP.AsyncProxy\README.md</code>. The same method three ways: with <code>async</code>, as an iterator, and as the hand-written machine the compiler would emit.</li>
+  <li><code>MMP.AsyncProxy\docs\compiler-vs-handwritten.md</code>. The compiler's output beside the hand-written class, row by row.</li>
   <li><code>src/MMP.AsyncProxy/Iterate/IteratorStateMachine{T}.cs</code>. Ninety lines. The whole of what <code>await</code> adds to <code>yield</code>.</li>
   <li><code>src/MMP.AsyncProxy/Core/Promise{T}.cs</code>. Where continuations are stored and run, and why they run outside the lock.</li>
-  <li><code>E:\dev\MMP.GasPumpSimulator\src\GasPump.Dispatch\AsyncProxyDispatch.cs</code>. The mailbox as a promise and the worker as an iterator. Read it beside <code>ThreadedDispatch.cs</code>.</li>
+  <li><code>src\GasPump.Dispatch\AsyncProxyDispatch.cs</code>. The mailbox as a promise and the worker as an iterator. Read it beside <code>ThreadedDispatch.cs</code>.</li>
 </ol>
 
-<p class="eyebrow">Source: E:\dev\MMP.GasPumpSimulator at main 95b8191 and E:\dev\MMP.AsyncProxy v0.1.0. 322 dotnet tests and 10 Playwright specs pass. Companions: Gas Pump Patterns, Gas Pump Security and Audit, Adding Fuel Detergent, Receipts, Lines, and a Video Player, One Perfect Sale.</p>
+<p class="eyebrow">Source: MMP.GasPumpSimulator at main 95b8191 and MMP.AsyncProxy v0.1.0. 322 dotnet tests and 10 Playwright specs pass. Companions: Gas Pump Patterns, Gas Pump Security and Audit, Adding Fuel Detergent, Receipts, Lines, and a Video Player, One Perfect Sale.</p>
 </main>
 
 <script>
