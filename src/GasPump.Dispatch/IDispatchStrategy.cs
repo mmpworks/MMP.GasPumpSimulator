@@ -1,6 +1,12 @@
 namespace GasPump.Dispatch;
 
 /// <summary>
+// Quick vocabulary for the threading code in this folder.
+// Message: a small record that says what happened, such as "nozzle lifted".
+// Mailbox: the line of messages waiting for one worker.
+// Worker: a loop that takes one message, handles it, and takes the next.
+// Handler: the method the worker calls for each message.
+// Thread: one path of running code. The system can run many at once.
 /// A bounded queue between two workers. Post waits when the queue is full,
 /// because a pulse stream can't drop a count. GEM:back-pressure-ring: the
 /// producer waits so the consumer never loses data.
@@ -34,6 +40,9 @@ public interface IWorkerHandle : IDisposable
 /// worker is an iterator-driven state machine and the mailbox is a promise per
 /// message.
 /// </summary>
+// Swap the strategy and the pump code above it stays the same. Compare the
+// three versions to see what each one spends while it waits for a message:
+// ThreadedDispatch parks a whole thread. The other two hold no thread at all.
 public interface IDispatchStrategy : IDisposable
 {
     string Name { get; }

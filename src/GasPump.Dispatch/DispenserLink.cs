@@ -264,6 +264,12 @@ public static class LinkJson
 /// period and the peer's is watched. Custody lines are kept so a late
 /// subscriber receives the whole chain.
 /// </summary>
+// Three kinds of thread use this class.
+// 1. _thread connects to the dispenser and reads every incoming line.
+// 2. The _pulse timer sends a heartbeat on a pool thread.
+// 3. Station workers call Post and Command to send frames.
+// _gate protects the shared fields below. lock (writer) keeps two senders from
+// mixing their bytes on the socket.
 public sealed class SocketDispenserLink : IDispenserLink
 {
     private readonly string _host;
@@ -368,6 +374,9 @@ public sealed class SocketDispenserLink : IDispenserLink
         _seq.Send(kind, dest, body, _clock.GetUtcNow(), Write, correlationId, ttl);
     }
 
+    // Copy the writer under _gate, then write under the writer's own lock. A slow
+    // socket then blocks other senders only. Anything reading state under _gate
+    // keeps moving.
     /// <summary>True when the frame went out. False gives its number back to the sequencer.</summary>
     private bool Write(WireFrame f)
     {
@@ -398,6 +407,8 @@ public sealed class SocketDispenserLink : IDispenserLink
         PeerAlive?.Invoke(alive);
     }
 
+    // The reader thread's whole life: connect, read until the line drops, clean up,
+    // wait 400 ms, and try again. It never stops trying until the link is disposed.
     private void Run()
     {
         var announcedWaiting = false;
@@ -419,6 +430,7 @@ public sealed class SocketDispenserLink : IDispenserLink
                 // ConnectionChanged(true) waits for the dispenser's hello, so subscribers see who answered.
 
                 string? line;
+                // ReadLine blocks this thread until a line arrives. Null means the other side closed the socket.
                 while ((line = reader.ReadLine()) is not null)
                 {
                     Interlocked.Increment(ref _received);
