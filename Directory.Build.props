@@ -5,6 +5,10 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <!-- MMP.AsyncProxy is referenced from a sibling checkout, outside this solution. A solution build would
+         otherwise strip Configuration from that reference and build the library Debug under a Release build.
+         Every project here inherits it transitively, so the switch lives at the root. -->
+    <ShouldUnsetParentConfigurationAndPlatform>false</ShouldUnsetParentConfigurationAndPlatform>
     <!-- The simulator's version. Bump here, tag main as v<Version>, and publish the release notes. -->
     <Version>0.1.0</Version>
     <Authors>MMPWorks LLC</Authors>
