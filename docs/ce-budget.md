@@ -74,6 +74,8 @@ The island's own spend is under 4 MB in the worst case and under 1 MB in the lik
 3. `TcpListener` and the blocking read on the accept thread. CF has both. The alternative, `BeginReceive` through `Futures.FromAsync`, would make the accept thread a pool callback and take the dedicated count to 1.
 4. The CF runtime's footprint and the GC's behaviour under 10 KB a second of short-lived garbage. The CF collector is a simple mark-and-sweep with no generations, so the measurement is pause time at the tick rate.
 
+The plan for testing these items on a CE virtual machine is in [Build for Windows CE, test in VMware](ce-build-test-plan.html).
+
 ## Run it yourself
 
 ```
