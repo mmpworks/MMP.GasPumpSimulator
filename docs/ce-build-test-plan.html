@@ -1,0 +1,249 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>CE Build and Test Plan</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Source+Sans+3:ital,wght@0,400;0,600;1,400&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+:root{
+  --bg:#f6f3ec; --fg:#201e1a; --muted:#6a635a; --rule:#d9d2c5; --panel:#fffdf8;
+  --amber:#b4660a; --amber-soft:#f9e7cd; --blue:#2a5c9b; --blue-soft:#dbe6f5; --green:#2f7a4a; --green-soft:#dcefe1; --red:#a33a2a; --red-soft:#f6ddd8;
+  --code-bg:#1c1e23; --code-fg:#e6e3dc; --cmt:#9aa0ab;
+  --display:"Barlow Condensed","Arial Narrow",Arial,sans-serif;
+  --body:"Source Sans 3",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"IBM Plex Mono",Consolas,"Courier New",monospace;
+  color-scheme:light;
+}
+@media (prefers-color-scheme: dark){ :root:not([data-theme="light"]){
+  --bg:#14161a; --fg:#e8e4db; --muted:#a69e90; --rule:#2c3038; --panel:#1b1e24;
+  --amber:#e8a24a; --amber-soft:#35260f; --blue:#82b1e6; --blue-soft:#162638; --green:#7fc79a; --green-soft:#14301d; --red:#e07b6a; --red-soft:#3a1a16;
+  --code-bg:#0e1013; color-scheme:dark } }
+:root[data-theme="dark"]{
+  --bg:#14161a; --fg:#e8e4db; --muted:#a69e90; --rule:#2c3038; --panel:#1b1e24;
+  --amber:#e8a24a; --amber-soft:#35260f; --blue:#82b1e6; --blue-soft:#162638; --green:#7fc79a; --green-soft:#14301d; --red:#e07b6a; --red-soft:#3a1a16;
+  --code-bg:#0e1013; color-scheme:dark }
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;padding:0 16px 4rem}
+main{max-width:78ch;margin:0 auto}
+h1,h2,h3{font-family:var(--display);text-wrap:balance;line-height:1.05;margin:0}
+h1{font-size:clamp(2.6rem,7vw,4.2rem);font-weight:700;letter-spacing:-.01em}
+h2{font-size:2rem;font-weight:600;margin-top:3rem;padding-top:1.1rem;border-top:3px solid var(--rule)}
+h3{font-size:1.35rem;font-weight:600;margin-top:1.7rem}
+p{margin:.9rem 0}
+header{padding-block:3rem 1rem}
+.eyebrow{font-family:var(--mono);font-size:.78rem;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.lede{font-size:1.2rem;color:var(--muted)}
+ol,ul{padding-left:1.3rem} li{margin:.3rem 0}
+a{color:var(--blue)} a:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
+.scroll{overflow-x:auto;margin:1rem 0}
+table{border-collapse:collapse;width:100%;min-width:560px;font-size:.93rem}
+th,td{text-align:left;padding:.5rem .6rem;border-bottom:1px solid var(--rule);vertical-align:top}
+th{font-family:var(--display);font-size:1.05rem;font-weight:600}
+td code,p code,li code{font-family:var(--mono);font-size:.85em;background:var(--panel);border:1px solid var(--rule);padding:0 .3em;border-radius:3px;overflow-wrap:anywhere}
+pre{background:var(--code-bg);color:var(--code-fg);font-family:var(--mono);font-size:.82rem;line-height:1.5;padding:1rem 1.1rem;border-radius:6px;overflow-x:auto;margin:1rem 0}
+pre .c{color:var(--cmt);font-style:italic}
+.tag{display:inline-block;font-family:var(--mono);font-size:.72rem;letter-spacing:.03em;padding:.05rem .45rem;border-radius:3px;white-space:nowrap}
+.done{background:var(--green-soft);color:var(--green)}
+.docs{background:var(--blue-soft);color:var(--blue)}
+.todo{background:var(--amber-soft);color:var(--amber)}
+.block{background:var(--red-soft);color:var(--red)}
+aside{border-left:4px solid var(--amber);background:var(--panel);padding:.8rem 1rem;margin:1.2rem 0;border-radius:0 6px 6px 0}
+aside.stop{border-left-color:var(--red)}
+aside p{margin:.3rem 0}
+.flow{list-style:none;padding:0;margin:1.4rem 0;display:grid;grid-template-columns:repeat(5,1fr);gap:.5rem}
+.flow li{margin:0;background:var(--panel);border:1px solid var(--rule);border-top:3px solid var(--blue);border-radius:4px;padding:.6rem .7rem;font-size:.9rem;line-height:1.35}
+.flow li.new{border-top-color:var(--amber)}
+.flow strong{display:block;font-family:var(--display);font-size:1.1rem;font-weight:600;margin-bottom:.15rem}
+@media (max-width:760px){.flow{grid-template-columns:1fr}}
+footer{margin-top:3rem;padding-top:1rem;border-top:1px solid var(--rule);font-size:.88rem;color:var(--muted)}
+</style>
+</head>
+<body>
+<main>
+<header>
+  <p class="eyebrow">MMP.GasPumpSimulator / Plan / 2026-11-04</p>
+  <h1>Build for Windows CE, test in VMware</h1>
+  <p class="lede">We want to write programs for Windows CE on a normal PC, then test them on a copy of CE running inside VMware. This page lays out the plan and shows how far we've gotten.</p>
+</header>
+
+<aside class="stop">
+  <p><strong>Where we stand.</strong> The build works today, but nothing from this work has run on Windows CE yet.</p>
+  <p><strong>What's next.</strong> Steve asks Microsoft for the activation key for Compact 7, the official name for CE 7, and everything after the build waits on that key.</p>
+</aside>
+
+<h2>The pipeline</h2>
+<p>The programs use the .NET Compact Framework 3.5 (CF 3.5), the small version of .NET made for CE. Our CE box will be a virtual machine (VM), which is a whole computer running as software on another computer.</p>
+<ol class="flow" aria-label="Pipeline steps in order">
+  <li><strong>1. Build</strong>A PC makes the <code>.exe</code>, the DLLs, and the support files.</li>
+  <li><strong>2. Prepare</strong>VMware puts the CE VM back to a clean snapshot and starts it.</li>
+  <li><strong>3. Copy</strong>A script sends the files to the VM over FTP.</li>
+  <li class="new"><strong>4. Run</strong>A script starts the test program, and the program writes a result file.</li>
+  <li class="new"><strong>5. Report</strong>A script picks up the result file and reports N of M passed.</li>
+</ol>
+<p>Steps 4 and 5 are new since our first outline. Copying files over can't tell us if a test passed, so something has to run the test and bring the answer back.</p>
+
+<h2>How far each part has gotten</h2>
+<p>Each row has one tag. <span class="tag done">measured</span> means we ran a command and wrote down the result. <span class="tag docs">documented</span> means a source says it works, but we haven't run it. <span class="tag todo">inferred</span> means we expect it to work, but no source covers this setup. <span class="tag block">blocked</span> means it's waiting on something we name in that row.</p>
+<div class="scroll"><table>
+  <thead><tr><th>Part</th><th>Status</th><th>What we know</th></tr></thead>
+  <tbody>
+    <tr><td>Compile a CF 3.5 library on a PC</td><td><span class="tag done">measured</span></td><td>MMP.AsyncProxy has built this since 2026-11-02. We built it again on 2026-11-04 and got 0 errors.</td></tr>
+    <tr><td>Compile a CF 3.5 WinForms <code>.exe</code> on a PC</td><td><span class="tag done">measured</span></td><td>A throwaway test program built with <code>dotnet build</code> and with Visual Studio 2022 MSBuild.</td></tr>
+    <tr><td>Compile from JetBrains Rider</td><td><span class="tag docs">documented</span></td><td>Rider lets you pick which MSBuild it runs. Rider itself hasn't built this project yet.</td></tr>
+    <tr><td>Compact 7 tools and key</td><td><span class="tag block">blocked</span></td><td>Waiting on the key request. We don't know if Microsoft still gives out keys.</td></tr>
+    <tr><td>Compact 7 on VMware</td><td><span class="tag todo">inferred</span></td><td>We found no guide for Compact 7. Old reports say a CE 6 CEPC x86 image works on VMware. CEPC is Microsoft's name for a normal x86 PC running CE. A Microsoft-hosted blog walks through Compact 7 on Hyper-V.</td></tr>
+    <tr><td>FTP and Telnet on the VM</td><td><span class="tag docs">documented</span></td><td>The parts to add are <code>SYSGEN_FTPD</code> and <code>SYSGEN_TELNETD</code>. The pages we found cover Compact 2013, so we still have to confirm them for Compact 7.</td></tr>
+    <tr><td>Snapshot and power control</td><td><span class="tag docs">documented</span></td><td><code>vmrun</code> has <code>start</code>, <code>stop</code>, and <code>revertToSnapshot</code>. Its guest commands need VMware Tools, and we don't expect to have those on CE.</td></tr>
+    <tr><td>Run on CE 7</td><td><span class="tag block">blocked</span></td><td>Waiting on the VM.</td></tr>
+    <tr><td>Run on CE 6</td><td><span class="tag block">blocked</span></td><td>We found no CE 6 trial tools, and we have no device. This gap is still open. See <a href="#limits">What a pass proves</a>.</td></tr>
+  </tbody>
+</table></div>
+
+<h2>Step 1: Build on the PC</h2>
+<p>Copy the project setup from MMP.AsyncProxy: <code>src/MMP.AsyncProxy.NetCF/MMP.AsyncProxy.NetCF.csproj</code>. It's a normal SDK project that points at the CF libraries by path, so you don't have to change the registry or any system folder.</p>
+<ol>
+  <li>Keep the CF libraries at <code>E:\dev\tools\netcf35-ref</code>. They're Microsoft's files, so they stay out of the repo, and <code>docs/netcf-port.md</code> in MMP.AsyncProxy records where they came from.</li>
+  <li>MMP.AsyncProxy sets <code>LangVersion</code> to 3. Use the same setting for code that ships to CE.</li>
+  <li>CF 3.5 leaves out parts of the desktop API. <code>tools/netcf-audit.ps1</code> in MMP.AsyncProxy lists them, and the compiler catches the rest.</li>
+  <li>C# code builds as AnyCPU, so the same file should run on any chip, but a native DLL, written for one kind of chip, needs a build for each chip you support.</li>
+</ol>
+<p>Here's what we read back from the throwaway <code>.exe</code> after the build:</p>
+<pre>IMAGE v2.0.50727
+REF mscorlib 3.5.0.0 969db8053d3322ac
+REF System.Core 3.5.0.0 969db8053d3322ac
+REF System.Windows.Forms 3.5.0.0 969db8053d3322ac</pre>
+<p>The key token <code>969db8053d3322ac</code> marks a library as CF. MMP.AsyncProxy checks for the same token in <code>CompactFrameworkTests</code>.</p>
+<p>This proof has a limit, because the <code>.exe</code> used more project settings than the MMP.AsyncProxy project does and we haven't rebuilt it with the simpler setup yet. Stage 2 below takes care of that.</p>
+<h3>Rider and Visual Studio settings</h3>
+<ol>
+  <li>The pipeline builds with <code>dotnet build</code> by default. It worked on SDK 10.0.204 with no extra setup on the machine.</li>
+  <li>Visual Studio 2022 MSBuild needed the <code>Microsoft.NetCore.Component.SDK</code> component, and it also needed <code>BypassFrameworkInstallChecks</code> set to <code>true</code> in the project. Without that setting, it asks for the full .NET 3.5 SP1 feature, which a CF build doesn't use.</li>
+  <li>In Rider, you pick the MSBuild on the Toolset and Build settings page. Try SDK 10.0.204 first.</li>
+  <li>Expect to copy files to CE by hand or by script. We found no Rider support for CF debugging or a CF forms designer.</li>
+</ol>
+
+<h2>Step 2: The CE box in VMware</h2>
+<p>You can't install CE the way you install desktop Windows. Instead, a Microsoft tool called Platform Builder makes a system file named <code>NK.bin</code>, and a small boot program starts that file. Docker won't help here, because a container borrows the kernel (the core of the OS) from its host and CE has its own kernel.</p>
+<h3>Tools</h3>
+<div class="scroll"><table>
+  <thead><tr><th>Tool</th><th>Status on 2026-11-04</th></tr></thead>
+  <tbody>
+    <tr><td>VMware Workstation Pro</td><td>Version 17.0.2 is on the development PC. Broadcom made the product free for all uses on 2024-11-11. Updating is optional.</td></tr>
+    <tr><td>Visual Studio 2008 Pro, 90-day trial</td><td>The ISO link answers and shows 3.55 GB. We haven't downloaded it.</td></tr>
+    <tr><td>Visual Studio 2008 SP1</td><td>Microsoft still lists it. We haven't tested the link.</td></tr>
+    <tr><td>Compact 7, 180-day trial</td><td>The US page loaded once, then didn't answer a later direct check.</td></tr>
+    <tr><td>Compact 7 activation key</td><td>This is the biggest unknown. Nobody has asked for a key yet.</td></tr>
+    <tr><td>DiskPrep</td><td>The link is dead. Microsoft also describes a manual way that uses <code>cesys</code>.</td></tr>
+  </tbody>
+</table></div>
+<h3>Steps</h3>
+<ol>
+  <li>Make a Windows 7 or Windows 10 VM for building. Install Visual Studio 2008 first, then SP1, then Compact 7.</li>
+  <li>Create an OS design for the CEPC x86 target. Add <code>SYSGEN_DOTNETV35</code>, <code>SYSGEN_FTPD</code>, and <code>SYSGEN_TELNETD</code>.</li>
+  <li>Turn off KITL (the debug link to the build PC) and kernel debugging, then build <code>NK.bin</code>.</li>
+  <li>Put the boot program on the disk first, then copy <code>NK.bin</code>. Microsoft warns that the other order fails the boot check.</li>
+  <li>Boot a second VM from that disk. Start with the <code>e1000</code> network adapter, which needs a CE driver for that chip. Give the VM 512 MB of fixed memory, the amount the Hyper-V guide uses.</li>
+  <li>After the first good boot, take a snapshot named <code>clean</code>, which saves the VM so you can go back to that moment.</li>
+</ol>
+<p>Microsoft's disk steps make a VHD, and we haven't tested how to move one into VMware. Compact 7 keeps the system file on a FAT32 disk, so we could also set up a VMware disk directly from the build VM.</p>
+<p>If CF 3.5 doesn't start from the image, <code>NETCFv35.wce.x86.cab</code> in the CF installer gives us a second way to add it, although we haven't tested this.</p>
+
+<h2>Steps 3 to 5: Copy, run, and report</h2>
+<p>This script is a sketch, and it hasn't run yet. <code>&lt;ce-vm&gt;</code> stands for the address of the VM.</p>
+<pre><span class="c"># 2. Clean box</span>
+vmrun -T ws revertToSnapshot ce7.vmx clean
+vmrun -T ws start ce7.vmx nogui
+
+<span class="c"># 3. Copy</span>
+curl -T CfSpike.exe "ftp://&lt;ce-vm&gt;/Temp/"
+
+<span class="c"># 4. Run, through a Telnet session</span>
+\Temp\CfSpike.exe
+
+<span class="c"># 5. Report</span>
+curl "ftp://&lt;ce-vm&gt;/Temp/result.txt" -o result.txt
+vmrun -T ws stop ce7.vmx</pre>
+<ol>
+  <li>The result file decides pass or fail, and a missing file counts as a failure. The script prints N of M, and M comes from the test list so that the program being tested can't change it.</li>
+  <li>Plan on writing a small test runner of our own, since we haven't confirmed that any current test framework works on CF 3.5.</li>
+  <li>Keep the VM on a private VMware network and use an FTP login, because Microsoft warns against anonymous uploads.</li>
+  <li>If Telnet fails, the <code>HKEY_LOCAL_MACHINE\Init</code> registry key can start a runner at boot, but that runner has to call <code>SignalStarted</code>.</li>
+</ol>
+
+<h2 id="limits">What a pass proves</h2>
+<div class="scroll"><table>
+  <thead><tr><th>A pass in the VM shows</th><th>A pass in the VM can't show</th></tr></thead>
+  <tbody>
+    <tr><td>The program loads and runs on the real CF 3.5 runtime.</td><td>That it runs on CE 6. The VM runs CE 7, even though both target CF 3.5.</td></tr>
+    <tr><td>Our API checks hold up on a real CE system.</td><td>That it runs on ARM chips. The VM is x86, which matters for native DLLs.</td></tr>
+    <tr><td>The copy and run scripts work.</td><td>Custom device drivers, a card reader, a display, or other board hardware.</td></tr>
+    <tr><td>A first look at how timers and memory behave.</td><td>Timing on a real board. <code>docs/ce-budget.md</code> items 2 and 4 still need a device for their final numbers.</td></tr>
+  </tbody>
+</table></div>
+<p>The CE 6 gap matters because <code>docs/ce-budget.md</code> sets its budget on a CE 6 board. Before we claim a release works on CE 6, we need a run on CE 6.</p>
+
+<h2>Order of the work</h2>
+<div class="scroll"><table>
+  <thead><tr><th>Stage</th><th>Work</th><th>Done when</th></tr></thead>
+  <tbody>
+    <tr><td>0</td><td>Ask for the key.</td><td>Steve has a key, or Microsoft won't give one.</td></tr>
+    <tr><td>1</td><td>Build the VM. Copy the throwaway <code>.exe</code> over FTP and start it.</td><td>A window titled "CF spike 5" opens on CE 7. Count: 1 of 1.</td></tr>
+    <tr><td>2</td><td>Add a small runner around the forecourt sample in MMP.AsyncProxy, using the simpler project setup. That sample is a DLL today.</td><td>The runner writes a result file on CE 7, and the file reports every named check.</td></tr>
+    <tr><td>3</td><td>Write the pipeline script.</td><td>One command runs steps 1 to 5 from a clean snapshot and prints N of M. When we break a test on purpose, it reports the failure.</td></tr>
+    <tr><td>4</td><td>Take readings for <code>docs/ce-budget.md</code> items 1, 2, and 4.</td><td>The readings are on that page, marked as VM readings.</td></tr>
+    <tr><td>5</td><td>Decide whether to port the island.</td><td>Steve accepts or rejects a separate plan.</td></tr>
+  </tbody>
+</table></div>
+<p>We haven't set dates, and Steve will set them after stage 0.</p>
+<p>The island comes last because it's a big job. <code>GasPump.Dispenser</code> targets .NET 10 and references <code>GasPump.Pump</code>, <code>GasPump.Security</code>, and <code>GasPump.Core</code>. <code>docs/ce-budget.md</code> says System.Text.Json, Herald.OSS, and the TesseraSeal chain don't exist on CF. A port would be its own project.</p>
+
+<h2>If a step fails</h2>
+<div class="scroll"><table>
+  <thead><tr><th>What goes wrong</th><th>What we do next</th></tr></thead>
+  <tbody>
+    <tr><td>Microsoft won't give us a key</td><td>Stop the CE 7 VM path. That leaves a real CE device. Don't use a key or an image from an unofficial site.</td></tr>
+    <tr><td>Compact 7 won't boot on VMware</td><td>Try the Hyper-V path from the blog: a Generation 1 VM, a legacy network adapter, and a cloned Virtual PC target.</td></tr>
+    <tr><td>CE boots but has no network</td><td>Copy the files onto the disk while the VM is off, and start the runner at boot. Get the results back the same way.</td></tr>
+    <tr><td>The program fails on CE but passes on the desktop CLR</td><td>The VM exists to catch this. Write it up in <code>docs/ce-budget.md</code>. MMP.AsyncProxy runs its CF build on the desktop CLR (the desktop .NET runtime), and that tells us nothing about the CF runtime.</td></tr>
+  </tbody>
+</table></div>
+
+<h2>Risks we're living with for now</h2>
+<ol>
+  <li>Trials run out, since the Compact 7 tools last 180 days and Visual Studio 2008 lasts 90, and we don't know if a finished <code>NK.bin</code> keeps working after that. Check the license terms before stage 3, since the pipeline would keep using these tools.</li>
+  <li>Microsoft support for CE 6 ended on 2018-04-10, so if we find a bug in CE, Microsoft won't fix it.</li>
+  <li>Downloads can vanish, so keep local copies of the tools. The CF installer's US page returned 404 on 2026-11-04, while a direct Microsoft link still served the file.</li>
+  <li>Newer compilers don't produce the same code as Visual Studio 2008, and a 2022 report says they build events with <code>Interlocked.CompareExchange&lt;T&gt;</code>, and that user's device sandbox rejected it. CF 3.5 has this method, but a locked-down device might still refuse it.</li>
+</ol>
+
+<h3>A note on the CF installer</h3>
+<p>The development PC now has two copies of <code>NETCFSetupv35.msi</code>, and their SHA-1 values differ. The MMP.AsyncProxy copy is <code>48eba5c9ae1856cda0c2b0833dfdc28c36dbbc04</code>. The copy we downloaded from Microsoft on 2026-11-04 is <code>f5227adeccc12a2a4a6ffb226c555987ef10b25f</code>. We compared the two <code>Debugger\BCL</code> folders, and the files match byte for byte, so builds use the same libraries either way. The MMP.AsyncProxy page says Microsoft deleted the download, and that sentence needs an update.</p>
+
+<h2>What we recommend</h2>
+<p>Work through the stages in order, and stop after stage 1 to review, because that stage tests the biggest risks (the key, the VM, and CF on CE) before anyone spends time on pipeline scripts.</p>
+
+<h2>Sources</h2>
+<ul>
+  <li><a href="https://www.microsoft.com/en-us/download/details.aspx?id=38794">Microsoft: Compact 7 evaluation download</a></li>
+  <li><a href="https://learn.microsoft.com/en-gb/archive/blogs/garethemslie/windows-embedded-compact-7-development-on-windows-10">Microsoft-hosted blog: Compact 7 on Windows 10 with Hyper-V</a></li>
+  <li><a href="https://learn.microsoft.com/en-us/previous-versions/windows/embedded/jj584846(v=winembedded.70)">Microsoft: stand-alone VHD for Virtual CEPC</a></li>
+  <li><a href="https://learn.microsoft.com/en-us/previous-versions/windows/embedded/gg158497(v=winembedded.70)">Microsoft: CF 3.5 catalog items in Compact 7</a></li>
+  <li><a href="https://learn.microsoft.com/en-us/previous-versions/windows/embedded/ee499792(v=winembedded.80)">Microsoft: FTP Server catalog items, Compact 2013</a></li>
+  <li><a href="https://learn.microsoft.com/en-us/previous-versions/windows/embedded/ee499505(v=winembedded.80)">Microsoft: Telnet Server catalog items, Compact 2013</a></li>
+  <li><a href="https://learn.microsoft.com/en-us/previous-versions/windows/embedded/aa915408(v=winembedded.60)">Microsoft: configuring the process boot phase, CE 6.0</a></li>
+  <li><a href="https://learn.microsoft.com/en-us/lifecycle/products/windows-embedded-ce-60">Microsoft: CE 6.0 lifecycle</a></li>
+  <li><a href="https://learn.microsoft.com/en-us/virtualization/windowscontainers/about/">Microsoft: About Windows containers</a></li>
+  <li><a href="https://www.jetbrains.com/help/rider/Settings_Toolset_and_Build.html">JetBrains: Rider Toolset and Build</a></li>
+  <li><a href="https://blogs.vmware.com/cloud-foundation/2024/11/11/vmware-fusion-and-workstation-are-now-free-for-all-users/">VMware: Fusion and Workstation are free for all users</a></li>
+  <li><a href="https://communities.vmware.com/wbsdv95928/attachments/wbsdv95928/10021/15496/1/vix160_vmrun_command.pdf">VMware: vmrun command guide</a></li>
+  <li><a href="https://pypi.org/project/vmrunPacked/">vmrunPacked: guest actions need VMware Tools</a></li>
+  <li><a href="https://microsoft.public.windowsce.platbuilder.narkive.com/9RFZ0AGo/vmware-player-2-5-1-and-windows-ce-6-0">Newsgroup: VMware Player and Windows CE 6.0</a></li>
+  <li><a href="https://communities.vmware.com:443/t5/VMware-Fusion-Discussions/Windows-CE-6-0-client/m-p/1186710">VMware forum: Windows CE 6.0 client</a></li>
+  <li><a href="https://gist.github.com/skarllot/4953ddb6e23d8a6f0816029c4155997a">Gist: CF 3.5 with SDK projects, and the 2022 Interlocked report</a></li>
+</ul>
+
+<footer>Written 2026-11-04 against commit <code>be8f33e</code>. Companion page: <a href="ce-budget.md">The island on a Windows CE budget</a>.</footer>
+</main>
+</body>
+</html>
