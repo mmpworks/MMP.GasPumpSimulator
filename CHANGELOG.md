@@ -20,28 +20,43 @@ The card reader path: phase 1 of the security-library work (`docs/prd-dukpt-read
 
 ### Verification on the build machine (2026-11-11)
 
-With the Herald sources and the X9.24-3 vectors present:
+With the Herald sources and the X9.24-3 vectors present. Without the vectors, the A1 tests show as skipped with the fetch command:
 
 ```
 dotnet build MMP.GasPumpSimulator.slnx      0 Warning(s), 0 Error(s)
-dotnet test MMP.GasPumpSimulator.slnx       Passed: 462, Skipped: 0, Total: 462
-cd app && npm run e2e                       37 passed
+dotnet test MMP.GasPumpSimulator.slnx       Passed: 474, Skipped: 0, Total: 474
+cd app && npm run e2e                       38 passed
 ```
 
-Revert check: each control was removed, its tests failed, and the control was restored.
+Revert check: each control was removed, its tests failed, and the control was restored. Rows b to f ran at `2bff432`; the other rows ran at the review commits (`e166b51`, `160f436`), after which the bank's checks changed order.
 
 | Attack | Control removed | Tests with the control removed | Restored |
 |---|---|---|---|
-| a | KSN ledger check in `BankKeys.Open` | 2 of 2 fail | 2 of 2 pass |
+| a | KSN ledger check in `BankKeys.Open` (at `2bff432`) | 2 of 2 fail | 2 of 2 pass |
+| a | per-device counter high-water mark | 1 of 1 fails | passes |
+| a | GCM tag before the ledger lookup (lookup moved first) | 1 of 1 fails | passes |
+| nonce | refusal of a second injection of one initial key ID | 1 of 1 fails | passes |
+| keypad | `Reader.Forget` at sale end | 3 of 3 fail | 3 of 3 pass |
 | b | PIN block in the GCM associated data | 1 of 1 fails | passes |
 | c | GCM tag check (ciphertext used without the tag) | 1 of 1 fails | passes |
 | c | expiry and ZIP in the associated data | 1 of 1 fails | passes |
 | d | GCM tag check | 1 of 1 fails | passes |
-| e | erase of the injected initial key | 1 of 1 fails | passes |
+| e | erase of the injected initial key (also at `160f436`, with the array check) | 1 of 1 fails | passes |
 | f | masking of the card number | 1 of 1 fails | passes |
 | f | keypad digits kept in the reader | 1 of 1 fails | passes |
 
 The register erase of attack (e) is library code. Its library test is `The_reader_cannot_rebuild_a_used_key_from_its_registers`.
+
+### After review (2026-11-11)
+
+- Records that hold a card number or a PIN (`CardData`, `CardOpening`, the bank's account and hold records) print them masked.
+- The bank checks the GCM tag before the KSN ledger, so a refusal never tells a caller which KSNs it has seen. A counter at or below a device's highest accepted counter is `KeyReplayed`; a gap ahead is accepted.
+- The bank refuses to inject one initial key ID twice (`BANK.KEY.DUPLICATEID`), across restarts. One data key seals one message, which keeps the fixed GCM nonce safe.
+- The reader drops keypad digits at every sale end. The memory probe lost a flag that proved nothing; attack (e)'s test checks the injected array.
+- The app's "another base key" attack reads its test card inside `GasPump.Reader`.
+- Anchor A1 shows as skipped, with the fetch command, when the vectors are absent, and checks each PIN block in its own transaction's section. Anchor A2 writes the associated data, the nonce and the mask by hand.
+- Scrape test A3 runs under all three dispatch strategies and includes every lab attack's text. A Playwright spec scrapes the host's HTTP and WebSocket bodies through a credit sale, a debit sale and the five attacks.
+- Named limits: the app is the keypad, so a typed PIN reaches the host in clear before the reader seals it; the bank's PIN compare is not constant time.
 
 ### Build
 

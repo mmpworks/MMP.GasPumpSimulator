@@ -18,7 +18,7 @@ A pay-at-the-pump fuel dispenser, simulated. Present a card, get a two-phase aut
 | **Forecourt shape** | One controller, two pumps, three processes over TCP. A forecourt-style wire envelope, nine fuelling-point states, an island transaction buffer, prices as a write, and totals as a read. | [Three processes, three plugs](#three-processes-three-plugs), [Glossary](docs/glossary.md) |
 | **Concurrency** | The same sale runs under three dispatch strategies: threads, Tasks and channels, and [MMP.AsyncProxy](https://github.com/mmpworks/MMP.AsyncProxy) state machines that would compile for .NET 3.5. | [Patterns](docs/articles/01-patterns.html), [CE budget](docs/ce-budget.md) |
 
-**Start here:** `cd app && npm install && npm run build && npx electron .`, then tap the `Good` card, pick a grade, lift the nozzle, and squeeze. [Run it](#run-it) has the rest. `dotnet test` runs 432 tests and `npm run e2e` runs 22 browser specs.
+**Start here:** `cd app && npm install && npm run build && npx electron .`, then tap the `Good` card, pick a grade, lift the nozzle, and squeeze. [Run it](#run-it) has the rest. `dotnet test` runs 474 tests (with the X9.24-3 vectors fetched) and `npm run e2e` runs 38 browser specs.
 
 ## What it covers
 
@@ -47,8 +47,8 @@ A pay-at-the-pump fuel dispenser, simulated. Present a card, get a two-phase aut
 ## Run it
 
 ```
-dotnet test                       # 432 tests, about 3.5 min: most on a fake clock under all three dispatch strategies, 15 over real TCP sockets
-cd app && npm run e2e             # 22 Playwright specs against the three live processes: sales, faults and repairs, the E-stop, prices and totals, two pumps at once, the layout
+dotnet test                       # 474 tests with the X9.24-3 vectors fetched, about 3 min: most on a fake clock under all three dispatch strategies, 15 over real TCP sockets
+cd app && npm run e2e             # 38 Playwright specs against the three live processes: sales, faults and repairs, the E-stop, prices and totals, two pumps at once, the layout, the card reader
 dotnet run --project src/GasPump.Host -- --strategy threaded                 # station; spawns a dispenser per pump on ports 5178 and 5179
 dotnet run --project src/GasPump.Host -- --dispenser inproc                  # both pumps inside the station process
 dotnet run --project src/GasPump.Dispenser -- --port 5178 --pump PUMP-01     # a dispenser by hand, in its own terminal; the station adopts it
