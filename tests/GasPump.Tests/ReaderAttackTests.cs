@@ -62,6 +62,58 @@ public class ReaderAttackTests
         Assert.Equal(DeclineReason.KeyReplayed, restarted.Authorize("S2", recorded, Money.FromDollars(50), Now).Reason);
     }
 
+    [Fact]
+    public void Attack_a_a_forged_message_under_a_seen_ksn_fails_the_tag_first_so_the_answer_reveals_nothing_about_the_ledger()
+    {
+        var (bank, reader) = Rig();
+        var recorded = reader.Read(Credit, Tender.Credit, TestCards.Zip);
+        Assert.True(bank.Authorize("S1", recorded, Money.FromDollars(50), Now).Approved);
+
+        var forged = recorded with { SealedPan = FlipOneByte(recorded.SealedPan, 0) };
+
+        Assert.Equal(DeclineReason.CardDataUnreadable, bank.Authorize("S2", forged, Money.FromDollars(50), Now).Reason);
+    }
+
+    [Fact]
+    public void Attack_a_an_older_counter_the_bank_never_saw_is_refused_below_the_high_water_mark()
+    {
+        var (bank, reader) = Rig();
+        var older = reader.Read(Credit, Tender.Credit, TestCards.Zip);
+        var newer = reader.Read(Credit, Tender.Credit, TestCards.Zip);
+        Assert.True(bank.Authorize("S2", newer, Money.FromDollars(10), Now).Approved);
+
+        var late = bank.Authorize("S1", older, Money.FromDollars(10), Now);
+
+        Assert.Equal(DeclineReason.KeyReplayed, late.Reason);
+    }
+
+    [Fact]
+    public void A_gap_ahead_in_the_counter_is_accepted_because_a_sale_that_never_reached_the_bank_leaves_one()
+    {
+        var (bank, reader) = Rig();
+        var first = reader.Read(Credit, Tender.Credit, TestCards.Zip);
+        reader.Read(Credit, Tender.Credit, TestCards.Zip);   // read, never sent
+        var third = reader.Read(Credit, Tender.Credit, TestCards.Zip);
+
+        Assert.True(bank.Authorize("S1", first, Money.FromDollars(10), Now).Approved);
+        Assert.True(bank.Authorize("S3", third, Money.FromDollars(10), Now).Approved);
+    }
+
+    [Fact]
+    public void The_bank_refuses_to_inject_one_initial_key_id_twice_even_after_a_restart()
+    {
+        var bank = IssuerSimulator.WithTestCards();
+        var id = GasPump.Bank.BankKeys.NewInitialKeyId(1);
+        bank.Keys.InitialKey(id);
+
+        var again = Assert.Throws<InvalidOperationException>(() => bank.Keys.InitialKey(id));
+        Assert.Contains(GasPump.Bank.BankKeys.DuplicateKeyIdCode, again.Message);
+
+        var restarted = new IssuerSimulator(GasPump.Bank.BankKeys.Training());
+        restarted.Import(bank.Export());
+        Assert.Throws<InvalidOperationException>(() => restarted.Keys.InitialKey(id));
+    }
+
     // ----- (b) a changed PIN block
 
     [Fact]

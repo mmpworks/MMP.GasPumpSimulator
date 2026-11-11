@@ -184,7 +184,8 @@ public sealed class IssuerSimulator(BankKeys? keys = null) : IIssuer
                 _accounts.Select(kv => new IssuerAccountState(kv.Key, kv.Value.Available.Cents, kv.Value.Status.ToString(), kv.Value.Pin, kv.Value.VelocityLimit, kv.Value.RecentUses.ToList(), kv.Value.Zip)).ToList(),
                 _holds.Select(kv => new IssuerHoldState(kv.Key, kv.Value.Pan, kv.Value.Amount.Cents)).ToList(),
                 _voided.ToList(),
-                Keys.SeenKsns.ToList());
+                Keys.SeenKsns.ToList(),
+                Keys.IssuedKeyIds.ToList());
         }
     }
 
@@ -202,7 +203,7 @@ public sealed class IssuerSimulator(BankKeys? keys = null) : IIssuer
             foreach (var h in state.Holds) _holds[h.SaleId] = new Hold(h.Pan, new Money(h.AmountCents));
             foreach (var v in state.Voided) _voided.Add(v);
         }
-        Keys.Restore(state.SeenKsns ?? []);
+        Keys.Restore(state.SeenKsns ?? [], state.IssuedKeyIds);
     }
 }
 
@@ -228,5 +229,5 @@ public sealed record IssuerHoldState(string SaleId, string Pan, long AmountCents
 {
     public override string ToString() => $"IssuerHoldState {{ SaleId = {SaleId}, Pan = {ProtectedCard.Mask(Pan)}, AmountCents = {AmountCents} }}";
 }
-/// <summary>SeenKsns is last and optional so books written before the card reader still load.</summary>
-public sealed record IssuerState(List<IssuerAccountState> Accounts, List<IssuerHoldState> Holds, List<string> Voided, List<string>? SeenKsns = null);
+/// <summary>SeenKsns and IssuedKeyIds are last and optional so books written before the card reader still load.</summary>
+public sealed record IssuerState(List<IssuerAccountState> Accounts, List<IssuerHoldState> Holds, List<string> Voided, List<string>? SeenKsns = null, List<string>? IssuedKeyIds = null);
