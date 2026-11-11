@@ -18,6 +18,31 @@ The card reader path: phase 1 of the security-library work (`docs/prd-dukpt-read
 - Threat model attacks 47 to 53, each with a named test. The limits stay in the threat model: training keys, no tamper hardware, no PCI claim.
 - Anchor tests: A1 compares the derived keys and PIN blocks with the published X9.24-3 test-vector PDF (`tools/fetch-x9-vectors.ps1`); A2 opens what the reader made with the .NET BCL AES and AES-GCM.
 
+### Verification on the build machine (2026-11-11)
+
+With the Herald sources and the X9.24-3 vectors present:
+
+```
+dotnet build MMP.GasPumpSimulator.slnx      0 Warning(s), 0 Error(s)
+dotnet test MMP.GasPumpSimulator.slnx       Passed: 462, Skipped: 0, Total: 462
+cd app && npm run e2e                       37 passed
+```
+
+Revert check: each control was removed, its tests failed, and the control was restored.
+
+| Attack | Control removed | Tests with the control removed | Restored |
+|---|---|---|---|
+| a | KSN ledger check in `BankKeys.Open` | 2 of 2 fail | 2 of 2 pass |
+| b | PIN block in the GCM associated data | 1 of 1 fails | passes |
+| c | GCM tag check (ciphertext used without the tag) | 1 of 1 fails | passes |
+| c | expiry and ZIP in the associated data | 1 of 1 fails | passes |
+| d | GCM tag check | 1 of 1 fails | passes |
+| e | erase of the injected initial key | 1 of 1 fails | passes |
+| f | masking of the card number | 1 of 1 fails | passes |
+| f | keypad digits kept in the reader | 1 of 1 fails | passes |
+
+The register erase of attack (e) is library code. Its library test is `The_reader_cannot_rebuild_a_used_key_from_its_registers`.
+
 ### Build
 
 - `NetSecRoot` and `AsyncProxyRoot` in `Directory.Build.props` name the sibling checkouts. A git-ignored `Directory.Build.local.props` overrides them on one machine.
