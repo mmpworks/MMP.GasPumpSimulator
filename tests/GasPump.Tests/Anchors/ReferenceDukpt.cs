@@ -19,6 +19,24 @@ internal static class ReferenceDukpt
     public const ushort PinEncryption = 0x1000;
     public const ushort DataEncrypt = 0x3000;
 
+    /// <summary>The test BDK of the X9.24-3 supplement, section 2.2, typed here so A2 does not read the product's TrainingKeys.</summary>
+    public const string X9TestBdkHex = "FEDCBA9876543210F1F1F1F1F1F1F1F1";
+
+    /// <summary>The GCM nonce, from the PRD design review (R6): 12 zero bytes, because each data key seals one message.</summary>
+    public static byte[] Nonce() => new byte[12];
+
+    /// <summary>
+    /// The bytes the GCM tag covers beside the card number, written out from the PRD design review (R6) and not
+    /// read from the product: the label GASPUMP-CARD-1, the KSN, the PIN block (empty for credit), the masked
+    /// number, the kind, the expiry as MMYYYY, the ZIP (empty when none), and the reader's check, joined by '|'.
+    /// A product that orders or spells these differently fails anchor A2.
+    /// </summary>
+    public static byte[] AssociatedData(string ksn, string? pinBlock, string maskedPan, string kind, int month, int year, string? zip, string readerCheck) =>
+        Encoding.ASCII.GetBytes($"GASPUMP-CARD-1|{ksn}|{pinBlock}|{maskedPan}|{kind}|{month:00}{year:0000}|{zip}|{readerCheck}");
+
+    /// <summary>The first 6 and the last 4 digits, a star for each digit between: the masked number the terminal sees.</summary>
+    public static string Mask(string pan) => pan[..6] + new string('*', pan.Length - 10) + pan[^4..];
+
     public static byte[] InitialKey(byte[] bdk, byte[] initialKeyId)
     {
         // Bytes 8 to 15 of the derivation data hold the whole initial key ID.
