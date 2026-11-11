@@ -22,6 +22,10 @@ public static class TrainingKeys
 public sealed record CardOpening(DeclineReason Refusal, string? Pan, string? Pin)
 {
     public bool Opened => Refusal == DeclineReason.None;
+
+    /// <summary>Masked, so a log line or a debugger never shows the opened digits.</summary>
+    public override string ToString() =>
+        $"CardOpening {{ Refusal = {Refusal}, Pan = {(Pan is null ? "null" : ProtectedCard.Mask(Pan))}, Pin = {Secret.Mark(Pin)} }}";
     public static CardOpening Refuse(DeclineReason reason) => new(reason, null, null);
 }
 

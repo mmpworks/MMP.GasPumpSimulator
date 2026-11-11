@@ -26,7 +26,10 @@ public sealed class IssuerSimulator(BankKeys? keys = null) : IIssuer
         public readonly List<DateTimeOffset> RecentUses = [];
     }
 
-    private sealed record Hold(string Pan, Money Amount);
+    private sealed record Hold(string Pan, Money Amount)
+    {
+        public override string ToString() => $"Hold {{ Pan = {ProtectedCard.Mask(Pan)}, Amount = {Amount} }}";
+    }
 
     private readonly Lock _gate = new();
     private readonly Dictionary<string, Account> _accounts = new();
@@ -215,7 +218,15 @@ public sealed record BankView(string Ksn, bool Opened, string Refusal, int PanDi
 }
 
 /// <summary>Zip is last and optional so a journal written before the address check still loads.</summary>
-public sealed record IssuerAccountState(string Pan, long AvailableCents, string Status, string? Pin, int VelocityLimit, List<DateTimeOffset> RecentUses, string? Zip = null);
-public sealed record IssuerHoldState(string SaleId, string Pan, long AmountCents);
+public sealed record IssuerAccountState(string Pan, long AvailableCents, string Status, string? Pin, int VelocityLimit, List<DateTimeOffset> RecentUses, string? Zip = null)
+{
+    /// <summary>Masked: the books hold the card number and the PIN on file, and only the JSON file carries them.</summary>
+    public override string ToString() =>
+        $"IssuerAccountState {{ Pan = {ProtectedCard.Mask(Pan)}, AvailableCents = {AvailableCents}, Status = {Status}, Pin = {Secret.Mark(Pin)}, VelocityLimit = {VelocityLimit}, Zip = {Zip} }}";
+}
+public sealed record IssuerHoldState(string SaleId, string Pan, long AmountCents)
+{
+    public override string ToString() => $"IssuerHoldState {{ SaleId = {SaleId}, Pan = {ProtectedCard.Mask(Pan)}, AmountCents = {AmountCents} }}";
+}
 /// <summary>SeenKsns is last and optional so books written before the card reader still load.</summary>
 public sealed record IssuerState(List<IssuerAccountState> Accounts, List<IssuerHoldState> Holds, List<string> Voided, List<string>? SeenKsns = null);

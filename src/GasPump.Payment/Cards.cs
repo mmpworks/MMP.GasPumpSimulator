@@ -11,6 +11,17 @@ public enum CardKind { Credit, Debit }
 public sealed record CardData(string Pan, int ExpiryMonth, int ExpiryYear, CardKind Kind, string? Pin = null, string? Zip = null)
 {
     public string Last4 => Pan.Length >= 4 ? Pan[^4..] : Pan;
+
+    /// <summary>Masked: the first 6 and last 4 digits, and stars for a PIN. A record's own ToString would print every digit into a log or a debugger.</summary>
+    public override string ToString() =>
+        $"CardData {{ Pan = {ProtectedCard.Mask(Pan)}, Expiry = {ExpiryMonth:00}/{ExpiryYear}, Kind = {Kind}, Pin = {Secret.Mark(Pin)}, Zip = {Zip} }}";
+}
+
+/// <summary>How a record that holds a secret prints it: never the value.</summary>
+public static class Secret
+{
+    /// <summary>"null" when there is none, "(set)" when there is one.</summary>
+    public static string Mark(string? secret) => secret is null ? "null" : "(set)";
 }
 
 public enum CardCheck { Ok, BadLuhn, Expired, BadFormat }
