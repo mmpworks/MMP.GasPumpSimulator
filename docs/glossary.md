@@ -84,6 +84,19 @@ Each entry gives the trade term, what it is, and the names the code uses for it.
 | **Postpay (pay inside after fueling)** | The cashier lets a pump run, the FCC holds the delivered sale against that pump as unpaid, the driver pays at the counter, the pump stays locked until the sale is cleared. | Not modeled |
 | **Stand-in (offline) authorization** | When the link to the processor is down, the EPS may approve small sales itself up to a floor limit, store them, and send them when the link returns. The station carries the risk. | Half modeled: `StoreAndForward` sends completions and reversals later. Offline approval is not modeled; a dead link declines |
 
+## The card reader
+
+| Term | What it is | In the code |
+|---|---|---|
+| **Secure card reader (SCR), encrypting PIN pad (EPP)** | The read head and the keypad of the outdoor payment terminal, with the keys inside. The card number and the PIN are encrypted here, before anything else sees them. In the simulator it is a process boundary with no tamper hardware. | `GasPump.Reader`, `CardReader`, `CardReader.Keypad` |
+| **DUKPT (derived unique key per transaction)** | The key scheme of ANSI X9.24-3. Each sale gets its own keys, derived from a counter. The reader erases each key after use; the bank derives the same keys from the base key and the KSN. The simulator uses AES-128 DUKPT. | MMP.NetworkSecurity `DukptPinPad`, `DukptBank` |
+| **BDK (base derivation key)** | The bank's master key for a set of readers. It never leaves the bank and the key injection facility. The simulator's is the published X9.24-3 test key: a training key. | `TrainingKeys.BaseDerivationKeyHex`, `BankKeys` |
+| **Initial key, initial key ID** | The key loaded into one reader at injection, and its 8-byte name: the key set ID (4 bytes) and the device ID (4 bytes). | `BankKeys.InitialKey`, `BankKeys.NewInitialKeyId`, `Simulation.InjectReader` |
+| **KSN (key serial number)** | The initial key ID and the reader's 32-bit transaction counter, 12 bytes. It travels in clear beside the ciphertext, and the bank derives the sale's keys from it. A KSN the bank has seen before is a replay. | `ProtectedCard.Ksn`, `ProtectedCard.Counter`, `BankKeys.SeenKsns` |
+| **PIN block, format 4** | The PIN in an encrypted 16-byte block tied to the card number (ISO 9564-1 format 4, the AES format). The same PIN gives a new block each sale. | `ProtectedCard.PinBlock`, MMP.NetworkSecurity `PinBlock` |
+| **Masked PAN** | The card number with only the first 6 and last 4 digits shown. It is all the terminal, the receipt and the log get. | `ProtectedCard.MaskedPan`, `ProtectedCard.Mask`, `Last4` |
+| **Protected card** | Everything the reader hands the terminal: the KSN, the sealed card number, the PIN block, the masked PAN, and the clear fields. | `ProtectedCard` |
+
 ## Software words that stay software words
 
 | Term | Meaning here |
