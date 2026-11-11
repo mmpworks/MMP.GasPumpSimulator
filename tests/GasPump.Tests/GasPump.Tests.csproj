@@ -12,9 +12,11 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\GasPump.Dispatch\GasPump.Dispatch.csproj" />
   </ItemGroup>
-  <!-- Anchor A1 reads the X9.24-3 test-vector text that tools/fetch-x9-vectors.ps1 writes. The text is copyright
-       ASC X9 and git-ignored. Without it the A1 tests show as skipped, with the reason and the fetch command. -->
+  <!-- Anchor A1 reads the committed vector file on every run. Its second test also reads the X9.24-3 test-vector
+       text that tools/fetch-x9-vectors.ps1 writes. That text is copyright ASC X9 and git-ignored. Without it the
+       second test shows as skipped, with the reason and the fetch command. -->
   <ItemGroup>
+    <None Update="Anchors\x9-24-3-aes-dukpt.vectors" CopyToOutputDirectory="PreserveNewest" />
     <None Update="x9\X9.24-3-2017-Test-Vectors.txt" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

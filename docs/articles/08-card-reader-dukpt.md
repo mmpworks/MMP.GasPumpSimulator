@@ -34,22 +34,20 @@ The app shows the three views on the station side, in the "Card reader · AES DU
 
 Two anchors use data the simulator does not make.
 
-- **A1, the published vectors.** `pwsh tools/fetch-x9-vectors.ps1` downloads the ANSI X9.24-3-2017 test-vector supplement from x9.org, checks its SHA-256 (`ae9bb01d...c4cc`), and extracts its text. `X9VectorTests` then checks these values against the PDF text:
+- **A1, the published vectors.** `X9VectorTests` checks these values against the ANSI X9.24-3-2017 test-vector supplement:
   - the initial key;
   - the PIN keys and data keys for counters 1 to 8 and 8675309;
   - the reader's PIN blocks for transactions 1 to 8.
-  
-  The expected values come from the PDF, not from this repo, because the PDF is copyright ASC X9 and stays out of git.
+
+  The values sit in the committed file `tests/GasPump.Tests/Anchors/x9-24-3-aes-dukpt.vectors`, so the first A1 test runs on every clone. `tools/extract-x9-vectors.py` wrote the file from the PDF text; nobody typed a value. The PDF is copyright ASC X9 and stays out of git. `pwsh tools/fetch-x9-vectors.ps1` downloads it from x9.org, checks its SHA-256 (`ae9bb01d...c4cc`), and extracts its text. The second A1 test then checks that every value in the committed file equals the PDF text in its place.
 - **A2, a second implementation.** `ReferenceAnchorTests` opens the reader's PIN block and sealed card number with the .NET BCL AES and AES-GCM, and the format 4 steps written out in the test. It also builds a message with the BCL alone and checks that the bank opens it.
 
-The run on this branch, with the vectors fetched:
+The run at 0.2.1, with the PDF text fetched:
 
 ```
 dotnet test tests/GasPump.Tests --filter "FullyQualifiedName~Anchors|FullyQualifiedName~ReaderAttackTests"
-Total tests: 30
+Passed!  - Failed:     0, Passed:    26, Skipped:     0, Total:    26
 ```
-
-All 30 passed.
 
 ## 5. The attacks
 

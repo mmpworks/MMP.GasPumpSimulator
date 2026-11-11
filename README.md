@@ -18,7 +18,7 @@ A pay-at-the-pump fuel dispenser, simulated. Present a card, get a two-phase aut
 | **Forecourt shape** | One controller, two pumps, three processes over TCP. A forecourt-style wire envelope, nine fuelling-point states, an island transaction buffer, prices as a write, and totals as a read. | [Three processes, three plugs](#three-processes-three-plugs), [Glossary](docs/glossary.md) |
 | **Concurrency** | The same sale runs under three dispatch strategies: threads, Tasks and channels, and [MMP.AsyncProxy](https://github.com/mmpworks/MMP.AsyncProxy) state machines that would compile for .NET 3.5. | [Patterns](docs/articles/01-patterns.html), [CE budget](docs/ce-budget.md) |
 
-**Start here:** `cd app && npm install && npm run build && npx electron .`, then tap the `Good` card, pick a grade, lift the nozzle, and squeeze. [Run it](#run-it) has the rest. `dotnet test` runs 474 tests (with the X9.24-3 vectors fetched) and `npm run e2e` runs 38 browser specs.
+**Start here:** `cd app && npm install && npm run build && npx electron .`, then tap the `Good` card, pick a grade, lift the nozzle, and squeeze. [Run it](#run-it) has the rest. `dotnet test` runs 459 tests and `npm run e2e` runs 38 browser specs.
 
 ## What it covers
 
@@ -47,7 +47,7 @@ A pay-at-the-pump fuel dispenser, simulated. Present a card, get a two-phase aut
 ## Run it
 
 ```
-dotnet test                       # 474 tests with the X9.24-3 vectors fetched, about 3 min: most on a fake clock under all three dispatch strategies, 15 over real TCP sockets
+dotnet test                       # 459 tests, about 3 min: most on a fake clock under all three dispatch strategies, 15 over real TCP sockets
 cd app && npm run e2e             # 38 Playwright specs against the three live processes: sales, faults and repairs, the E-stop, prices and totals, two pumps at once, the layout, the card reader
 dotnet run --project src/GasPump.Host -- --strategy threaded                 # station; spawns a dispenser per pump on ports 5178 and 5179
 dotnet run --project src/GasPump.Host -- --dispenser inproc                  # both pumps inside the station process
@@ -90,13 +90,18 @@ To use a checkout in another folder, pass `-p:NetSecRoot=<folder>`, or put it in
 
 When the library is missing, the build stops with `GASPUMP001` and names the folder it looked in. Only `GasPump.Reader` and `GasPump.Bank` reference the library, and a test checks that.
 
-Anchor test A1 compares the keys with the published ANSI X9.24-3-2017 test vectors. The PDF is copyright ASC X9 and stays out of git. Fetch it, check its SHA-256 and extract its text with one script (it needs `pdftotext`, which Git for Windows ships):
+Anchor test A1 compares the keys and PIN blocks with the published ANSI X9.24-3-2017 test vectors. It has two tests:
+
+1. The first runs on every clone. The reader and the bank derive each key and PIN block, and each one equals the committed file `tests/GasPump.Tests/Anchors/x9-24-3-aes-dukpt.vectors`. That file holds only the inputs and expected outputs that A1 uses: the base derivation key, the initial key ID and initial key, the PIN block inputs, and for each checked transaction the KSN, the PIN key, the data key and the PIN block. Each group names its source in the PDF. ASC X9 has not reviewed or endorsed this project.
+2. The second needs the PDF text. It checks that every value in the committed file equals the PDF text in its place, so the file is a true copy. Without the text it shows as skipped, with the fetch command.
+
+The PDF is copyright ASC X9 and stays out of git. Fetch it, check its SHA-256 and extract its text with one script (it needs `pdftotext`, which Git for Windows ships):
 
 ```
 pwsh tools/fetch-x9-vectors.ps1
 ```
 
-The build prints `anchor A1 (X9.24-3 vectors) compiled in` once the text is there, and `left out` before.
+`python -I tools/extract-x9-vectors.py` writes the committed file from that text. Set `GASPUMP_X9_TEXT_ABSENT=1` to run the tests as a fresh clone does on a machine that has the text.
 
 ### Custody file: two builds
 
@@ -126,7 +131,7 @@ That run at version 0.1.0, from a fresh clone with no Herald folder beside it:
 Passed!  - Failed:     0, Passed:   430, Skipped:     2, Total:   432
 ```
 
-At 0.2.0 the suite adds the card reader tests. The run on the build machine, with the Herald sources and the X9.24-3 vectors present, is in `CHANGELOG.md`. A fresh clone without the vectors compiles the A1 tests out, so its total is lower.
+At 0.2.0 the suite adds the card reader tests. At 0.2.1 a fresh clone runs anchor A1 from the committed vector file: the reader and the bank must derive the published keys and PIN blocks. One A1 test still needs the fetch script: the check that the committed file equals the PDF text. A fresh clone shows it as skipped, with the fetch command. The runs on the build machine are in `CHANGELOG.md`.
 
 The 2 skips are `Custody_file_verifies_under_TesseraSeal_and_a_tampered_byte_fails_at_the_right_entry` and `Each_run_is_its_own_chain_and_both_verify`. The verify endpoint on that build answers:
 
