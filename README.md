@@ -10,6 +10,7 @@ A pay-at-the-pump fuel dispenser, simulated. Present a card, get a two-phase aut
 |---|---|---|
 | **The sale** | Card, debit PIN, billing ZIP, or cash. Pay at the pump or at the cashier. Grade, nozzle, lever, pause, and resume. Flow tapers so the sale lands on the cent. | [Item 3](#what-it-covers), [One perfect sale](docs/articles/05-one-perfect-sale.html) |
 | **The money** | Pre-authorization hold, completion, reversal, and store-and-forward. A bank link you can set to Up, Down, Timeout, Flapping, or Late. Every failure tells the driver where the money is. | [The late bank](#the-late-bank) |
+| **The card reader** | An AES DUKPT card reader on [MMP.NetworkSecurity](https://github.com/mmpworks/MMP.NetworkSecurity). The PIN and the card number are encrypted at the reader; the terminal sees a KSN, ciphertext, a PIN block, and the first 6 and last 4 digits. Only the bank opens them. Training keys, no tamper hardware, no PCI claim. | [Card reader](docs/articles/08-card-reader-dukpt.md), [Threat model](docs/threat-model.md) |
 | **Safety at the pump** | The pump arms only from a signed, single-use token. It clamps every ceiling to hard limits it owns: 50 gallons, $500, 10 minutes. A signed 600-gallon token stops at 50. | [The 600-gallon case](#the-600-gallon-case), [Threat model](docs/threat-model.md) |
 | **Attacks you can run** | Replay a token, tamper a ceiling, spoof the pulser, brute-force the admin PIN, and edit the custody file. Each attack has a named test. | [Threat model](docs/threat-model.md) |
 | **Faults and recovery** | Dry tank, dead pulser, drive-off, E-stop, power loss, and a pulled plug on any process. Each fault has a diagnostic code, and a restart settles from the island's own numbers. | [Pull the plug](#pull-the-plug), [Forecourt faults](#forecourt-faults), [Diagnostics](docs/diagnostics.md) |
@@ -17,7 +18,7 @@ A pay-at-the-pump fuel dispenser, simulated. Present a card, get a two-phase aut
 | **Forecourt shape** | One controller, two pumps, three processes over TCP. A forecourt-style wire envelope, nine fuelling-point states, an island transaction buffer, prices as a write, and totals as a read. | [Three processes, three plugs](#three-processes-three-plugs), [Glossary](docs/glossary.md) |
 | **Concurrency** | The same sale runs under three dispatch strategies: threads, Tasks and channels, and [MMP.AsyncProxy](https://github.com/mmpworks/MMP.AsyncProxy) state machines that would compile for .NET 3.5. | [Patterns](docs/articles/01-patterns.html), [CE budget](docs/ce-budget.md) |
 
-**Start here:** `cd app && npm install && npm run build && npx electron .`, then tap the `Good` card, pick a grade, lift the nozzle, and squeeze. [Run it](#run-it) has the rest. `dotnet test` runs 432 tests and `npm run e2e` runs 22 browser specs.
+**Start here:** `cd app && npm install && npm run build && npx electron .`, then tap the `Good` card, pick a grade, lift the nozzle, and squeeze. [Run it](#run-it) has the rest. `dotnet test` runs 474 tests (with the X9.24-3 vectors fetched) and `npm run e2e` runs 38 browser specs.
 
 ## What it covers
 
@@ -46,8 +47,8 @@ A pay-at-the-pump fuel dispenser, simulated. Present a card, get a two-phase aut
 ## Run it
 
 ```
-dotnet test                       # 432 tests, about 3.5 min: most on a fake clock under all three dispatch strategies, 15 over real TCP sockets
-cd app && npm run e2e             # 22 Playwright specs against the three live processes: sales, faults and repairs, the E-stop, prices and totals, two pumps at once, the layout
+dotnet test                       # 474 tests with the X9.24-3 vectors fetched, about 3 min: most on a fake clock under all three dispatch strategies, 15 over real TCP sockets
+cd app && npm run e2e             # 38 Playwright specs against the three live processes: sales, faults and repairs, the E-stop, prices and totals, two pumps at once, the layout, the card reader
 dotnet run --project src/GasPump.Host -- --strategy threaded                 # station; spawns a dispenser per pump on ports 5178 and 5179
 dotnet run --project src/GasPump.Host -- --dispenser inproc                  # both pumps inside the station process
 dotnet run --project src/GasPump.Dispenser -- --port 5178 --pump PUMP-01     # a dispenser by hand, in its own terminal; the station adopts it
@@ -71,7 +72,31 @@ cd app && npx electron .
 
 The host answers `station.name` and `station.theme` in `/api/state`; the renderer sets its title and its colours from them. Two themes ship: `howards` and `samms`. Samms runs from a second clone of this repo with those values: the same two-pump build, across the street from Howard's, on its own ports (dispensers on `5278` and `5279`).
 
-MMP.AsyncProxy is a sibling checkout, referenced by project from `..\MMP.AsyncProxy` until the package publishes. Point elsewhere with `-p:AsyncProxyProjectPath=<path to MMP.AsyncProxy.csproj>`. 
+MMP.AsyncProxy is a sibling checkout, referenced by project from `..\MMP.AsyncProxy` until the package publishes. Point elsewhere with `-p:AsyncProxyRoot=<folder that holds src\MMP.AsyncProxy>`. Pass it on the command line, so MMP.NetworkSecurity builds its own copy from the same folder.
+
+### Library version
+
+The card reader and the bank run on [MMP.NetworkSecurity](https://github.com/mmpworks/MMP.NetworkSecurity), a sibling checkout at `..\MMP.NetworkSecurity`. Version 0.2.0 was built and tested with library commit `698dd9c4bae7403bb518b8a3b21938262b8c18af`:
+
+```
+git -C ../MMP.NetworkSecurity checkout 698dd9c4bae7403bb518b8a3b21938262b8c18af
+```
+
+To use a checkout in another folder, pass `-p:NetSecRoot=<folder>`, or put it in a `Directory.Build.local.props` beside `Directory.Build.props` (git ignores that file):
+
+```xml
+<Project><PropertyGroup><NetSecRoot>D:\src\netsec</NetSecRoot></PropertyGroup></Project>
+```
+
+When the library is missing, the build stops with `GASPUMP001` and names the folder it looked in. Only `GasPump.Reader` and `GasPump.Bank` reference the library, and a test checks that.
+
+Anchor test A1 compares the keys with the published ANSI X9.24-3-2017 test vectors. The PDF is copyright ASC X9 and stays out of git. Fetch it, check its SHA-256 and extract its text with one script (it needs `pdftotext`, which Git for Windows ships):
+
+```
+pwsh tools/fetch-x9-vectors.ps1
+```
+
+The build prints `anchor A1 (X9.24-3 vectors) compiled in` once the text is there, and `left out` before.
 
 ### Custody file: two builds
 
@@ -88,16 +113,20 @@ Everything else runs the same in both builds: the sale, the money, the faults, t
 
 ```
 git clone https://github.com/mmpworks/MMP.AsyncProxy
+git clone https://github.com/mmpworks/MMP.NetworkSecurity
+git -C MMP.NetworkSecurity checkout 698dd9c4bae7403bb518b8a3b21938262b8c18af
 git clone https://github.com/mmpworks/MMP.GasPumpSimulator
 cd MMP.GasPumpSimulator
 dotnet test
 ```
 
-That run, from a fresh clone with no Herald folder beside it:
+That run at version 0.1.0, from a fresh clone with no Herald folder beside it:
 
 ```
 Passed!  - Failed:     0, Passed:   430, Skipped:     2, Total:   432
 ```
+
+At 0.2.0 the suite adds the card reader tests. The run on the build machine, with the Herald sources and the X9.24-3 vectors present, is in `CHANGELOG.md`. A fresh clone without the vectors compiles the A1 tests out, so its total is lower.
 
 The 2 skips are `Custody_file_verifies_under_TesseraSeal_and_a_tampered_byte_fails_at_the_right_entry` and `Each_run_is_its_own_chain_and_both_verify`. The verify endpoint on that build answers:
 
@@ -228,6 +257,8 @@ src/GasPump.Payment    cards, issuer, network, gateway, signed token, site limit
 src/GasPump.Security   hard limits, verifier, nonce store, pump authority, ledger, totalizer
 src/GasPump.Pump       hydraulics, meter, taper policy, pump controller
 tools/custody-walk     scripts that build the custody sample, recompute its MACs, and attack it
+src/GasPump.Reader     the card reader: PIN pad, card slot, AES DUKPT key registers (MMP.NetworkSecurity)
+src/GasPump.Bank       the in-process bank: accounts, holds, the base key that opens the reader's messages, bank.json
 src/GasPump.Custody    the custody file: TesseraSeal's sink and verifier when the Herald.Compliance sources are present, a plain file otherwise
 src/GasPump.Dispatch   IDispatchStrategy, ThreadedDispatch, ChannelDispatch, AsyncProxyDispatch, Simulation, HeraldEventLog (Herald.OSS), journal and recovery
 src/GasPump.Host       minimal API + WebSocket hub
@@ -238,7 +269,7 @@ docs/                  prd, threat model, architecture
 
 ## What this is not
 
-No real card data. No EMV kernel. No PCI claim. No serial pump protocol. Two pumps on their own TCP connections rather than many on one shared current loop; the frames carry node addresses, so a shared bus is a listener that routes on the destination. One hose and three grades per pump. One shared HMAC key where a real site would use per-device keys and a MAC counter. Each one is a stand-in, and the repo teaches what it stands in for.
+No real card data and no real keys: the card reader runs on the published ANSI X9.24-3 test key, in a process with no tamper hardware. The app is the PIN pad, so a typed PIN reaches the host in clear before the reader seals it. No EMV kernel. No PCI claim. No serial pump protocol. Two pumps on their own TCP connections rather than many on one shared current loop; the frames carry node addresses, so a shared bus is a listener that routes on the destination. One hose and three grades per pump. One shared HMAC key where a real site would use per-device keys and a MAC counter. Each one is a stand-in, and the repo teaches what it stands in for.
 
 ## Licence
 

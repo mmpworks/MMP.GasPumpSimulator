@@ -68,6 +68,9 @@ public sealed class PaymentGateway
     }
 
     public SiteLimits Site { get; }
+
+    /// <summary>The bank this gateway talks to.</summary>
+    public IIssuer Issuer => _issuer;
     public CashDrawer Drawer { get; }
 
     /// <summary>
@@ -126,25 +129,21 @@ public sealed class PaymentGateway
     /// an $18.50 balance it holds $18.50.
     /// </summary>
     /// <param name="pumpId">The pump the sale is on. The token is signed for it, and only that pump's authority accepts the token.</param>
-    /// <param name="keypad">What the driver typed at the keypad: the PIN for debit, the billing ZIP for credit. It rides to the bank on the card data and is checked there.</param>
-    public async Task<PreAuthResult> PreAuthorizeAsync(string saleId, string pumpId, CardData card, Tender tender, string? keypad, CancellationToken ct)
+    /// <param name="card">The card as the reader sealed it. The reader already chose debit or credit from the tender and made
+    /// its Luhn check. The gateway checks the clear expiry and passes the rest to the bank unopened: it holds no key.</param>
+    public async Task<PreAuthResult> PreAuthorizeAsync(string saleId, string pumpId, ProtectedCard card, Tender tender, CancellationToken ct)
     {
         if (tender == Tender.Cash) throw new ArgumentException("cash does not pre-authorize; use CashAuthorize", nameof(tender));
         lock (_gate) _tenders[saleId] = tender;
 
         var now = _clock.GetUtcNow();
-        var check = CardValidator.Check(card, now);
+        var check = card.ReaderCheck != CardCheck.Ok ? card.ReaderCheck : CardValidator.CheckExpiry(card.ExpiryMonth, card.ExpiryYear, now);
         if (check != CardCheck.Ok)
             return new PreAuthResult(false, Money.Zero, null, check.ToString(), LocalDeclineMessage(check), NetworkFailure: false);
 
-        // The tender decides what the typed code means. Debit sends it as the PIN; a debit sale with no PIN is a PIN failure
-        // at the bank, which is what a real terminal sees. Credit sends it as the ZIP for the address check.
-        var presented = tender == Tender.Debit
-            ? card with { Kind = CardKind.Debit, Pin = keypad }
-            : card with { Zip = keypad };
         var requested = Site.HoldFor(tender);
 
-        var result = await _network.SendAsync(() => _issuer.Authorize(saleId, presented, requested, now), _options.HostTimeout, ct);
+        var result = await _network.SendAsync(() => _issuer.Authorize(saleId, card, requested, now), _options.HostTimeout, ct);
         if (!result.Delivered)
             return new PreAuthResult(false, Money.Zero, null, result.Outcome.ToString(), $"host {result.Outcome}", NetworkFailure: true);
 

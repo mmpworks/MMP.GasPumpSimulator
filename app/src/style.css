@@ -99,3 +99,4 @@ body { background: var(--bg); overflow: hidden; }
 
 /* What kind of card is in the reader. It reports the card; nothing here takes a click. */
 .reader-kind { font-weight: 700; }
+.mono { font-family: ui-monospace, Consolas, monospace; font-size: 12px; overflow-wrap: anywhere; }

@@ -2,6 +2,8 @@
   <Folder Name="/src/">
     <Project Path="src/GasPump.Core/GasPump.Core.csproj" />
     <Project Path="src/GasPump.Payment/GasPump.Payment.csproj" />
+    <Project Path="src/GasPump.Reader/GasPump.Reader.csproj" />
+    <Project Path="src/GasPump.Bank/GasPump.Bank.csproj" />
     <Project Path="src/GasPump.Security/GasPump.Security.csproj" />
     <Project Path="src/GasPump.Pump/GasPump.Pump.csproj" />
     <Project Path="src/GasPump.Custody/GasPump.Custody.csproj" />

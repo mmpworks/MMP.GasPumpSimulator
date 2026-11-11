@@ -6,6 +6,7 @@ import { applyTheme } from './theme'
 import PumpFace from './components/PumpFace.vue'
 import DispenserControls from './components/DispenserControls.vue'
 import PaymentPanel from './components/PaymentPanel.vue'
+import ReaderPanel from './components/ReaderPanel.vue'
 import StationPanel from './components/StationPanel.vue'
 import RecordsPanel from './components/RecordsPanel.vue'
 import LinkStrip from './components/LinkStrip.vue'
@@ -92,9 +93,10 @@ function tabColor(p: PumpEntry) {
                   <span class="muted">http {{ st?.port ?? 5177 }} · journal run {{ st?.runId ?? '-' }} · chain {{ basename(st?.custodyPath) || '-' }} · {{ pumps.length }} pumps on this controller</span>
                 </div>
                 <Splitpanes class="pump-theme" horizontal>
-                  <Pane :size="36" :min-size="18"><PaymentPanel /></Pane>
-                  <Pane :size="36" :min-size="16"><StationPanel /></Pane>
-                  <Pane :size="28" :min-size="12"><RecordsPanel origin="station" /></Pane>
+                  <Pane :size="30" :min-size="16"><PaymentPanel /></Pane>
+                  <Pane :size="26" :min-size="12"><ReaderPanel /></Pane>
+                  <Pane :size="24" :min-size="12"><StationPanel /></Pane>
+                  <Pane :size="20" :min-size="10"><RecordsPanel origin="station" /></Pane>
                 </Splitpanes>
               </div>
             </Pane>

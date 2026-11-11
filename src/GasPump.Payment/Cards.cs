@@ -3,29 +3,53 @@ namespace GasPump.Payment;
 public enum CardKind { Credit, Debit }
 
 /// <summary>
-/// What the reader hands over. In a real pump this is ciphertext under a DUKPT
-/// key and the terminal never sees digits. Here it is plain text. The numbers
-/// are made up, and the simulator is about the payment flow. Pin and Zip are
-/// what the driver typed at the keypad for this sale: the PIN for a debit
-/// card, the billing ZIP for a credit card. The bank checks them.
+/// The card in clear: what the magnetic stripe holds, and what the bank keeps on file. Only the card reader
+/// (GasPump.Reader) and the bank (GasPump.Bank) hold one. The terminal gets a <see cref="ProtectedCard"/>.
+/// The numbers are made up. Pin and Zip are what the driver typed at the keypad for this sale: the PIN for
+/// a debit card, the billing ZIP for a credit card. The bank checks them.
 /// </summary>
 public sealed record CardData(string Pan, int ExpiryMonth, int ExpiryYear, CardKind Kind, string? Pin = null, string? Zip = null)
 {
     public string Last4 => Pan.Length >= 4 ? Pan[^4..] : Pan;
+
+    /// <summary>Masked: the first 6 and last 4 digits, and stars for a PIN. A record's own ToString would print every digit into a log or a debugger.</summary>
+    public override string ToString() =>
+        $"CardData {{ Pan = {ProtectedCard.Mask(Pan)}, Expiry = {ExpiryMonth:00}/{ExpiryYear}, Kind = {Kind}, Pin = {Secret.Mark(Pin)}, Zip = {Zip} }}";
+}
+
+/// <summary>How a record that holds a secret prints it: never the value.</summary>
+public static class Secret
+{
+    /// <summary>"null" when there is none, "(set)" when there is one.</summary>
+    public static string Mark(string? secret) => secret is null ? "null" : "(set)";
 }
 
 public enum CardCheck { Ok, BadLuhn, Expired, BadFormat }
 
-/// <summary>Luhn and expiry. The two checks a terminal can do before it spends a network call.</summary>
+/// <summary>
+/// Luhn and expiry, the two checks a terminal can make before it spends a network call. The card number
+/// check runs in the reader, where the digits are. The expiry check runs in the terminal on the clear expiry.
+/// </summary>
 public static class CardValidator
 {
     public static CardCheck Check(CardData card, DateTimeOffset now)
     {
-        if (card.Pan.Length is < 12 or > 19 || !card.Pan.All(char.IsDigit)) return CardCheck.BadFormat;
-        if (!Luhn(card.Pan)) return CardCheck.BadLuhn;
-        if (card.ExpiryMonth is < 1 or > 12) return CardCheck.BadFormat;
+        var number = CheckNumber(card.Pan);
+        return number != CardCheck.Ok ? number : CheckExpiry(card.ExpiryMonth, card.ExpiryYear, now);
+    }
+
+    /// <summary>The length, the digits and the Luhn digit.</summary>
+    public static CardCheck CheckNumber(string pan)
+    {
+        if (pan.Length is < 12 or > 19 || !pan.All(char.IsDigit)) return CardCheck.BadFormat;
+        return Luhn(pan) ? CardCheck.Ok : CardCheck.BadLuhn;
+    }
+
+    public static CardCheck CheckExpiry(int month, int year, DateTimeOffset now)
+    {
+        if (month is < 1 or > 12) return CardCheck.BadFormat;
         // A card is good through the last day of its expiry month.
-        var lastValid = new DateTimeOffset(card.ExpiryYear, card.ExpiryMonth, 1, 0, 0, 0, TimeSpan.Zero).AddMonths(1);
+        var lastValid = new DateTimeOffset(year, month, 1, 0, 0, 0, TimeSpan.Zero).AddMonths(1);
         if (now >= lastValid) return CardCheck.Expired;
         return CardCheck.Ok;
     }

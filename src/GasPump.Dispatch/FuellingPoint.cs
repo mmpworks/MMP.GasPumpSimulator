@@ -1,6 +1,7 @@
 using GasPump.Core;
 using GasPump.Payment;
 using GasPump.Pump;
+using GasPump.Reader;
 using GasPump.Security;
 
 namespace GasPump.Dispatch;
@@ -35,9 +36,11 @@ public sealed class FuellingPoint : IDisposable
 
     /// <param name="link">The island, in this process or over a socket. The point owns it from here.</param>
     /// <param name="local">The in-process dispenser behind <paramref name="link"/>, when there is one, so the journal can restore its counters.</param>
-    internal FuellingPoint(int number, string pumpId, StationContext ctx, IDispenserLink link, Dispenser? local)
+    /// <param name="reader">The secure card reader and PIN pad on this pump, injected with its own initial key.</param>
+    internal FuellingPoint(int number, string pumpId, StationContext ctx, IDispenserLink link, Dispenser? local, CardReader reader)
     {
         Number = number;
+        Reader = reader;
         PumpId = pumpId;
         _ctx = ctx;
         _link = link;
@@ -489,11 +492,22 @@ public sealed class FuellingPoint : IDisposable
     }
 
     /// <summary>
-    /// The keypad. A debit card wants its PIN, a credit card wants the billing
-    /// ZIP code. The digits go to the sale worker and from there to the bank
-    /// on the authorization request. They are never logged.
+    /// The keypad, which is the card reader's PIN pad. A debit card wants its PIN, a credit card wants the
+    /// billing ZIP code. The digits stay in the reader. The sale machine gets a star per digit, enough to
+    /// check the shape of the entry, and the bank gets the PIN only inside the reader's PIN block.
     /// </summary>
-    public void EnterCode(string code) => SaleBox.Post(new SaleEvent.CodeEntered(CurrentSaleId, code));
+    public void EnterCode(string code)
+    {
+        var saleId = CurrentSaleId;
+        SaleBox.Post(new SaleEvent.CodeEntered(saleId, Reader.Keypad(saleId, code)));
+    }
+
+    /// <summary>The secure card reader on this pump.</summary>
+    public CardReader Reader { get; }
+
+    /// <summary>The last card as the terminal saw it: ciphertext, a PIN block, and masked digits. Null before the first card sale.</summary>
+    public ProtectedCard? LastPresented { get { lock (_gate) return _lastPresented; } }
+    private ProtectedCard? _lastPresented;
 
     /// <summary>The driver paid the cashier. The amount is the ceiling, to the cent. No bank is called.</summary>
     public string PayCash(Money amount, Grade? grade = null)
@@ -713,6 +727,8 @@ public sealed class FuellingPoint : IDisposable
             snap = _sale.Snapshot();
         }
         foreach (var c in commands) Execute(c);
+        // A sale that ends before the reader read the card (a refused entry, a timeout, a cancel) leaves no keypad digits behind.
+        if (before != after && (after == SaleState.Idle || SaleStateMachine.IsTerminal(after))) Reader.Forget(e.SaleId);
         RecordSaleBoundary(e, before, after, snap);
         Publish();
         _ctx.Capabilities.Publish(e);
@@ -786,8 +802,17 @@ public sealed class FuellingPoint : IDisposable
                     SaleBox.Post(new SaleEvent.Approved(ra.SaleId, f.Item1, token));
                     break;
                 }
-                var card = TestCards.ByName.TryGetValue(ra.CardName, out var known) ? known : new CardData("0000000000000000", 1, 2000, CardKind.Credit);
-                _ctx.PaymentBox.Post(new PaymentMessage.PreAuthorize(ra.SaleId, PumpId, card, ra.Tender, ra.Code));
+                // The reader reads the card in its slot and seals it with the keypad entry it holds for this sale. The point never sees the digits.
+                ProtectedCard card;
+                try { card = Reader.Read(ra.SaleId, ra.CardName, ra.Tender); }
+                catch (ReaderException e)
+                {
+                    Log.Error("reader", "{Code} {Message}", ("Code", e.Code.Code), ("Part", e.Code.Part), ("Message", e.Message));
+                    SaleBox.Post(new SaleEvent.Declined(ra.SaleId, e.Code.Code, "card reader out of service, pay inside"));
+                    break;
+                }
+                lock (_gate) _lastPresented = card;
+                _ctx.PaymentBox.Post(new PaymentMessage.PreAuthorize(ra.SaleId, PumpId, card, ra.Tender));
                 break;
             case SaleCommand.RequestCashAuthorization rc:
                 _ctx.PaymentBox.Post(new PaymentMessage.CashAuthorize(rc.SaleId, PumpId, rc.Amount));

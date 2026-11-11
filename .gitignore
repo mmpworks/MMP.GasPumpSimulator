@@ -13,3 +13,6 @@ app/playwright-report/
 app/dist-electron/
 app/release/
 *.ledger.jsonl
+Directory.Build.local.props
+# The X9.24-3 test-vector PDF and its text: copyright ASC X9, fetched by tools/fetch-x9-vectors.ps1.
+tests/GasPump.Tests/x9/

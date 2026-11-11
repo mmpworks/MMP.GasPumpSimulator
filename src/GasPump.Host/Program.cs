@@ -263,6 +263,20 @@ pump.MapPost("/attack/{kind}", (int n, string kind, AttackRequest? r) =>
     return Results.Ok();
 });
 
+// The card reader panel: what the reader holds (no key), what the terminal saw, and what the bank opened (no digit past the last 4).
+pump.MapGet("/reader", (int n) => Point(n) is { } p
+    ? Results.Json(new { status = p.Reader.Status, terminal = p.LastPresented, bank = Sim().Issuer.LastOpened, attacks = ReaderLab.Attacks }, json)
+    : NoSuchPump(n));
+
+// The card reader attacks. Each runs against this station's bank and this pump's reader, from the last card the terminal saw.
+pump.MapPost("/reader/attack/{kind}", (int n, string kind) =>
+{
+    if (Point(n) is not { } p) return NoSuchPump(n);
+    var result = ReaderLab.Run(kind, p, Sim().Issuer, Sim().Site.HoldFor(Tender.Debit), Sim().Clock.GetUtcNow());
+    p.Log.Write("attack", "reader {Attack}: {Code}, {Message}", ("Attack", kind), ("Code", result.Code), ("Message", result.Message));
+    return Results.Json(result, json);
+});
+
 static IResult Do(Action a) { a(); return Results.Ok(); }
 
 // The custody stream for outside listeners: every line every dispenser's sink writes, byte for byte, as it lands.

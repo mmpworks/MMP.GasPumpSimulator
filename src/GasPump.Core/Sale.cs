@@ -130,7 +130,7 @@ public abstract record SaleEvent(string SaleId)
 {
     /// <summary>Grade is null when the driver will pick it at the pump after approval, which is the normal path.</summary>
     public sealed record CardPresented(string SaleId, string CardName, Grade? Grade = null, Tender Tender = Tender.Credit, CardSource Source = CardSource.PumpInsert) : SaleEvent(SaleId);
-    /// <summary>The driver finished the keypad entry: a four-digit PIN for debit, a five-digit billing ZIP for credit. The sale machine only checks the shape; the bank checks the value.</summary>
+    /// <summary>The driver finished the keypad entry: a four-digit PIN for debit, a five-digit billing ZIP for credit. The sale machine only checks the shape; the bank checks the value. From a pump the code is masked, a star per digit: the card reader keeps the digits.</summary>
     public sealed record CodeEntered(string SaleId, string Code) : SaleEvent(SaleId);
     /// <summary>The cashier took cash. Amount is the ceiling, to the cent.</summary>
     public sealed record CashPaid(string SaleId, Money Amount, Grade? Grade = null) : SaleEvent(SaleId);
@@ -178,7 +178,7 @@ public abstract record SaleCommand(string SaleId)
     /// <summary>The side timer that runs while flow is paused. When it fires, the pump finishes the sale for the fuel delivered.</summary>
     public const string IdleTimer = "idle";
 
-    /// <summary>Ask the bank for a hold. The site sets the amount by tender. The sale machine doesn't. Code is the PIN or ZIP the driver typed; the bank verifies it.</summary>
+    /// <summary>Ask the bank for a hold. The site sets the amount by tender. The sale machine doesn't. Code is the keypad entry as the machine saw it, masked on a pump; the reader seals the digits for the bank.</summary>
     public sealed record RequestAuthorization(string SaleId, string CardName, Grade Grade, Tender Tender, string Code) : SaleCommand(SaleId);
     /// <summary>Ask the payment side for a token worth the cash taken.</summary>
     public sealed record RequestCashAuthorization(string SaleId, Money Amount) : SaleCommand(SaleId);
@@ -228,4 +228,12 @@ public sealed record SaleSnapshot(
     IReadOnlyList<ChargeLine>? Lines = null)
 {
     public IReadOnlyList<ChargeLine> Charges => Lines ?? [];
+}
+
+/// <summary>The keypad entry as the pump's sale machine sees it. The card reader keeps the digits and shows a star for each.</summary>
+public static class KeypadEntry
+{
+    public const char Mask = '*';
+
+    public static bool IsDigitOrMask(char c) => char.IsAsciiDigit(c) || c == Mask;
 }
