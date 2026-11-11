@@ -11,7 +11,7 @@ Six standalone HTML articles about the simulator, and two Markdown articles that
 | 5 | `05-one-perfect-sale.html` | One sale followed piece by piece through both programs |
 | 6 | `06-waiting-without-a-thread.html` | How MMP.AsyncProxy waits without a thread, down to the IL |
 | 7 | [`07-chain-of-custody.md`](07-chain-of-custody.md) | A real custody file entry by entry, what the Go verifier catches, what still passes, and how it maps to the spec |
-| 8 | [`08-card-reader-dukpt.md`](08-card-reader-dukpt.md) | The card reader on AES DUKPT: one debit sale through the reader, the terminal and the bank, the anchors, and the attacks |
+| 8 | [`08-card-reader-dukpt.md`](08-card-reader-dukpt.md) | The card reader on AES DUKPT, and the one hop where the PIN is still clear: one debit sale through the reader, the terminal and the bank, the anchors, and the attacks |
 
 Article 6 also lives in MMP.AsyncProxy as course chapter 10 (`docs/course/10-waiting-without-a-thread.md`).
 

@@ -269,7 +269,7 @@ docs/                  prd, threat model, architecture
 
 ## What this is not
 
-No real card data and no real keys: the card reader runs on the published ANSI X9.24-3 test key, in a process with no tamper hardware. No EMV kernel. No PCI claim. No serial pump protocol. Two pumps on their own TCP connections rather than many on one shared current loop; the frames carry node addresses, so a shared bus is a listener that routes on the destination. One hose and three grades per pump. One shared HMAC key where a real site would use per-device keys and a MAC counter. Each one is a stand-in, and the repo teaches what it stands in for.
+No real card data and no real keys: the card reader runs on the published ANSI X9.24-3 test key, in a process with no tamper hardware. The app is the PIN pad, so a typed PIN reaches the host in clear before the reader seals it. No EMV kernel. No PCI claim. No serial pump protocol. Two pumps on their own TCP connections rather than many on one shared current loop; the frames carry node addresses, so a shared bus is a listener that routes on the destination. One hose and three grades per pump. One shared HMAC key where a real site would use per-device keys and a MAC counter. Each one is a stand-in, and the repo teaches what it stands in for.
 
 ## Licence
 

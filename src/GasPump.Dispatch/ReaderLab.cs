@@ -47,8 +47,8 @@ public static class ReaderLab
     {
         var rogueKeys = new BankKeys(System.Security.Cryptography.RandomNumberGenerator.GetBytes(16));
         var initialKeyId = BankKeys.NewInitialKeyId(0xEE);
-        var rogue = new CardReader(rogueKeys.InitialKey(initialKeyId), initialKeyId);
-        var card = rogue.Read(TestCards.Get("DebitGoodPin"), Tender.Debit, TestCards.Pin);
+        // The card is read inside GasPump.Reader: the lab never holds the test card's number or PIN.
+        var card = LabReader.ReadDebitTestCard(rogueKeys.InitialKey(initialKeyId), initialKeyId);
         return Send("rogue-reader", bank, card, hold, now, "a reader with a base key this bank never injected read the DebitGoodPin card");
     }
 

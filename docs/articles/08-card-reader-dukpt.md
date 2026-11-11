@@ -1,6 +1,6 @@
-# The card reader: a PIN that never crosses the pump
+# The card reader: from the reader on, the card is ciphertext
 
-From version 0.2.0 the simulator's card reader encrypts the card number and the PIN before the pump sees them. Only the bank opens them. This article follows one debit sale through the reader, the terminal and the bank, then runs the attacks against it. Every claim names the test or the command that checks it.
+From version 0.2.0 the simulator's card reader encrypts the card number and the PIN. The sale machine, the payment gateway, the journal and the log get ciphertext and masked digits. Only the bank opens them. This article follows one debit sale through the reader, the terminal and the bank, then runs the attacks against it. Every claim names the test or the command that checks it.
 
 The keys are training keys. The reader is a process boundary in a simulator, not a tamper-resistant device. The simulator makes no PCI claim. The limits are in `docs/threat-model.md`, "What the simulator does not defend".
 
@@ -21,7 +21,7 @@ The DUKPT engine and PIN block format 4 come from [MMP.NetworkSecurity](https://
 ## 3. One debit sale
 
 1. **Injection.** At station start, each pump's reader gets an initial key ID: the key set ID `12345678`, the pump number, and 3 random bytes. The bank derives the reader's initial key from its BDK and that ID (`Simulation.InjectReader`). The reader loads its 32 key registers and erases the initial key.
-2. **Keypad.** The driver types `1234`. `FuellingPoint.EnterCode` hands the digits to `CardReader.Keypad`, which keeps them and returns `****`. The sale machine checks the shape of `****` and asks for authorization.
+2. **Keypad.** The driver types `1234` in the app, which posts it to the host. `FuellingPoint.EnterCode` hands the digits to `CardReader.Keypad`, which keeps them and returns `****`. The sale machine checks the shape of `****` and asks for authorization.
 3. **Read.** `CardReader.Read` takes the next counter. From that one counter it derives two keys: the PIN key (usage `0x1000`) and the data key (usage `0x3000`). It then erases the register they came from.
    - The PIN goes into an ISO 9564-1 format 4 block under the PIN key.
    - The card number is sealed with AES-128-GCM under the data key. The tag also covers the KSN, the PIN block, the masked number, the kind, the expiry and the ZIP (`ProtectedCard.AssociatedData`).
@@ -73,6 +73,7 @@ Each test fails when its control is removed. The revert checks are recorded in t
 - That the keys are safe. They are the published test keys, and they sit on the managed heap.
 - That the reader resists a physical attack. It has no tamper boundary.
 - A key injection ceremony, EMV, contactless, or any PCI PTS, SRED or P2PE property.
+- A PIN pad inside the reader. In the simulator the app is the keypad: the typed PIN goes from the app to the host in clear over `POST /api/pump/{n}/code`, and the host hands it to the reader in the same process. The host logs no request body and journals no keypad entry. From the reader onward the PIN is inside a PIN block.
 - The pump-to-host link. TLS 1.3 on that link, and the library's HMAC and HKDF for the tokens, are the next phase.
 
 ---

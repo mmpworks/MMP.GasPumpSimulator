@@ -80,6 +80,8 @@ There are two trust boundaries. The reader protects the card, and the controller
    - The reader is a process boundary in a simulator. It has no tamper hardware. Keys sit on the managed heap, and erasing an array does not prove the bytes are gone (the library's `DukptPinPad` notes say why).
    - Key injection is one step at station start, from the bank's own base key. There is no key ceremony and no key loading device.
    - The in-process bank keeps card numbers and the PINs on file in clear in `bank.json`. A real issuer keeps PIN verification values, not PINs.
+   - The app is the keypad hardware. A typed PIN goes from the app to the host in clear (`POST /api/pump/{n}/code`), and the host hands it to the reader in the same process (`FuellingPoint.EnterCode`). From the reader onward, the PIN exists only inside a PIN block. The host logs no request body and journals no keypad entry. On a real pump the PIN pad is inside the reader, and this hop does not exist.
+   - The bank compares the PIN with `!=`, not in constant time. The bank is in the same process as the attacker's tools, so a timing attack is not the weak point here.
    - The simulator makes no claim of PCI PTS, SRED or P2PE compliance, and has no EMV or contactless path.
 2. **Key management.** One shared HMAC key between the payment host and the pump. A real site injects per-device keys and uses a counter so the pump can refuse out-of-order commands.
 3. **Physical attacks on the meter.** The pulse sanity check catches a pulser that lies upward. A meter that under-reports gives fuel away and only the totalizer against the tank dip would show it.
