@@ -1,0 +1,22 @@
+<Project>
+  <!-- The one reference to MMP.NetworkSecurity. Only GasPump.Reader and GasPump.Bank import this file,
+       so no other project can name a NetSec type (ReaderBoundaryTests checks it).
+       The library is a sibling checkout at NetSecRoot (Directory.Build.props). README "Library version"
+       names the commit this version was built and tested with.
+
+       The library compiles its own copy of MMP.AsyncProxy from <NetSecRoot>\..\MMP.AsyncProxy, or from
+       AsyncProxyRoot when that is a global property. GasPump.Dispatch references the copy at this repo's
+       AsyncProxyRoot. With the default sibling layout both are the same folder. To move MMP.AsyncProxy,
+       pass -p:AsyncProxyRoot=<dir> on the command line, so the library sees it too.
+       The reference passes no AdditionalProperties: with them, the projects that see the library
+       transitively build it a second time, in parallel, into the same obj folder (CS2012). -->
+  <PropertyGroup>
+    <NetSecCoreProject>$(NetSecRoot)\src\NetSec.Core\NetSec.Core.csproj</NetSecCoreProject>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="$(NetSecCoreProject)" />
+  </ItemGroup>
+  <Target Name="CheckNetSecRoot" BeforeTargets="PrepareForBuild;ResolveProjectReferences">
+    <Error Condition="!Exists('$(NetSecCoreProject)')" Code="GASPUMP001" Text="MMP.NetworkSecurity not found at $(NetSecRoot). Clone it beside this repo, or set NetSecRoot in Directory.Build.local.props, or pass -p:NetSecRoot=&lt;dir&gt;." />
+  </Target>
+</Project>

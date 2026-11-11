@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using GasPump.Bank;
 using GasPump.Core;
 using GasPump.Payment;
 
@@ -10,6 +11,8 @@ public sealed record JournalOptions(string Directory, string TenantId, byte[] Ik
 {
     public TimeSpan Period => SnapshotPeriod ?? TimeSpan.FromSeconds(1);
     public string StatePath => Path.Combine(Directory, "state.json");
+    /// <summary>The in-process bank's own books (accounts, holds, accepted KSNs). They hold card numbers, so they never go in the station's journal.</summary>
+    public string BankPath => Path.Combine(Directory, "bank.json");
     public string CustodyPath(string runId) => Path.Combine(Directory, $"custody-{runId}.ndjson");
 }
 
@@ -58,7 +61,8 @@ public sealed record JournalSnapshot(
     List<JournalPending> Pending, Dictionary<string, string> Tenders,
     Dictionary<string, long> CashOpenCents, Dictionary<string, long> CashChangeDueCents,
     long CreditHoldCents, long DebitHoldCents, int FailedPins, DateTimeOffset? LockedUntil,
-    IssuerState Issuer,
+    /// <summary>Null from 0.2.0: the bank keeps its own books (<see cref="JournalOptions.BankPath"/>). A file written before that still carries them here, and they load once.</summary>
+    IssuerState? Issuer,
     /// <summary>Set only when the stop was deliberate and had time to say so: "ESTOP". A crash leaves it null.</summary>
     string? StopReason = null,
     /// <summary>The station's price board in mills per gallon, so a restart writes the operator's prices to the islands and never the built-in ones.</summary>

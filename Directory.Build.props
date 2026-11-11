@@ -1,4 +1,7 @@
 <Project>
+  <!-- Machine-only settings, such as a library checkout in another folder. The file is git-ignored.
+       Example: <Project><PropertyGroup><NetSecRoot>D:\src\netsec</NetSecRoot></PropertyGroup></Project> -->
+  <Import Project="$(MSBuildThisFileDirectory)Directory.Build.local.props" Condition="Exists('$(MSBuildThisFileDirectory)Directory.Build.local.props')" />
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
     <LangVersion>14</LangVersion>
@@ -9,8 +12,15 @@
          otherwise strip Configuration from that reference and build the library Debug under a Release build.
          Every project here inherits it transitively, so the switch lives at the root. -->
     <ShouldUnsetParentConfigurationAndPlatform>false</ShouldUnsetParentConfigurationAndPlatform>
+    <!-- The sibling checkouts. Each defaults to a folder beside this repo. Override one in
+         Directory.Build.local.props, or pass -p:NetSecRoot=<dir> or -p:AsyncProxyRoot=<dir>.
+         NetSecRoot is MMP.NetworkSecurity, the security library under the card reader and the bank.
+         AsyncProxyRoot is MMP.AsyncProxy. The library compiles its own copy of MMP.AsyncProxy, and
+         GasPump.Reader and GasPump.Bank pass it this root, so both copies build from one source. -->
+    <NetSecRoot Condition="'$(NetSecRoot)' == ''">$(MSBuildThisFileDirectory)..\MMP.NetworkSecurity</NetSecRoot>
+    <AsyncProxyRoot Condition="'$(AsyncProxyRoot)' == ''">$(MSBuildThisFileDirectory)..\MMP.AsyncProxy</AsyncProxyRoot>
     <!-- The simulator's version. Bump here, tag main as v<Version>, and publish the release notes. -->
-    <Version>0.1.0</Version>
+    <Version>0.2.0</Version>
     <Authors>MMPWorks LLC</Authors>
     <Company>MMPWorks LLC</Company>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>

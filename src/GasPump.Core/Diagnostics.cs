@@ -7,7 +7,7 @@ namespace GasPump.Core;
 /// sale starts clean. Every other action names a repair, and until it happens
 /// the pump is out of service.
 /// </summary>
-public enum ServiceAction { NextArm, AttendantReset, SupplyRestored, PulserRepaired, LinkRestored, CashierReset, OperatorOpen }
+public enum ServiceAction { NextArm, AttendantReset, SupplyRestored, PulserRepaired, LinkRestored, CashierReset, OperatorOpen, KeyInjected }
 
 /// <summary>The one sentence per service action. The driver's notice and the ledger's refusal line read from the same table.</summary>
 public static class ServiceActions
@@ -20,6 +20,7 @@ public static class ServiceActions
         ServiceAction.LinkRestored => "The station is waiting for this pump to reconnect.",
         ServiceAction.CashierReset => "The cashier must reset the station.",
         ServiceAction.OperatorOpen => "The operator closed this pump for sales. The cashier can open it again.",
+        ServiceAction.KeyInjected => "The card reader needs a new initial key from the key injection facility before the next card sale.",
         _ => "The next sale starts clean.",
     };
 }
@@ -108,10 +109,15 @@ public static class DiagnosticCodes
         "the station lost the dispenser mid-sale: the sale closes for the fuel recorded so far; the dispenser's own limits bound the rest",
         ServiceAction.LinkRestored);
 
+    /// <summary>The card reader used every counter value of its initial key (about 2^31 sales). Card sales stop; cash still works.</summary>
+    public static readonly DiagnosticCode ReaderKeyExhausted = new("READER.KEY.EXHAUSTED", "card reader key registers",
+        "the card reader used every DUKPT counter value of its initial key: it declines every card until a new key is injected",
+        ServiceAction.KeyInjected);
+
     public static IReadOnlyList<DiagnosticCode> All { get; } =
     [
         PumpSupplyNoFlow, PumpMeterNoPulse, PumpMeterOverPulse, PumpMeterStray, PumpCeilingOverrun, PumpMaxTime,
-        PumpHoseBreakaway, PumpClosed, StationEStop, TankFuelOut, LinkDispenserLost, LinkDispenserSilent,
+        PumpHoseBreakaway, PumpClosed, StationEStop, TankFuelOut, LinkDispenserLost, LinkDispenserSilent, ReaderKeyExhausted,
     ];
 
     public static DiagnosticCode? Find(string code) => All.FirstOrDefault(c => c.Code == code);

@@ -2,9 +2,10 @@
   <PropertyGroup>
     <RootNamespace>GasPump.Dispatch</RootNamespace>
     <!-- MMP.AsyncProxy is not on NuGet yet. Until it is, the third dispatch strategy references the sibling
-         checkout. Override with -p:AsyncProxyProjectPath=... to point somewhere else. Swap for a
-         PackageReference when the package publishes. -->
-    <AsyncProxyProjectPath Condition="'$(AsyncProxyProjectPath)' == ''">$(MSBuildThisFileDirectory)..\..\..\MMP.AsyncProxy\src\MMP.AsyncProxy\MMP.AsyncProxy.csproj</AsyncProxyProjectPath>
+         checkout under AsyncProxyRoot (Directory.Build.props). Override with -p:AsyncProxyRoot=..., or
+         with -p:AsyncProxyProjectPath=... for the project file alone. Swap for a PackageReference
+         when the package publishes. -->
+    <AsyncProxyProjectPath Condition="'$(AsyncProxyProjectPath)' == ''">$(AsyncProxyRoot)\src\MMP.AsyncProxy\MMP.AsyncProxy.csproj</AsyncProxyProjectPath>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\GasPump.Core\GasPump.Core.csproj" />
@@ -12,6 +13,8 @@
     <ProjectReference Include="..\GasPump.Security\GasPump.Security.csproj" />
     <ProjectReference Include="..\GasPump.Pump\GasPump.Pump.csproj" />
     <ProjectReference Include="..\GasPump.Custody\GasPump.Custody.csproj" />
+    <ProjectReference Include="..\GasPump.Reader\GasPump.Reader.csproj" />
+    <ProjectReference Include="..\GasPump.Bank\GasPump.Bank.csproj" />
     <ProjectReference Include="$(AsyncProxyProjectPath)" />
   </ItemGroup>
   <ItemGroup>

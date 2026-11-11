@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- The card reader at the pump: the card slot, the PIN pad, and the DUKPT key registers.
+       Card numbers and PINs leave this project only as ciphertext and masked digits. -->
+  <PropertyGroup>
+    <RootNamespace>GasPump.Reader</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\GasPump.Payment\GasPump.Payment.csproj" />
+    <InternalsVisibleTo Include="GasPump.Tests" />
+  </ItemGroup>
+  <Import Project="..\NetSecReference.targets" />
+</Project>

@@ -165,7 +165,8 @@ public sealed class SaleStateMachine
             case (SaleState.CardRead, SaleEvent.CodeEntered ce):
             {
                 var (digits, name, _) = CodeFor(Tender);
-                if (ce.Code.Length != digits || !ce.Code.All(char.IsDigit))
+                // The pump's keypad is the card reader's PIN pad: the reader keeps the digits and the machine gets a star for each.
+                if (ce.Code.Length != digits || !ce.Code.All(KeypadEntry.IsDigitOrMask))
                 {
                     // The digits never reach a log. Only the shape of the mistake does.
                     commands.Add(new SaleCommand.Log(SaleId, $"{name} entry refused: {digits} digits expected, {ce.Code.Length} typed; waiting"));

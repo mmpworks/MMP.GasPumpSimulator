@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- The bank: the accounts, the holds, and the base derivation key that opens what the readers send.
+       It lives in the station's process in this simulator, and keeps its books in its own file. -->
+  <PropertyGroup>
+    <RootNamespace>GasPump.Bank</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\GasPump.Payment\GasPump.Payment.csproj" />
+    <InternalsVisibleTo Include="GasPump.Tests" />
+  </ItemGroup>
+  <Import Project="..\NetSecReference.targets" />
+</Project>

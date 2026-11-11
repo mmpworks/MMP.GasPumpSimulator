@@ -1,7 +1,9 @@
+using GasPump.Bank;
 using GasPump.Core;
 using GasPump.Custody;
 using GasPump.Payment;
 using GasPump.Pump;
+using GasPump.Reader;
 using GasPump.Security;
 using MMP.Herald.Events;
 
@@ -149,6 +151,8 @@ public sealed class Simulation : IDisposable
         // The journal is read here, before any link exists: a socket link connects at once and writes the price board on
         // connect, so the board must be the journaled one by then or a restart would push the built-in prices onto the island.
         var snapshot = _options.Journal is { } jo ? StateJournal.Load(jo.StatePath, w => Log.Warn("journal", "{Message}", ("Message", w))) : null;
+        // The in-process bank keeps its own books, card numbers and all, in its own file beside the journal.
+        if (_options.Journal is { } jb && BankBooks.Load(jb.BankPath) is { } books) { Issuer.Import(books); _bankBooksLoaded = true; }
         if (snapshot?.Prices is { Count: > 0 } journaled && new Pricing(journaled) is { } board && board.Validate().Ok) _prices = board;
 
         // Capabilities ride beside the sales on their own workers. A capability that throws is switched off and logged, and the sales are unaffected.
@@ -163,7 +167,7 @@ public sealed class Simulation : IDisposable
             FuellingPoint point;
             if (_options.DispenserFor(n) is { } where)
             {
-                point = new FuellingPoint(n, pumpId, context, new SocketDispenserLink(where, pumpId, new TaggedLog(Log, ("Pump", n))), null);
+                point = new FuellingPoint(n, pumpId, context, new SocketDispenserLink(where, pumpId, new TaggedLog(Log, ("Pump", n))), null, InjectReader(n));
             }
             else
             {
@@ -171,7 +175,7 @@ public sealed class Simulation : IDisposable
                 // The link's ticker starts in its constructor, before the point exists, so the sale id is read late and is "-" until then.
                 FuellingPoint? owner = null;
                 var link = new LocalDispenserLink(local, dispatch, _options.TickPeriod, () => owner?.CurrentSaleId ?? "-", Custody, RunId, CustodyPath, n);
-                point = owner = new FuellingPoint(n, pumpId, context, link, local);
+                point = owner = new FuellingPoint(n, pumpId, context, link, local, InjectReader(n));
             }
             point.SaleChanged += s => SaleChanged?.Invoke(s);
             _points[n - 1] = point;
@@ -355,12 +359,28 @@ public sealed class Simulation : IDisposable
         finally { try { File.Delete(copy); } catch (IOException) { } }
     }
 
+    private bool _bankBooksLoaded;
+
+    /// <summary>
+    /// Key injection for one pump's reader at station start: a new initial key ID (the key set ID, the pump number, 3 random
+    /// bytes) and its initial key from the bank's base key. A new ID at every start keeps every KSN new, so the bank's saved
+    /// KSN ledger still refuses a message recorded before a restart.
+    /// </summary>
+    private CardReader InjectReader(int pumpNumber)
+    {
+        var initialKeyId = BankKeys.NewInitialKeyId(pumpNumber);
+        var reader = new CardReader(Issuer.Keys.InitialKey(initialKeyId), initialKeyId);
+        Log.Write("reader", "pump {Number} reader injected, initial key id {InitialKeyId}", ("Number", pumpNumber), ("InitialKeyId", initialKeyId));
+        return reader;
+    }
+
     private void Restore(JournalSnapshot s)
     {
         // The price board was taken from the snapshot in the constructor, before the links were built.
         foreach (var p in _points)
             if (s.Point(p.Number) is { } jp) p.Restore(jp, _prices);
-        Issuer.Import(s.Issuer);
+        // Books from before the card reader sat in the station journal. They load once; from then on the bank keeps its own file.
+        if (!_bankBooksLoaded && s.Issuer is { } carried) Issuer.Import(carried);
         Site.Restore(new Money(s.CreditHoldCents), new Money(s.DebitHoldCents), s.FailedPins, s.LockedUntil);
         Drawer.Import(
             s.CashOpenCents.ToDictionary(kv => kv.Key, kv => new Money(kv.Value)),
@@ -407,7 +427,7 @@ public sealed class Simulation : IDisposable
         Drawer.Open.ToDictionary(kv => kv.Key, kv => kv.Value.Cents),
         Drawer.ChangeDue.ToDictionary(kv => kv.Key, kv => kv.Value.Cents),
         Site.CreditHold.Cents, Site.DebitHold.Cents, Site.FailedPins, Site.LockedUntil,
-        Issuer.Export(), stopReason,
+        null, stopReason,
         Prices.TenthCentsPerGallon.ToDictionary(kv => kv.Key, kv => kv.Value));
 
     /// <summary>Write the snapshot. Called by the one-second timer and on every sale change on any pump, serialized so two never interleave.</summary>
@@ -417,7 +437,11 @@ public sealed class Simulation : IDisposable
         lock (_journalGate)
         {
             if (_frozen) return;
-            try { StateJournal.Save(j.StatePath, CaptureSnapshot(stopReason)); }
+            try
+            {
+                StateJournal.Save(j.StatePath, CaptureSnapshot(stopReason));
+                BankBooks.Save(j.BankPath, Issuer.Export());
+            }
             catch (Exception ex) { Log.Error("journal", "snapshot failed: {Message}", ("Message", ex.Message)); }
         }
     }
@@ -586,7 +610,7 @@ public sealed class Simulation : IDisposable
             {
                 case PaymentMessage.PreAuthorize pa:
                     Log.Write("payment", "pre-auth {Tender} {Hold} on {Last4} for {PumpId}", ("Tender", pa.Tender), ("Hold", Site.HoldFor(pa.Tender)), ("Last4", pa.Card.Last4), ("PumpId", pa.PumpId));
-                    var result = await Gateway.PreAuthorizeAsync(pa.SaleId, pa.PumpId, pa.Card, pa.Tender, pa.Code, _cts.Token);
+                    var result = await Gateway.PreAuthorizeAsync(pa.SaleId, pa.PumpId, pa.Card, pa.Tender, _cts.Token);
                     if (result.Approved) { Log.Write("payment", "{ReasonCode} ceiling {Ceiling}", ("ReasonCode", result.ReasonCode), ("Ceiling", result.Ceiling)); PostToSale(new SaleEvent.Approved(pa.SaleId, result.Ceiling, result.Token!)); }
                     else if (result.NetworkFailure)
                     {

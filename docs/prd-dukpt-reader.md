@@ -102,3 +102,54 @@ sale, a debit sale and the replay attack in the app. Date: 2026-11-18.
 4. Build order: (1) anchor tests A1 and A2; (2) reader and bank, with the debit PIN only;
    (3) the card number; (4) the terminal scrape test A3; (5) the attacks; (6) the app;
    (7) docs, changelog, version.
+
+## 10. Design review (Richard, 2026-11-11)
+
+The hypothesis in section 9 holds in shape. Ten changes follow from the real code. Each row
+gives the change and the reason.
+
+### 10.1 Library version and build
+
+| # | Change | Reason |
+|---|---|---|
+| R1 | The library is `MMP.NetworkSecurity` at commit `698dd9c` (origin/main on 2026-11-11). `NetSecRoot` in `Directory.Build.props` defaults to `..\MMP.NetworkSecurity` beside this repo. A machine with the library elsewhere sets it in `Directory.Build.local.props` (git-ignored), or passes `-p:NetSecRoot=<dir>`. | D2 asks for a sibling default and an override. A local props file keeps machine paths out of committed files. The build stops with a named error when the library is missing. |
+| R2 | `AsyncProxyRoot` moves to `Directory.Build.props`, beside `NetSecRoot`. With the sibling layout, `GasPump.Dispatch` and the library's `AsyncProxy.Local` compile `MMP.AsyncProxy` from one folder. A move of `MMP.AsyncProxy` goes on the command line (`-p:AsyncProxyRoot=<dir>`), so the library sees it too. | The spike (below) found no clash. Both copies have the same assembly name and version, and the build keeps one. A first try passed the root to the library with `AdditionalProperties`. That built `NetSec.Core` twice in parallel into one `obj` folder (CS2012), so it was dropped. |
+
+Spike, 2026-11-11: a throwaway project referenced `GasPump.Dispatch` (sibling `MMP.AsyncProxy`)
+and `NetSec.Core` (its own `AsyncProxy.Local`). `dotnet build` gave 0 warnings and 0 errors.
+The compiler saw one `MMP.AsyncProxy.dll`. The program derived the X9.24-3 initial key
+`1273671EA26AC29AFA4D1084127652A1`. The spike project was deleted.
+
+### 10.2 Shape of the code
+
+| # | Change | Reason |
+|---|---|---|
+| R3 | Two new projects, `GasPump.Reader` and `GasPump.Bank`. `IssuerSimulator` and its journal records move from `GasPump.Payment` to `GasPump.Bank`. `ProtectedCard` lives in `GasPump.Payment`. Only the two new projects reference `NetSec.Core`. A test checks the assembly references. | Section 9 put the bank's keys in the payment project. That project also holds the terminal's gateway, so a library type there leaks into the terminal. |
+| R4 | The keypad digits go into the reader, not into the sale machine. `FuellingPoint.EnterCode` hands the digits to `CardReader.Keypad`, and the sale machine gets a masked entry (`****`). The machine accepts `*` in place of a digit. | A real encrypting PIN pad takes the PIN at the keys. In section 9 the PIN crossed the sale machine, the mailbox and the payment message in clear. |
+| R5 | The reader reads the card by its name (the card in the slot) and runs the Luhn and format check. The gateway runs the expiry check on the clear expiry. `FuellingPoint` no longer touches `CardData`. | The terminal cannot run Luhn on ciphertext. The expiry is not secret. |
+| R6 | The card number is sealed with AES-128-GCM (library `Gcm`) under the DUKPT data key (usage `0x3000`). That key and the PIN key come from one counter (`NextTogether`). The tag also covers the KSN, the PIN block and every clear field. The nonce is 12 zero bytes, because each data key seals one message only. | Attack (c) needs a refusal, and a cipher with no tag gives none. With the PIN block in the tag, attack (b) is a refusal at the bank too, with the code `CardDataUnreadable`. |
+| R7 | The bank checks in this order: the KSN ledger (replay), the GCM tag, then the PIN with `DukptBank.OpenPinSale` for debit. A credit message records its KSN after the tag passes. | `CheckPinSale` changes nothing and does no tag check. The library says a caller with more checks makes them before `OpenPinSale`. |
+| R8 | The bank's books leave the station journal. They go to `bank.json` beside `state.json`, with the KSNs the bank has seen. An older `state.json` that still holds the books loads them once. | The station journal held every PAN and PIN on file (`IssuerState`). Acceptance item 2 forbids that outside the bank. |
+| R9 | Each station start injects each reader again. The initial key ID is the key set ID `12345678` and a 4-byte device ID: the pump number and 3 random bytes. | A restart starts the counter again at 1. A new device ID keeps every KSN new, so the saved KSN ledger refuses a replay across a restart. |
+| R10 | Bank refusals are new `DeclineReason` values: `KeyReplayed` and `CardDataUnreadable`. A reader whose counter ran out declines the sale locally with the diagnostic code `READER.KEY.EXHAUSTED`. | The house pattern: one stable code per failure (`docs/diagnostics.md`). The terminal shows the reason; the code names it. |
+
+### 10.3 Anchor changes
+
+| # | Change | Reason |
+|---|---|---|
+| A1 | The test compares each derived key with the published PDF itself. `tools/fetch-x9-vectors.ps1` downloads `X9.24-3-2017-Test-Vectors-20180129-1.pdf` from x9.org, checks its SHA-256 (`ae9bb01d...c4cc`, the hash the library locks), and writes the text to `tests/GasPump.Tests/x9/` (git-ignored). The A1 tests compile only when that text exists, as the custody build does with TesseraSeal. The build prints a line when they are left out. | The PRD asked for the values as hex in the test. The library keeps the X9.24-3 values out of git until Dave rules on the licence (`acceptance/vectors/SOURCES.md`, "Licence"). This repo follows the same rule. If Dave clears it, the values move into the test in one edit. |
+| A2 | The second implementation in the test also derives the working keys (BCL AES-ECB, the X9.24-3 steps written out) and opens the sealed card number with the BCL `AesGcm`. | A2 then runs on every machine with no download. When the PDF text is present, A1 checks the same reference derivation against the published values. Without the PDF, the derivation half of A2 is a second implementation, not an outside source. |
+| A4(e) | The reader erases the injected initial key after it loads the registers. The revert check for attack (e) removes that erase. | The register erase itself is library code (`DukptPinPad.Erase`). This repo cannot remove it (D3). |
+
+### 10.4 Prior art
+
+1. Gem catalog (`MMP.ProgrammingGems/INDEX.md`): took "Decide at the authoritative boundary".
+   The reader takes the PIN at the keypad, and the bank alone decides on the card data. The
+   `GEM:` marker and its usage-site line wait for Steve: they write to a second repo.
+   Rejected "Replaceable seam": the reader has one implementation and no second use case.
+2. System-design catalog (`MMP.Library/docs/system-design-catalog.md`): checked, and no entry
+   covers card encryption. The shape is end-to-end encryption with a key at each end and a
+   blind relay between them (the terminal). The arithmetic: one process, at most a few sales
+   per minute per pump, and a KSN ledger that grows by one 24-character entry per card sale
+   (about 1 MB after 40,000 sales). So no queue, no cache and no HSM service. The bank keeps
+   no per-reader key and derives each key again from the KSN.
