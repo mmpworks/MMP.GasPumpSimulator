@@ -14,10 +14,10 @@ public sealed record ReaderStatus(string InitialKeyId, string? LastKsn, uint? La
 /// <summary>
 /// The result of reading the reader's memory after a sale (attack e). HeldKeyRegisters is what an attacker
 /// finds. SaleKeyDerivable says whether those keys give the PIN key of the named sale; NextKeyDerivable
-/// says whether they give the next sale's key, which shows the probe can derive at all.
-/// InjectionKeyErased says the injected initial key was wiped once the registers were loaded.
+/// says whether they give the next sale's key, which shows the probe can derive at all. The reader keeps
+/// no other key: the injected initial key is erased in the constructor (attack e's test checks the array).
 /// </summary>
-public sealed record MemoryReadout(uint SaleCounter, int HeldKeyRegisters, bool SaleKeyDerivable, bool NextKeyDerivable, bool InjectionKeyErased);
+public sealed record MemoryReadout(uint SaleCounter, int HeldKeyRegisters, bool SaleKeyDerivable, bool NextKeyDerivable);
 
 /// <summary>A reader failure, with its diagnostic code (docs/diagnostics.md).</summary>
 public sealed class ReaderException(DiagnosticCode code, string message) : Exception(code.Format(message))
@@ -41,7 +41,6 @@ public sealed class CardReader
 
     private readonly DukptPinPad _pad;
     private readonly Func<int, byte[]> _random;
-    private readonly byte[] _injected;
     private readonly Dictionary<string, string> _keypad = new();
     private readonly Lock _gate = new();
     private ProtectedCard? _last;
@@ -55,7 +54,6 @@ public sealed class CardReader
         _pad = new DukptPinPad(initialKey, Convert.FromHexString(initialKeyId));
         // The pad says the caller erases its own array. This is the reader's half of attack (e): no key from injection survives.
         CryptographicOperations.ZeroMemory(initialKey);
-        _injected = initialKey;
         InitialKeyId = initialKeyId.ToUpperInvariant();
         _random = random ?? RandomNumberGenerator.GetBytes;
     }
@@ -68,7 +66,12 @@ public sealed class CardReader
     /// </summary>
     public string Keypad(string saleId, string typed)
     {
-        lock (_gate) _keypad[saleId] = typed;
+        lock (_gate)
+        {
+            // One sale at a time on a pump: an entry for any other sale is stale, so it goes.
+            _keypad.Clear();
+            _keypad[saleId] = typed;
+        }
         return new string(typed.Select(c => char.IsAsciiDigit(c) ? KeypadEntry.Mask : c).ToArray());
     }
 
@@ -110,6 +113,15 @@ public sealed class CardReader
         }
     }
 
+    /// <summary>The sale ended. Any keypad digits still held for it are dropped.</summary>
+    public void Forget(string saleId)
+    {
+        lock (_gate) _keypad.Remove(saleId);
+    }
+
+    /// <summary>How many keypad entries the reader holds now. Internal: a test checks that a finished sale leaves none.</summary>
+    internal int KeypadEntriesHeld { get { lock (_gate) return _keypad.Count; } }
+
     public ReaderStatus Status
     {
         get { lock (_gate) return new(InitialKeyId, _last?.Ksn, _last?.Counter, _pad.NextCounter, _pad.HeldCount); }
@@ -127,7 +139,7 @@ public sealed class CardReader
             bool next = _pad.NextCounter <= uint.MaxValue
                 && _pad.TryDeriveFromHeldKeys((uint)_pad.NextCounter, DukptKeyUsage.PinEncryption, DukptKeyType.Aes128, out var k2) && k2 is not null;
             if (k1 is not null) Array.Clear(k1);
-            return new MemoryReadout(saleCounter, _pad.HeldCount, sale, next, _injected.All(b => b == 0));
+            return new MemoryReadout(saleCounter, _pad.HeldCount, sale, next);
         }
     }
 

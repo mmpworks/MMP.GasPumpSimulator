@@ -55,11 +55,10 @@ public static class ReaderLab
     private static ReaderAttackResult ReadMemory(CardReader reader, ProtectedCard card)
     {
         var m = reader.ReadMemory(card.Counter);
-        var defended = !m.SaleKeyDerivable && m.InjectionKeyErased;
+        var defended = !m.SaleKeyDerivable;
         var message = $"{m.HeldKeyRegisters} key registers read. The PIN key of counter {m.SaleCounter} "
             + (m.SaleKeyDerivable ? "CAN be rebuilt from them" : "cannot be rebuilt from them")
-            + $"; the next counter's key {(m.NextKeyDerivable ? "can" : "cannot")} be, so the probe works. "
-            + (m.InjectionKeyErased ? "The injected initial key is erased." : "The injected initial key is still in memory.");
+            + $"; the next counter's key {(m.NextKeyDerivable ? "can" : "cannot")} be, so the probe works.";
         return new("read-memory", defended, defended ? "SaleKeyGone" : "SaleKeyDerivable", message, card);
     }
 

@@ -727,6 +727,8 @@ public sealed class FuellingPoint : IDisposable
             snap = _sale.Snapshot();
         }
         foreach (var c in commands) Execute(c);
+        // A sale that ends before the reader read the card (a refused entry, a timeout, a cancel) leaves no keypad digits behind.
+        if (before != after && (after == SaleState.Idle || SaleStateMachine.IsTerminal(after))) Reader.Forget(e.SaleId);
         RecordSaleBoundary(e, before, after, snap);
         Publish();
         _ctx.Capabilities.Publish(e);

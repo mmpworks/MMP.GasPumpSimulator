@@ -180,7 +180,11 @@ public class ReaderAttackTests
     [Fact]
     public void Attack_e_the_keys_left_in_the_reader_after_a_sale_cannot_give_that_sale_key()
     {
-        var (_, reader) = Rig();
+        var bank = IssuerSimulator.WithTestCards();
+        var id = GasPump.Bank.BankKeys.NewInitialKeyId(3);
+        var injected = bank.Keys.InitialKey(id);
+        var reader = new CardReader(injected, id);
+        Assert.All(injected, b => Assert.Equal(0, b));   // the reader erased the injected key it was handed
         reader.Read(Debit, Tender.Debit, TestCards.Pin);
         var sale = reader.Read(Debit, Tender.Debit, TestCards.Pin);
 
@@ -189,7 +193,6 @@ public class ReaderAttackTests
         Assert.True(memory.HeldKeyRegisters > 0);
         Assert.False(memory.SaleKeyDerivable);
         Assert.True(memory.NextKeyDerivable);       // the probe works: the registers do give a later key
-        Assert.True(memory.InjectionKeyErased);     // and the injected initial key is gone
     }
 
     // ----- (f) scrape the terminal
@@ -292,6 +295,32 @@ public class ReaderAttackTests
         }
         Assert.Contains("NetSec.Core", typeof(CardReader).Assembly.GetReferencedAssemblies().Select(a => a.Name));
         Assert.Contains("NetSec.Core", typeof(GasPump.Bank.BankKeys).Assembly.GetReferencedAssemblies().Select(a => a.Name));
+    }
+
+    [Theory]
+    [MemberData(nameof(SimHarness.Strategies), MemberType = typeof(SimHarness))]
+    public void A_sale_that_ends_before_the_card_is_read_leaves_no_keypad_digits_in_the_reader(string strategy)
+    {
+        using var h = new SimHarness(strategy);
+        h.Present("DebitGoodPin", tender: Tender.Debit, code: "12");   // the wrong shape: the machine waits, the reader holds the digits
+        h.Settle();
+        Assert.Equal(SaleState.CardRead, h.State.State);
+        Assert.Equal(1, h.Point(1).Reader.KeypadEntriesHeld);
+
+        h.AdvanceUntilState(SaleState.Cancelled, TimeSpan.FromMinutes(5));   // the keypad entry times out
+
+        Assert.Equal(0, h.Point(1).Reader.KeypadEntriesHeld);
+    }
+
+    [Fact]
+    public void A_keypad_entry_for_a_new_sale_drops_the_one_left_from_the_last()
+    {
+        var (_, reader) = Rig();
+        reader.Keypad("S1", TestCards.Pin);
+        reader.Keypad("S2", TestCards.Pin);
+        Assert.Equal(1, reader.KeypadEntriesHeld);
+        reader.Forget("S2");
+        Assert.Equal(0, reader.KeypadEntriesHeld);
     }
 
     [Fact]
