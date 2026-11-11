@@ -2,7 +2,7 @@
 
 Each version names what changed for a person who runs or reads the simulator. The version lives in `Directory.Build.props`. A tag `v<version>` on `main` marks each release.
 
-## 0.2.0 (unreleased, branch `feat/dukpt-reader`)
+## 0.2.0 (2026-11-11)
 
 The card reader path: phase 1 of the security-library work (`docs/prd-dukpt-reader.md`).
 
