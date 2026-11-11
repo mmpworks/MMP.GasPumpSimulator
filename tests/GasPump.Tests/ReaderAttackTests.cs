@@ -199,8 +199,9 @@ public class ReaderAttackTests
 
     private const string ScrapePin = "8642";
 
-    [Fact]
-    public void Attack_f_after_a_credit_sale_and_a_debit_sale_no_terminal_artifact_holds_a_card_number_or_the_pin()
+    [Theory]
+    [MemberData(nameof(SimHarness.Strategies), MemberType = typeof(SimHarness))]
+    public void Attack_f_after_a_credit_sale_and_a_debit_sale_no_terminal_artifact_holds_a_card_number_or_the_pin(string strategy)
     {
         var dir = Path.Combine(Path.GetTempPath(), "gaspump-scrape-" + Guid.NewGuid().ToString("N")[..8]);
         Directory.CreateDirectory(dir);
@@ -210,7 +211,7 @@ public class ReaderAttackTests
             bank.Seed(Debit.Pan, Money.FromDollars(900), pin: ScrapePin);
             var events = new List<string>();
             var views = new List<string>();
-            using (var h = new SimHarness("channel", SimulationOptions.Default with
+            using (var h = new SimHarness(strategy, SimulationOptions.Default with
                    {
                        HoldAmount = Money.FromDollars(10),
                        DebitHold = Money.FromDollars(10),
@@ -225,6 +226,17 @@ public class ReaderAttackTests
                 RunSale(h, views);
                 Assert.Equal(2, bank.Settlements.Count);
 
+                // Every reader attack the app can run, and every refusal message and exception text it produced.
+                var attackResults = new List<string>();
+                foreach (var attack in ReaderLab.Attacks)
+                {
+                    var result = ReaderLab.Run(attack, h.Point(1), bank, Money.FromDollars(10), h.Clock.GetUtcNow());
+                    Assert.True(result.Defended, $"{attack}: {result.Code} {result.Message}");
+                    attackResults.Add(JsonSerializer.Serialize(result));
+                }
+                var duplicate = Assert.Throws<InvalidOperationException>(() => bank.Keys.InitialKey(h.Point(1).Reader.InitialKeyId));
+                attackResults.Add(duplicate.ToString());
+
                 h.Sim.SaveJournal();
                 var artifacts = new Dictionary<string, string>
                 {
@@ -234,6 +246,7 @@ public class ReaderAttackTests
                     ["pump screens and receipts"] = JsonSerializer.Serialize(h.Snapshots),
                     ["terminal view and reader status"] = string.Join("\n", views),
                     ["bank view on the reader panel"] = JsonSerializer.Serialize(bank.LastOpened),
+                    ["reader attack results and exception text"] = string.Join('\n', attackResults),
                 };
                 foreach (var file in Directory.GetFiles(dir).Where(f => Path.GetFileName(f) != "bank.json"))
                     artifacts[Path.GetFileName(file)] = ReadShared(file);
