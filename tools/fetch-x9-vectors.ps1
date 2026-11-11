@@ -5,7 +5,9 @@
 # (acceptance/vectors/sources.lock.json). A different hash stops the script.
 #
 # Needs pdftotext (poppler) on PATH. Git for Windows ships it in mingw64/bin.
-# After this script, `dotnet test` compiles and runs the X9VectorTests class.
+# After this script, `dotnet test` also runs the second A1 test: every value in the committed file
+# tests/GasPump.Tests/Anchors/x9-24-3-aes-dukpt.vectors equals this text in its place.
+# tools/extract-x9-vectors.py writes that file from this text.
 $ErrorActionPreference = 'Stop'
 $url = 'https://x9.org/wp-content/uploads/2018/03/X9.24-3-2017-Test-Vectors-20180129-1.pdf'
 $expected = 'AE9BB01D76EDA32018332F1202A9C2010097ABF0D17D753612B7E612DDD9C4CC'

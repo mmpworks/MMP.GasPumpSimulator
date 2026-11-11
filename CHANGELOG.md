@@ -2,6 +2,29 @@
 
 Each version names what changed for a person who runs or reads the simulator. The version lives in `Directory.Build.props`. A tag `v<version>` on `main` marks each release.
 
+## 0.2.1 (2026-11-11)
+
+Anchor A1 runs on a fresh clone.
+
+- A committed vector file, `tests/GasPump.Tests/Anchors/x9-24-3-aes-dukpt.vectors`, holds the X9.24-3 values that A1 uses: the base derivation key, the initial key ID, the initial key, the PIN block inputs, and the KSN, PIN key and data key of transactions 1 to 8 and 8675309, with the PIN blocks of transactions 1 to 8. 11 groups, 41 values. Each group has a source line. The header says ASC X9 has not reviewed or endorsed this project, and that the keys protect nothing.
+- `tools/extract-x9-vectors.py` writes the file from the fetched PDF text. It finds each value by its label and stops with `CANNOT_LOCATE` when a label is missing or two occurrences disagree. Nobody types a value.
+- A1 has two tests. The first always runs: the reader, the bank and the A2 reference derive each key and PIN block, and each one equals the committed file. The second runs when the PDF text is present: every value in the committed file equals the text in its place. Without the text it shows as skipped, with the fetch command. `GASPUMP_X9_TEXT_ABSENT=1` runs the tests as a fresh clone does.
+- The PDF, its text and the full internal-state traces stay out of git. The decision is D7 in `docs/prd-dukpt-reader.md`.
+
+### Verification on the build machine (2026-11-11)
+
+With the Herald sources present:
+
+```
+dotnet build MMP.GasPumpSimulator.slnx                           0 Warning(s), 0 Error(s)
+dotnet test MMP.GasPumpSimulator.slnx                            Passed: 459, Skipped: 0, Total: 459
+GASPUMP_X9_TEXT_ABSENT=1 dotnet test MMP.GasPumpSimulator.slnx   Passed: 458, Skipped: 1, Total: 459
+```
+
+The 17 A1 tests of 0.2.0 are now 2, so the total drops from 474 to 459. The skipped test is `A1_every_committed_value_equals_the_fetched_pdf_text_in_its_place`.
+
+Revert check: one hex digit of the transaction 3 PIN key changed in the committed file. Both A1 tests failed ("bank PIN key for counter 3"; "pin-key ... of transaction 3 is not in its place in the PDF text"). The tool rewrote the file, the file matched the copy taken before the change, and both tests passed.
+
 ## 0.2.0 (2026-11-11)
 
 The card reader path: phase 1 of the security-library work (`docs/prd-dukpt-reader.md`).

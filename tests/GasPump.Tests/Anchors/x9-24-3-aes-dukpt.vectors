@@ -1,0 +1,85 @@
+# AES DUKPT test values for anchor A1 of MMP.GasPumpSimulator (docs/prd-dukpt-reader.md, section 5).
+#
+# The values come from the supplement to ANSI X9.24-3-2017, the AES DUKPT test vectors published by
+# ASC X9, Inc.: X9.24-3-2017-Test-Vectors-20180129-1.pdf (ASC X9, 2018-01-29, SHA-256 AE9BB01D76EDA32018332F1202A9C2010097ABF0D17D753612B7E612DDD9C4CC).
+# ASC X9 has not reviewed or endorsed this project.
+# These values are test data from a published file. The keys protect nothing.
+# The values are facts from the ASC X9 supplement. The MIT licence of this repo covers MMPWorks' code.
+# This file makes no claim of ownership over the values.
+#
+# tools/extract-x9-vectors.py wrote this file from the fetched PDF text. Run the tool again; do not edit by hand.
+# Format: "[group]", then "source:", then one "name = value" per line. Values are hex, except pan and pin.
+
+[setup]
+source: X9.24-3-2017-Test-Vectors-20180129-1.pdf (ASC X9, 2018-01-29, SHA-256 AE9BB01D76EDA32018332F1202A9C2010097ABF0D17D753612B7E612DDD9C4CC), section 2.2, "Test Vectors for Various Transaction Keys": BDK-128, InitialKeyID, and the AES-128 Initial Key of each transaction
+bdk = FEDCBA9876543210F1F1F1F1F1F1F1F1
+initial-key-id = 1234567890123456
+initial-key = 1273671EA26AC29AFA4D1084127652A1
+
+[pin-block-inputs]
+source: X9.24-3-2017-Test-Vectors-20180129-1.pdf (ASC X9, 2018-01-29, SHA-256 AE9BB01D76EDA32018332F1202A9C2010097ABF0D17D753612B7E612DDD9C4CC), section 2.2, "Calculation of AES PIN Block (Format 4)", the same in transactions 1 to 8
+pan = 4111111111111111
+pin = 1234
+random = 2F69ADDE2E9E7ACE
+
+[transaction 1]
+source: X9.24-3-2017-Test-Vectors-20180129-1.pdf (ASC X9, 2018-01-29, SHA-256 AE9BB01D76EDA32018332F1202A9C2010097ABF0D17D753612B7E612DDD9C4CC), section 2.2, "All Key Usages for Transaction 1 (AES-128 under AES-128 BDK)"; ksn is the InitialKeyID and the counter (0x1)
+ksn = 123456789012345600000001
+pin-key = AF8CB133A78F8DC2D1359F18527593FB
+data-key = A35C412EFD41FDB98B69797C02DCD08F
+pin-block = A912150391AB65A67E52883D81CE2D15
+
+[transaction 2]
+source: X9.24-3-2017-Test-Vectors-20180129-1.pdf (ASC X9, 2018-01-29, SHA-256 AE9BB01D76EDA32018332F1202A9C2010097ABF0D17D753612B7E612DDD9C4CC), section 2.2, "All Key Usages for Transaction 2 (AES-128 under AES-128 BDK)"; ksn is the InitialKeyID and the counter (0x2)
+ksn = 123456789012345600000002
+pin-key = D30BDC73EC9714B000BEC66BDB7B6D09
+data-key = D639514AA33AC43AD9229E433D6D4E5B
+pin-block = 52A00503BD34BA1383F6A7EE9FE2547F
+
+[transaction 3]
+source: X9.24-3-2017-Test-Vectors-20180129-1.pdf (ASC X9, 2018-01-29, SHA-256 AE9BB01D76EDA32018332F1202A9C2010097ABF0D17D753612B7E612DDD9C4CC), section 2.2, "All Key Usages for Transaction 3 (AES-128 under AES-128 BDK)"; ksn is the InitialKeyID and the counter (0x3)
+ksn = 123456789012345600000003
+pin-key = 7D69F01F3B45449F62C7816ECE723268
+data-key = EF17F6AB45B4820C93A3DCB21BC491AD
+pin-block = A5A27E82B43A9A866A93D7ABE89CEF93
+
+[transaction 4]
+source: X9.24-3-2017-Test-Vectors-20180129-1.pdf (ASC X9, 2018-01-29, SHA-256 AE9BB01D76EDA32018332F1202A9C2010097ABF0D17D753612B7E612DDD9C4CC), section 2.2, "All Key Usages for Transaction 4 (AES-128 under AES-128 BDK)"; ksn is the InitialKeyID and the counter (0x4)
+ksn = 123456789012345600000004
+pin-key = 91A0588318EC2673214271F70137896E
+data-key = B3BD44C08BB6BA27C3BB4711D7D70387
+pin-block = 71B3D0528669498777555A8BE6698E44
+
+[transaction 5]
+source: X9.24-3-2017-Test-Vectors-20180129-1.pdf (ASC X9, 2018-01-29, SHA-256 AE9BB01D76EDA32018332F1202A9C2010097ABF0D17D753612B7E612DDD9C4CC), section 2.2, "All Key Usages for Transaction 5 (AES-128 under AES-128 BDK)"; ksn is the InitialKeyID and the counter (0x5)
+ksn = 123456789012345600000005
+pin-key = 35A43BC9EFEB09C756204B57E3FB7D4D
+data-key = CA02DF6F30B39E14BD0B4A30E460920F
+pin-block = 881A7F77A2E04E5BEA985E342FD0B628
+
+[transaction 6]
+source: X9.24-3-2017-Test-Vectors-20180129-1.pdf (ASC X9, 2018-01-29, SHA-256 AE9BB01D76EDA32018332F1202A9C2010097ABF0D17D753612B7E612DDD9C4CC), section 2.2, "All Key Usages for Transaction 6 (AES-128 under AES-128 BDK)"; ksn is the InitialKeyID and the counter (0x6)
+ksn = 123456789012345600000006
+pin-key = 02DCC6CD1201A3A2CA7099559C862123
+data-key = C9B8A7C4E486180B2229115164F0B293
+pin-block = BDC1C3871AFB0B340AA5B5CEFD08695E
+
+[transaction 7]
+source: X9.24-3-2017-Test-Vectors-20180129-1.pdf (ASC X9, 2018-01-29, SHA-256 AE9BB01D76EDA32018332F1202A9C2010097ABF0D17D753612B7E612DDD9C4CC), section 2.2, "All Key Usages for Transaction 7 (AES-128 under AES-128 BDK)"; ksn is the InitialKeyID and the counter (0x7)
+ksn = 123456789012345600000007
+pin-key = 6ECF912F3B18CA11A7A27BB60705FD09
+data-key = 0FA8F1F0A2DD7B1005A862D77CDED698
+pin-block = 4A8E6B8C7DBEE6CBA6DC774F0CB83396
+
+[transaction 8]
+source: X9.24-3-2017-Test-Vectors-20180129-1.pdf (ASC X9, 2018-01-29, SHA-256 AE9BB01D76EDA32018332F1202A9C2010097ABF0D17D753612B7E612DDD9C4CC), section 2.2, "All Key Usages for Transaction 8 (AES-128 under AES-128 BDK)"; ksn is the InitialKeyID and the counter (0x8)
+ksn = 123456789012345600000008
+pin-key = 4D9DF3FBEE3448FC3E676D04320A90F5
+data-key = 650F34204ABD4E57764D61AC3D266FB1
+pin-block = 8308BB857C17F390369F761F8EB358FA
+
+[transaction 8675309]
+source: X9.24-3-2017-Test-Vectors-20180129-1.pdf (ASC X9, 2018-01-29, SHA-256 AE9BB01D76EDA32018332F1202A9C2010097ABF0D17D753612B7E612DDD9C4CC), section 2.2, "All Key Usages for Transaction 8675309 (AES-128 under AES-128 BDK)"; ksn is the InitialKeyID and the counter (0x845fed)
+ksn = 123456789012345600845FED
+pin-key = D1DDA386AA4A556AF0119FDCB5D132C6
+data-key = B1E4D9006A87DD08D87F11A124D35517

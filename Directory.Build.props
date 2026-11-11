@@ -20,7 +20,7 @@
     <NetSecRoot Condition="'$(NetSecRoot)' == ''">$(MSBuildThisFileDirectory)..\MMP.NetworkSecurity</NetSecRoot>
     <AsyncProxyRoot Condition="'$(AsyncProxyRoot)' == ''">$(MSBuildThisFileDirectory)..\MMP.AsyncProxy</AsyncProxyRoot>
     <!-- The simulator's version. Bump here, tag main as v<Version>, and publish the release notes. -->
-    <Version>0.2.0</Version>
+    <Version>0.2.1</Version>
     <Authors>MMPWorks LLC</Authors>
     <Company>MMPWorks LLC</Company>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
